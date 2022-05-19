@@ -9,7 +9,7 @@ import astropy.units as u
 from astropy.time import Time
 
 
-def get_username_password(service):
+def get_username_password(service, filename="passwords.yml"):
     """
     Load the credentials from the passwords.yml file,
     and return a tuple with the username and password
@@ -27,7 +27,7 @@ def get_username_password(service):
         A tuple that contains the username and password.
 
     """
-    with open("passwords.yml") as file:
+    with open(filename) as file:
         serv_dict = yaml.safe_load(file)
         credentials = serv_dict.get(service, None)
         if credentials is None:
