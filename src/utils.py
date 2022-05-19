@@ -33,7 +33,13 @@ def get_username_password(service):
         if credentials is None:
             raise KeyError(f'Cannot find credentials for service "{service}". ')
 
-        return tuple(credentials.values())
+        values = []
+        if "username" in credentials:
+            values.append(credentials.get("username"))
+        if "password" in credentials:
+            values.append(credentials.get("password"))
+
+        return values
 
 
 def ra2deg(ra):

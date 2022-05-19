@@ -1,5 +1,5 @@
 .idea
-passwords.yml
+*passwords.yml*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

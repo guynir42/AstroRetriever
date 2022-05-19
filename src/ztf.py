@@ -1,11 +1,8 @@
 import numpy as np
 import requests
-from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from datetime import datetime
-import dateutil
-import wget
 
-import utils
+from src import utils
 from ztfquery import lightcurve
 
 
@@ -90,5 +87,5 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
 
 
 if __name__ == "__main__":
-    res = ztf_forced_photometry(280.0, 45.2, 2458231.891227, 2458345.025359)
+    res = ztf_forced_photometry(280.0, -45.2, 2458231.891227, 2458345.025359)
     print(res.content)
