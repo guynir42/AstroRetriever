@@ -150,7 +150,7 @@ if __name__ == "__main__":
     dec = "+31:23:56.1"
     print(f'Dec string: "{dec}" | float {dec2deg(dec)} degrees.')
 
-    # test the convertion to JD
+    # test the conversion to JD
     jd = 2459717.5
     print(f"time in JD: {jd} | converted to JD: {date2jd(jd)}")
     date = "2022-05-19"

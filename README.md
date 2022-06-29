@@ -39,9 +39,9 @@ This could be manually entered, or queried using some cuts based on e.g., Gaia.
 The catalog can be given to `VirtualObservatory` objects,
 that can then download the data and store it locally,
 linking the data files to `Dataset` objects in memory.
-There should be an easy way to parallalize this process.
+There should be an easy way to parallelize this process.
 
-`Sources`s should be persisted in memory (in a database?)
+`Sources`s should be persisted in memory (in a database)
 and should be merged when multiple `Sources` are found
 with different surveys (i.e., different `VirtualObservatory` objects).
 
