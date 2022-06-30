@@ -163,13 +163,12 @@ def test_project_config_file():
     # TODO: add Catalog configurations
 
     # make config and passwords file
-    configs_folder = os.path.abspath(os.path.join(basepath, "configs"))
+    configs_folder = os.path.abspath(os.path.join(basepath, "../configs"))
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
     filename = os.path.join(configs_folder, "default_test.yaml")
     with open(filename, "w") as file:
         yaml.dump(data, file, sort_keys=False)
-        print(filename)
     with open(data["ztf"]["credentials"]["filename"], "w") as file:
         password = str(uuid.uuid4())
         yaml.dump(
