@@ -108,6 +108,9 @@ def test_project_user_inputs():
             "calibration": {"cal_key": "cal_value"},
             "analysis": {"an_key": "an_value"},
         },
+        obs_params={
+            "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
+        },
         config=False,
     )
 
@@ -121,6 +124,8 @@ def test_project_user_inputs():
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert proj.observatories["ztf"].calibration.pars.cal_key == "cal_value"
     assert proj.observatories["ztf"].analysis.pars.an_key == "an_value"
+    assert proj.observatories["ztf"]._credentials["username"] == "guy"
+    assert proj.observatories["ztf"]._credentials["password"] == "12345"
 
 
 def test_project_config_file():

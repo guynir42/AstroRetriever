@@ -8,7 +8,7 @@ from src.calibration import Calibration
 
 
 class Project:
-    def __init__(self, name="default", params=None, config=True):
+    def __init__(self, name="default", params=None, obs_params=None, config=True):
         """
         Create a new Project object.
         The project is used to combine a catalog,
@@ -35,6 +35,11 @@ class Project:
             use params={'calibration': {'cal_parameter1': 'value1', ...}}.
             To choose a list of observatories,
             use params={'observatories': ['ZTF', 'TESS', ...]}.
+        obs_params: dict
+            Dictionary of parameters for the observatories.
+            Each key should be the name of an observatory,
+            and any parameters given would override those
+            given in the config file (if any).
         config: str or bool
             Name of the file to load.
             If False or None, no config file will be loaded.
@@ -96,12 +101,15 @@ class Project:
         self.catalog = Catalog(**self.pars.catalog)
 
         # make observatories:
+        if obs_params is None:
+            obs_params = {}
         self.observatories = [
-            self.make_observatory(obs, config) for obs in self.pars.observatories
+            self.make_observatory(name=obs, params=obs_params.get(obs), config=config)
+            for obs in self.pars.observatories
         ]
         self.observatories = {obs.name: obs for obs in self.observatories}
 
-    def make_observatory(self, name, config=None):
+    def make_observatory(self, name, params=None, config=None):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -126,6 +134,12 @@ class Project:
             In special cases like "DemoObs",
             the class is loaded from the
             "observatory" module.
+        params: dict
+            Dictionary of parameters for the observatory.
+            These would override any parameters
+            loaded from the config file.
+            If none, not parameters will be loaded
+            after the config file (if any).
         config: str or bool
             Name of the file to load.
             If False or None, no config file will be loaded.
@@ -149,15 +163,20 @@ class Project:
         # but they are not initialized yet.
         # first, load the parameters, then initialize them
 
+        if params is not None:
+            if not isinstance(params, dict):
+                raise TypeError(f"params must be a dictionary, not {type(params)}")
+            new_obs.pars.update(params)
+
         # parse parameters for calibration of this observatory
-        new_obs.calibration.pars.read(self.pars.calibration)  # project pars
-        new_obs.calibration.pars.read(new_obs.pars.calibration)  # observatory pars
+        new_obs.calibration.pars.update(self.pars.calibration)  # project pars
+        new_obs.calibration.pars.update(new_obs.pars.calibration)  # observatory pars
         new_obs.calibration.pars.verify()
         new_obs.calibration.initialize()
 
         # parse parameters for analysis of this observatory
-        new_obs.analysis.pars.read(self.pars.analysis)  # project pars
-        new_obs.analysis.pars.read(new_obs.pars.analysis)  # observatory pars
+        new_obs.analysis.pars.update(self.pars.analysis)  # project pars
+        new_obs.analysis.pars.update(new_obs.pars.analysis)  # observatory pars
         new_obs.analysis.pars.verify()
         new_obs.analysis.initialize()
 

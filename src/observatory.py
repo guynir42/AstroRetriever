@@ -107,10 +107,14 @@ class VirtualObservatory:
 
         if hasattr(self.pars, "credentials"):
             self.load_passwords(**self.pars.credentials)
+            # if any info (username, password, etc.)
+            # is given by the config/user inputs
+            # prefer to use that instead of the file content
+            self._credentials.update(self.pars.credentials)
 
         self.pars.verify()
 
-    def load_passwords(self, filename=None, key=None):
+    def load_passwords(self, filename=None, key=None, **_):
         """
         Load a YAML file with usernames, passwords, etc.
 
@@ -137,8 +141,10 @@ class VirtualObservatory:
             basepath = os.path.dirname(__file__)
             filepath = os.path.abspath(os.path.join(basepath, "..", filename))
 
-        with open(filepath) as file:
-            self._credentials = yaml.safe_load(file).get(key)
+        # if file doesn't exist, silently quit this
+        if os.path.exists(filepath):
+            with open(filepath) as file:
+                self._credentials = yaml.safe_load(file).get(key)
 
     def load_parameters(self):
         """
