@@ -11,6 +11,8 @@ from src.project import Project
 from src.observatory import VirtualDemoObs
 from src.ztf import VirtualZTF
 
+basepath = os.path.abspath(os.path.dirname(__file__))
+
 
 def test_utils():
     pass  # TODO: add tests to other util functions
@@ -29,8 +31,9 @@ def test_utils():
 
 
 def test_load_save_parameters():
-    filename = "parameters_test.yaml"
 
+    filename = "parameters_test.yaml"
+    filename = os.path.join(basepath, filename)
     # write an example parameters file
     with open(filename, "w") as file:
         data = {"username": "guy", "password": "12345"}
@@ -84,7 +87,7 @@ def test_load_save_parameters():
 
 
 def test_default_project():
-    proj = Project("default_test")
+    proj = Project("default_test", config=False)
     assert proj.pars.observatories == {"DemoObs"}
     assert "demo" in proj.observatories
     assert isinstance(proj.observatories["demo"], VirtualDemoObs)
@@ -122,7 +125,6 @@ def test_project_user_inputs():
 def test_project_config_file():
     project_str1 = str(uuid.uuid4())
     project_str2 = str(uuid.uuid4())
-    basepath = os.path.abspath(os.path.dirname(__file__))
 
     data = {
         "project": {  # project wide definitions
