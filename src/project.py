@@ -68,10 +68,12 @@ class Project:
         # load the parameters from the config file:
         if config:  # note that empty string is also false!
             if isinstance(config, str):
-                filename = config
+                filepath = config
             else:
-                filename = os.path.join("configs", f"{self.name}.yaml")
-            self.pars.load(filename, "project")
+                basepath = os.path.dirname(__file__)
+                filename = os.path.join("../configs", f"{self.name}.yaml")
+                filepath = os.path.abspath(os.path.join(basepath, filename))
+            self.pars.load(filepath, "project")
 
         # add any additional user inputs IN ADDITION to the config file:
         if params is not None:

@@ -141,10 +141,12 @@ class VirtualObservatory:
             basepath = os.path.dirname(__file__)
             filepath = os.path.abspath(os.path.join(basepath, "..", filename))
 
-        # if file doesn't exist, silently quit this
+        # if file doesn't exist, just return with an empty dict
         if os.path.exists(filepath):
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key)
+        else:
+            self._credentials = {}
 
     def load_parameters(self):
         """
