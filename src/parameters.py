@@ -1,8 +1,8 @@
 import os
 import yaml
+from pprint import pprint
 
-
-DATA_ROOT = os.getenv("DATA") or ""
+DATA_ROOT = os.getenv("VO_DATA") or ""
 
 
 class Parameters:
@@ -110,7 +110,9 @@ class Parameters:
 
         for k, v in dictionary.items():
             if hasattr(self, k):  # need to update
-                if isinstance(getattr(self, k), (dict, set)):
+                if isinstance(getattr(self, k), set) and isinstance(v, (set, list)):
+                    getattr(self, k).update(v)
+                elif isinstance(getattr(self, k), dict) and isinstance(v, dict):
                     getattr(self, k).update(v)
                 else:
                     setattr(self, k, v)
@@ -140,3 +142,9 @@ class Parameters:
             return os.path.join(DATA_ROOT or "", self.data_path)
         else:
             return DATA_ROOT or ""
+
+    def print(self):
+        """
+        Print the parameters.
+        """
+        pprint(self.__dict__)

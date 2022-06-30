@@ -81,6 +81,10 @@ class Project:
                 raise TypeError(f"params must be a dictionary, not {type(params)}")
             self.pars.update(params)
 
+        # if only one observatory is given, make it a set:
+        if isinstance(self.pars.observatories, str):
+            self.pars.observatories = {self.pars.observatories}
+
         # verify that the list of observatory names is castable to a set
         if not isinstance(self.pars.observatories, (set, list, tuple)):
             raise TypeError(
@@ -105,6 +109,7 @@ class Project:
         # make observatories:
         if obs_params is None:
             obs_params = {}
+
         self.observatories = [
             self.make_observatory(name=obs, params=obs_params.get(obs), config=config)
             for obs in self.pars.observatories
@@ -190,3 +195,8 @@ class Project:
         new_obs.initialize()
 
         return new_obs
+
+
+if __name__ == "__main__":
+    print("Starting a new project")
+    proj = Project(name="test", params={"observatories": "ZTF"}, config=False)
