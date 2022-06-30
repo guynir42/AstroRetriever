@@ -33,7 +33,8 @@ def test_utils():
 def test_load_save_parameters():
 
     filename = "parameters_test.yaml"
-    filename = os.path.join(basepath, filename)
+    filename = os.path.abspath(os.path.join(basepath, filename))
+    print(filename)
     # write an example parameters file
     with open(filename, "w") as file:
         data = {"username": "guy", "password": "12345"}
@@ -142,7 +143,9 @@ def test_project_config_file():
         },
         "ztf": {
             "credentials": {
-                "filename": os.path.join(basepath, "passwords_test.yaml"),
+                "filename": os.path.abspath(
+                    os.path.join(basepath, "passwords_test.yaml")
+                ),
             },
             "calibration": {
                 "cal_key": "ztf_calibration",
