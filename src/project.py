@@ -66,7 +66,7 @@ class Project:
         self.pars.analysis = {}  # global analysis parameters for all observatories
 
         # load the parameters from the config file:
-        if config:  # note that empty string is also false!
+        if config:  # note that empty string is also False!
             if isinstance(config, str):
                 filepath = config
             else:

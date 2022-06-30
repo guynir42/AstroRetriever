@@ -169,6 +169,7 @@ def test_project_config_file():
     filename = os.path.join(configs_folder, "default_test.yaml")
     with open(filename, "w") as file:
         yaml.dump(data, file, sort_keys=False)
+        print(filename)
     with open(data["ztf"]["credentials"]["filename"], "w") as file:
         password = str(uuid.uuid4())
         yaml.dump(
