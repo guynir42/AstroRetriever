@@ -9,37 +9,37 @@ import astropy.units as u
 from astropy.time import Time
 
 
-def get_username_password(service, filename="passwords.yml"):
-    """
-    Load the credentials from the passwords.yml file,
-    and return a tuple with the username and password
-    for the required service.
-
-    Parameters
-    ----------
-    service: scalar str
-        The service for which the credentials need to be loaded.
-        Must be a top-level item in the YAML file.
-
-    Returns
-    -------
-    credentials: 2-tuple of strings
-        A tuple that contains the username and password.
-
-    """
-    with open(filename) as file:
-        serv_dict = yaml.safe_load(file)
-        credentials = serv_dict.get(service, None)
-        if credentials is None:
-            raise KeyError(f'Cannot find credentials for service "{service}". ')
-
-        values = []
-        if "username" in credentials:
-            values.append(credentials.get("username"))
-        if "password" in credentials:
-            values.append(credentials.get("password"))
-
-        return values
+# def get_username_password(service, filename="passwords.yml"):
+#     """
+#     Load the credentials from the passwords.yml file,
+#     and return a tuple with the username and password
+#     for the required service.
+#
+#     Parameters
+#     ----------
+#     service: scalar str
+#         The service for which the credentials need to be loaded.
+#         Must be a top-level item in the YAML file.
+#
+#     Returns
+#     -------
+#     credentials: 2-tuple of strings
+#         A tuple that contains the username and password.
+#
+#     """
+#     with open(filename) as file:
+#         serv_dict = yaml.safe_load(file)
+#         credentials = serv_dict.get(service, None)
+#         if credentials is None:
+#             raise KeyError(f'Cannot find credentials for service "{service}". ')
+#
+#         values = []
+#         if "username" in credentials:
+#             values.append(credentials.get("username"))
+#         if "password" in credentials:
+#             values.append(credentials.get("password"))
+#
+#         return values
 
 
 def ra2deg(ra):

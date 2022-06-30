@@ -2,8 +2,47 @@ import numpy as np
 import requests
 from datetime import datetime
 
-from src import utils
 from ztfquery import lightcurve
+
+from src import utils
+from src.observatory import VirtualObservatory
+
+
+class VirtualZTF(VirtualObservatory):
+    def __init__(self, project_name, config=None, keyname=None):
+        """
+        Generate an instance of a VirtualZTF object.
+        This can be used to download ZTF data
+        and run analysis on it.
+
+        Parameters
+        ----------
+        Are the same as the VirtualObservatory class.
+        The only difference is that the obs_name is set to "ztf".
+
+        """
+
+        super().__init__("ztf", project_name, config, keyname)
+        self.pars.required_pars += ["credentials"]
+        # define any default parameters at the
+        # source code level here
+        # These could be overridden by the config file.
+        self.pars.credentials = {}  # load from the default credentials file
+        self.pars.data_folder = "ZTF"
+        self.pars.data_glob = project_name + "_ZTF_*.h5"
+
+        self.load_parameters()
+        # after loading the parameters
+        # the user may override them in external code
+        # and then call initialize() to verify
+        # that all required parameters are set.
+
+    def initialize(self):
+        """
+        Verify inputs to the observatory.
+        """
+        super().initialize()
+        # verify parameters have the correct type, etc.
 
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
