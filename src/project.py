@@ -199,4 +199,10 @@ class Project:
 
 if __name__ == "__main__":
     print("Starting a new project")
-    proj = Project(name="test", params={"observatories": "ZTF"}, config=False)
+    proj = Project(
+        name="WD",
+        params={"observatories": "ZTF"},
+        obs_params={"ZTF": {"data_glob": "lightcurves_WD*.h5"}},
+        config=False,
+    )
+    proj.observatories["ztf"].populate_sources()

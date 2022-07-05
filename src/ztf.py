@@ -1,6 +1,11 @@
-import numpy as np
+import os
+import glob
 import requests
 from datetime import datetime
+import numpy as np
+import pandas as pd
+
+from timeit import default_timer as timer
 
 from ztfquery import lightcurve
 
@@ -43,6 +48,33 @@ class VirtualZTF(VirtualObservatory):
         """
         super().initialize()
         # verify parameters have the correct type, etc.
+
+    def populate_sources(self):
+        """
+        Read the list of files with data,
+        and match them up with the catalog,
+        so that each catalog row that has
+        data associated with it is also
+        instantiated in the database.
+
+        """
+
+        dir = self.pars.get_data_path()
+        print(dir)
+
+        for i, filename in enumerate(glob.glob(os.path.join(dir, self.pars.data_glob))):
+            if i > 0:
+                break
+            print(filename)
+            with pd.HDFStore(filename) as store:
+                keys = store.keys()
+                for j, k in enumerate(keys):
+                    df = store[k]
+                    if len(df) > 0:
+                        print(df.head())
+                        print(df.info())
+                        print(df.columns)
+                        print(f"first row: {df.iloc[0]}")
 
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):

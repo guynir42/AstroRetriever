@@ -139,7 +139,7 @@ class Parameters:
         Get the path to the data directory.
         """
         if hasattr(self, "data_folder"):
-            return os.path.join(DATA_ROOT or "", self.data_path)
+            return os.path.join(DATA_ROOT or "", self.data_folder)
         else:
             return DATA_ROOT or ""
 
