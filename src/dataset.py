@@ -103,7 +103,7 @@ class Dataset(Base):
         sa.Boolean,
         nullable=False,
         default=False,
-        doc="Whether this dataset is publically available",
+        doc="Whether this dataset is publicly available",
     )
 
     def load_data(self):

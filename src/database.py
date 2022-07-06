@@ -9,6 +9,7 @@
 
 # create DB using: psql -U postgres -d postgres -c "CREATE DATABASE virtualobserver"
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
+import uuid
 import sqlalchemy as sa
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -19,7 +20,7 @@ engine = sa.create_engine(url, future=True)
 if not database_exists(engine.url):
     create_database(engine.url)
 
-print(f"Is database found: {database_exists(engine.url)}")
+# print(f"Is database found: {database_exists(engine.url)}")
 
 Session = sessionmaker(bind=engine)
 
@@ -29,17 +30,18 @@ if __name__ == "__main__":
     import numpy as np
     from src.source import Source
 
-    # from src.dataset import Dataset
-    # from src.detection import Detection
-
-    engine.echo = True
     Source.metadata.create_all(engine)
 
     with Session() as session:
         new_source = Source(
-            name="test_source",
+            name=str(uuid.uuid4()),
             ra=np.random.uniform(0, 360),
             dec=np.random.uniform(-90, 90),
         )
-        session.add(new_source)
-        session.commit()
+        if not new_source.check_duplicates(session=session, sep=2 / 3600):
+            session.add(new_source)
+            session.commit()
+        else:
+            print(
+                f'Duplicate source found within {2}" of ra= {new_source.ra:.3f} / dec= {new_source.dec:.3f}'
+            )

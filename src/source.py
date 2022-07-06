@@ -1,13 +1,52 @@
+import warnings
 import sqlalchemy as sa
 from sqlalchemy.orm import relationship
+from sqlalchemy.schema import UniqueConstraint
 
 import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
 
-from database import Base
+from database import Base, Session
 from src.dataset import Dataset
 from src.detection import Detection
+
+# ref: https://github.com/skyportal/conesearch-alchemy
+
+DEFAULT_PROJECT = "test_project"
+
+# get rid of annoying cosd/sind warnings regarding conesearch_alchemy:
+# ref: https://github.com/tiangolo/sqlmodel/issues/189#issuecomment-1018014753
+warnings.filterwarnings(
+    "ignore", ".*Class .* will not make use of SQL compilation caching.*"
+)
+
+
+def cone_search(ra, dec, sep=2 / 3600):
+    """
+    Find all sources at a radius "sep" from a given position.
+    Returns a select statement to be executed with a session:
+    >> session.scalars(cone_search(...)).all()
+
+
+    Parameters
+    ----------
+    ra: float
+        Center of cone's right ascension (in degrees).
+    dec: float
+        Center of cone's declination (in degrees).
+    sep: float, optional
+        Radius of cone (in degrees).
+
+    Returns
+    -------
+    sources: select statement
+        A select statement that matches sources within the cone.
+        Can be further filtered or executed using a session.
+    """
+    p = conesearch_alchemy.Point(ra=ra, dec=dec)
+    stmt = sa.select(Source).where(Source.within(p, sep))
+    return stmt
 
 
 class Source(Base, conesearch_alchemy.Point):
@@ -21,11 +60,24 @@ class Source(Base, conesearch_alchemy.Point):
         autoincrement=True,
         doc="Unique identifier for this source",
     )
-    name = sa.Column(
-        sa.String, nullable=False, index=True, unique=True, doc="Name of the source"
-    )
+    name = sa.Column(sa.String, nullable=False, index=True, doc="Name of the source")
 
     # ra and dec are included from the Point class
+
+    project = sa.Column(
+        sa.String,
+        nullable=False,
+        default=DEFAULT_PROJECT,
+        index=True,
+        doc="Project name to which this source is associated with",
+    )
+
+    origin = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Where this source came from in a general sense",
+    )
 
     classification = sa.Column(
         sa.String, nullable=True, doc="Classification of the source"
@@ -67,13 +119,30 @@ class Source(Base, conesearch_alchemy.Point):
         doc="Detections associated with this source",
     )
 
+    __table_args__ = (
+        UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
+    )
+
     def __init__(
-        self, name, ra, dec, alias=None, mag=None, mag_err=None, mag_filter=None
+        self,
+        name,
+        ra,
+        dec,
+        project=None,
+        alias=None,
+        mag=None,
+        mag_err=None,
+        mag_filter=None,
     ):
 
         self.name = name
         self.ra = ra
         self.dec = dec
+
+        if project is not None:
+            self.project = project
+        else:
+            self.project = DEFAULT_PROJECT
 
         if alias is not None:
             self.alias = alias
@@ -89,3 +158,16 @@ class Source(Base, conesearch_alchemy.Point):
 
         # assign this coordinate a healpix ID
         self.healpix = ha.constants.HPX.lonlat_to_healpix(ra * u.deg, dec * u.deg)
+
+    def check_duplicates(self, project=None, sep=2 / 3600, session=None):
+        if project is None:
+            project = DEFAULT_PROJECT
+
+        stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
+        stmt = stmt.where(Source.project == project)
+
+        if session is None:
+            session = Session()
+
+        sources = session.scalars(stmt).first()
+        return sources is not None
