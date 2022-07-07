@@ -35,6 +35,7 @@ class Parameters:
             a ValueError is raised.
         """
         self.required_pars = required_pars
+        self.verbose = 0  # level of verbosity (0=quiet)
 
     def verify(self):
         """

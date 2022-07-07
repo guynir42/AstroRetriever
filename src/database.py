@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+
 url = "postgresql://postgres@localhost:5432/virtualobserver"
 
 engine = sa.create_engine(url, future=True)
@@ -25,6 +26,17 @@ if not database_exists(engine.url):
 Session = sessionmaker(bind=engine)
 
 Base = declarative_base()
+
+
+def clear_tables():
+    from src.source import Source
+    from src.dataset import Dataset
+    from src.detection import Detection
+
+    Source.metadata.drop_all(engine)
+    Dataset.metadata.drop_all(engine)
+    Detection.metadata.drop_all(engine)
+
 
 if __name__ == "__main__":
     import numpy as np

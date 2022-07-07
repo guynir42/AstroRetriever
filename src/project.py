@@ -1,10 +1,14 @@
 import importlib
 import os
 
+import sqlalchemy as sa
+
+from src.database import Session
 from src.parameters import Parameters
-from src.analysis import Analysis
 from src.catalog import Catalog
+from src.source import Source
 from src.calibration import Calibration
+from src.analysis import Analysis
 
 
 class Project:
@@ -104,7 +108,8 @@ class Project:
         self.pars.verify()  # make sure all parameters are set
 
         # make a catalog object based on the parameters:
-        self.catalog = Catalog(**self.pars.catalog)
+        self.catalog = Catalog(**self.pars.catalog, verbose=self.pars.verbose)
+        self.catalog.load()
 
         # make observatories:
         if obs_params is None:
@@ -175,6 +180,7 @@ class Project:
                 raise TypeError(f"params must be a dictionary, not {type(params)}")
             new_obs.pars.update(params)
 
+        new_obs.pars.verbose = self.pars.verbose
         # parse parameters for calibration of this observatory
         new_obs.calibration.pars.update(self.pars.calibration)  # project pars
         new_obs.calibration.pars.update(new_obs.pars.calibration)  # observatory pars
@@ -196,13 +202,45 @@ class Project:
 
         return new_obs
 
+    def get_all_sources(self):
+        """
+        Get all sources from all observatories.
+        """
+        stmt = sa.select(Source).where(Source.project == self.name)
+        with Session() as session:
+            sources = session.scalars(stmt).all()
+        return sources
+
+    def delete_all_sources(self):
+        """
+        Delete all sources associated with this project.
+        """
+        stmt = sa.delete(Source).where(Source.project == self.name)
+        with Session() as session:
+            session.execute(stmt)
+            session.commit()
+
 
 if __name__ == "__main__":
     print("Starting a new project")
     proj = Project(
         name="WD",
-        params={"observatories": "ZTF"},
-        obs_params={"ZTF": {"data_glob": "lightcurves_WD*.h5"}},
+        params={
+            "observatories": "ZTF",  # a single observatory named ZTF
+            "catalog": {"default": "WD"},  # load the default WD catalog
+            "verbose": 1,  # print out some info
+        },
+        obs_params={
+            "ZTF": {  # instructions for ZTF specifically
+                "data_glob": "lightcurves_WD*.h5",  # filename format
+                "catalog_matching": "number",  # match by catalog row number
+                "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
+            }
+        },
         config=False,
     )
-    proj.observatories["ztf"].populate_sources()
+    proj.observatories["ztf"].populate_sources(number=1)
+    sources = proj.get_all_sources()
+    print(
+        f'Database contains {len(sources)} sources associated with project "{proj.name}"'
+    )

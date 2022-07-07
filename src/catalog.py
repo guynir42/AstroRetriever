@@ -19,7 +19,13 @@ class Catalog:
 
         self.pars = Parameters(
             required_pars=[
+                "catalog_name",
                 "filename",
+                "name_column",
+                "ra_column",
+                "dec_column",
+                "mag_column",
+                "mag_filter_name",
             ]
         )
         # set default values
@@ -35,6 +41,7 @@ class Catalog:
         self.pars.verify()
 
         self.data = None
+        self.name_to_row = None
 
     def guess_file_type(self):
         """
@@ -106,6 +113,8 @@ class Catalog:
         if self.data is None or force_reload or force_redownload:
             self.load_from_disk(force_redownload)
 
+        self.make_locator()
+
     def load_from_disk(self, force_redownload=False):
         """
         Load the catalog from disk.
@@ -175,6 +184,19 @@ class Catalog:
     def check_sanitizer(self, input_str):
         return SANITIZE_RE.sub("", input_str)
 
+    def make_locator(self):
+        """
+        Generate a dictionary that translates
+        from object name to row index.
+        """
+
+        self.name_to_row = {
+            name: index
+            for name, index in zip(
+                self.data[self.pars.name_column], range(len(self.data))
+            )
+        }
+
     def setup_from_defaults(self, default):
         """
         Set up the catalog using a default keyword.
@@ -187,6 +209,7 @@ class Catalog:
             if not os.path.isfile(self.pars.filename):
                 self.make_test_catalog()
         elif default == "wd" or default == "white dwarfs":
+            self.pars.catalog_name = "Gaia eDR3 white dwarfs"
             # file to save inside "catalogs" directory
             self.pars.filename = "GaiaEDR3_WD_main.fits"
             # URL to get this file if missing:
@@ -200,6 +223,13 @@ class Catalog:
                 "https://ui.adsabs.harvard.edu/abs/" "2021MNRAS.508.3877G/abstract"
             )
 
+            self.pars.name_column = "WDJ_name"
+            self.pars.ra_column = "ra"
+            self.pars.dec_column = "dec"
+            self.pars.mag_column = "phot_g_mean_mag"
+            self.pars.mag_err_column = "phot_g_mean_mag_error"
+            self.pars.mag_filter_name = "Gaia_G"
+
     def make_test_catalog(self):
         """
         Make a test catalog, save it to catalogs/test.csv.
@@ -207,6 +237,53 @@ class Catalog:
         pass
         # TODO: finish this and add tests of this module
 
+    def get_row(self, loc, index_type="number"):
+
+        if self.data is None:
+            raise ValueError("Catalog not loaded.")
+        if len(self.data) == 0:
+            raise ValueError("Catalog is empty.")
+
+        if index_type == "number":
+            return self.data[loc]
+        elif index_type == "name":
+            return self.data[self.name_to_row[loc]]
+        else:
+            raise ValueError('index_type must be "number" or "name"')
+
+    def extract_from_row(self, row):
+        """
+        Extract the relevant information from a row of the catalog.
+        """
+        index = self.name_to_row[row[self.pars.name_column]]
+        name = self.to_string(row[self.pars.name_column])
+        ra = float(row[self.pars.ra_column])
+        dec = float(row[self.pars.dec_column])
+        mag = float(row[self.pars.mag_column])
+        if hasattr(self.pars, "mag_err_column"):
+            mag_err = float(row[self.pars.mag_err_column])
+        else:
+            mag_err = None
+        filter_name = self.pars.mag_filter_name
+        if hasattr(self.pars, "alias_column"):
+            alias = self.to_string(row[self.pars.alias_column])
+        else:
+            alias = None
+
+        return index, name, ra, dec, mag, mag_err, filter_name, alias
+
+    @staticmethod
+    def to_string(string):
+        """
+        Convert a string or a bytes object to a string
+        """
+        if isinstance(string, bytes):
+            # can later parametrize the encoding
+            return string.decode("utf-8")
+        else:
+            return string
+
 
 if __name__ == "__main__":
     c = Catalog(default="wd")
+    c.load()

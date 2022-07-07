@@ -4,6 +4,7 @@ import pandas as pd
 import xarray as xr
 import sqlalchemy as sa
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
 
 from database import Base
 
@@ -51,11 +52,18 @@ class Dataset(Base):
         index=True,
         doc="Filename of the dataset, including path, relative to the DATA_ROOT",
     )
+    type = sa.Column(
+        sa.String, nullable=False, default="photometry", doc="Type of the dataset"
+    )
+
     format = sa.Column(
         sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
     )
-    type = sa.Column(
-        sa.String, nullable=False, default="photometry", doc="Type of the dataset"
+
+    load_instructions = sa.Column(
+        JSONB,
+        nullable=True,
+        doc="Instructions dictionary for loading the data from disk",
     )
 
     # timing data and number / size of images

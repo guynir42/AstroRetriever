@@ -1,10 +1,16 @@
 import os
+import glob
+import re
 import yaml
 import validators
 import numpy as np
+import pandas as pd
+import sqlalchemy as sa
 
 from astropy.io import fits
 
+from src.database import Session
+from src.source import Source, get_source_identifiers
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.calibration import Calibration
@@ -68,10 +74,15 @@ class VirtualObservatory:
                 "analysis",
                 "data_folder",
                 "data_glob",
+                "dataset_identifier",
+                "catalog_matching",
             ]
         )
         self.pars.calibration = {}
         self.pars.analysis = {}
+        self.pars.dataset_attribute = "source_name"
+        self.pars.dataset_identifier = "key"
+        self.pars.catalog_matching = "name"
 
     def initialize(self):
         """
@@ -220,11 +231,184 @@ class VirtualObservatory:
     def download(self):
         raise NotImplementedError("download() must be implemented in subclass")
 
-    def populate_sources(self):
-        raise NotImplementedError("populate_sources() must be implemented in subclass")
+    def populate_sources(self, number=None):
+        # raise NotImplementedError("populate_sources() must be implemented in subclass")
+        """
+        Read the list of files with data,
+        and match them up with the catalog,
+        so that each catalog row that has
+        data associated with it is also
+        instantiated in the database.
 
-    def save_source(self, ra, dec, data={}):
-        pass
+        Parameters
+        ----------
+        number: int
+            The maximum number of files to read.
+            Default is None, which means all files
+            found in the directory.
+
+        """
+        if self.pars.catalog_matching == "number":
+            column = "cat_index"
+        elif self.pars.catalog_matching == "name":
+            column = "cat_id"
+        else:
+            raise ValueError("catalog_matching must be either 'number' or 'name'")
+
+        # get a list of existing sources and their ID
+        source_ids = get_source_identifiers(self.project_name, column)
+
+        dir = self.pars.get_data_path()
+        if self.pars.verbose:
+            print(f"Reading from data folder: {dir}")
+
+        with Session() as session:
+            for i, filename in enumerate(
+                glob.glob(os.path.join(dir, self.pars.data_glob))
+            ):
+                if number is not None and i >= number:
+                    break
+
+                if self.pars.verbose:
+                    print(f"Reading filename: {filename}")
+                # TODO: add if-else for different file types
+                with pd.HDFStore(filename) as store:
+                    keys = store.keys()
+                    for j, k in enumerate(keys):
+                        data = store[k]
+                        cat_id = self.find_dataset_identifier(data, k)
+                        self.save_source(data, cat_id, source_ids, session)
+
+        if self.pars.verbose:
+            print("Done populating sources.")
+
+    def find_dataset_identifier(self, data, key):
+        """
+        Find the identifier that connects the data
+        loaded from file with the catalog row and
+        eventually to the source in the database.
+
+        Parameters
+        ----------
+        data:
+            Data loaded from file.
+            Can be a dataframe or other data types.
+        key:
+            Key of the data loaded from file.
+            For HDF5 files, this would be
+            the name of the group.
+
+        Returns
+        -------
+        str or int
+            The identifier that connects the data
+            to the catalog row.
+            If self.pars.catalog_matching is 'name',
+            this would be a string (the name of the source).
+            If it is 'number', this would be an integer
+            (the index of the source in the catalog).
+        """
+        if self.pars.dataset_identifier == "attribute":
+            if not hasattr(self.pars, "dataset_attribute"):
+                raise ValueError(
+                    "When using dataset_identifier='attribute', "
+                    "you must specify the dataset_attribute, "
+                    "that is the name of the attribute "
+                    "that contains the identifier."
+                )
+            value = getattr(data, self.pars.dataset_attribute)
+        elif self.pars.dataset_identifier == "key":
+            if self.pars.catalog_matching == "number":
+                value = int(re.search(r"\d+", key).group())
+            elif self.pars.catalog_matching == "name":
+                value = key
+        else:
+            raise ValueError("dataset_identifier must be either 'attribute' or 'key'")
+
+        if self.pars.catalog_matching == "number":
+            value = int(value)
+
+        return value
+
+    def save_source(self, data, cat_id, source_ids, session):
+        """
+        Save a source to the database,
+        using the dataset loaded from file,
+        and matching it to the catalog.
+        If the source already exists in the database,
+        nothing happens.
+        If the source does not exist in the database,
+        it is created and it's id is added to the source_ids.
+
+        Parameters
+        ----------
+        data: dataframe or other data types
+            Data loaded from file.
+            For HDF5 files this is a dataframe.
+        cat_id: str or int
+            The identifier that connects the data
+            to the catalog row. Can be a string
+            (the name of the source) or an integer
+            (the index of the source in the catalog).
+        source_ids: set of str or int
+            Set of identifiers for sources that already
+            exist in the database.
+            Any new data with the same identifier is skipped,
+            and any new data not in the set is added.
+        session: sqlalchemy.orm.session.Session
+            The current session to which we add
+            newly created sources.
+
+        """
+        if self.pars.verbose > 1:
+            print(
+                f"Loaded data for source {cat_id} | "
+                f"len(data): {len(data)} | "
+                f"id in source_ids: {cat_id in source_ids}"
+            )
+
+        if len(data) <= 0:
+            return  # no data
+
+        if cat_id in source_ids:
+            return  # source already exists
+
+        row = self.catalog.get_row(cat_id, self.pars.catalog_matching)
+
+        (
+            index,
+            name,
+            ra,
+            dec,
+            mag,
+            mag_err,
+            filter_name,
+            alias,
+        ) = self.catalog.extract_from_row(row)
+        new_source = Source(
+            name=name,
+            ra=ra,
+            dec=dec,
+            project=self.project_name,
+            alias=[alias] if alias else None,
+            mag=mag,
+            mag_err=mag_err,
+            mag_filter=filter_name,
+        )
+        new_source.cat_id = name
+        new_source.cat_index = index
+        new_source.cat_name = self.catalog.pars.catalog_name
+        new_source.datasets = self.parse_datasets(data)
+
+        # TODO: is here the point where we also do analysis?
+
+        session.add(new_source)
+        session.commit()
+        source_ids.add(cat_id)
+
+    def parse_datasets(self, data):
+        # TODO: finish this
+        return []
 
 
 class VirtualDemoObs(VirtualObservatory):
