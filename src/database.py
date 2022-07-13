@@ -15,7 +15,7 @@ from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 
-url = "postgresql://postgres@localhost:5432/virtualobserver"
+url = "postgresql://postgres:postgres@localhost:5432/virtualobserver"
 
 engine = sa.create_engine(url, future=True)
 if not database_exists(engine.url):
