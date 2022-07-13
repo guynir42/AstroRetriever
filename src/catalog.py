@@ -260,7 +260,9 @@ class Catalog:
         df = pd.DataFrame(data)
         if filename is None:
             filename = "test.csv"
-        filename = os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
+        filename = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
+        )
         df.to_csv(filename, index=False, header=True)
 
     def get_row(self, loc, index_type="number"):
