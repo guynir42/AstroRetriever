@@ -8,7 +8,7 @@ import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
 
-from database import Base, Session
+from src.database import Base, Session
 from src.dataset import Dataset
 from src.detection import Detection
 

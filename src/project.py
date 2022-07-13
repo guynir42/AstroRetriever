@@ -108,6 +108,8 @@ class Project:
         self.pars.verify()  # make sure all parameters are set
 
         # make a catalog object based on the parameters:
+        if len(self.pars.catalog) == 0:
+            self.pars.catalog = {"default": "test"}
         self.catalog = Catalog(**self.pars.catalog, verbose=self.pars.verbose)
         self.catalog.load()
 

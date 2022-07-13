@@ -77,6 +77,7 @@ def test_load_save_parameters():
             "password",
             "extra_parameter",
             "required_pars",
+            "verbose",
         } == set(new_data.keys())
         assert new_data["username"] == "guy"
         assert new_data["password"] == "12345"
@@ -96,15 +97,12 @@ def test_default_project():
 
 def test_project_user_inputs():
 
-    # TODO: make a CVS catalog file to check it finds it ok
-
     project_str = str(uuid.uuid4())
     proj = Project(
         name="default_test",
         params={
             "project_string": project_str,
             "observatories": ["ZTF"],
-            "catalog": {"filename": "demo_catalog.csv"},
             "calibration": {"cal_key": "cal_value"},
             "analysis": {"an_key": "an_value"},
         },
@@ -117,7 +115,7 @@ def test_project_user_inputs():
     # check the project parameters are loaded correctly
     assert proj.pars.project_string == project_str
     assert proj.pars.observatories == {"ZTF"}
-    assert proj.catalog.pars.filename == "demo_catalog.csv"
+    assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
     assert "ztf" in proj.observatories
@@ -210,6 +208,5 @@ def test_project_config_file():
         assert proj.pars.project_string == project_str2
 
     finally:
-        pass
         os.remove(filename)
         os.remove(data["ztf"]["credentials"]["filename"])

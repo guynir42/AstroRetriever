@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
-from database import Base
+from src.database import Base
 
 DATA_ROOT = os.getenv("VO_DATA") or ""
 

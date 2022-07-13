@@ -1,6 +1,6 @@
 import sqlalchemy as sa
 
-from database import Base
+from src.database import Base
 
 
 class Detection(Base):

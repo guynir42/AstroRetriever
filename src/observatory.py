@@ -407,6 +407,17 @@ class VirtualObservatory:
         source_ids.add(cat_id)
 
     def parse_datasets(self, data):
+        """
+
+        Parameters
+        ----------
+        data
+
+        Returns
+        -------
+
+        """
+
         # TODO: finish this
         return []
 

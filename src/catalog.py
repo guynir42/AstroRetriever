@@ -34,9 +34,12 @@ class Catalog:
         # load parameters from user input:
         if "default" in kwargs:
             self.setup_from_defaults(kwargs["default"])
+        from pprint import pprint
 
         # add any additional updates after that
         self.pars.update(kwargs)
+        if not hasattr(self.pars, "catalog_name") or self.pars.catalog_name is None:
+            self.pars.catalog_name = self.pars.filename.split(".")[0]
 
         self.pars.verify()
 
@@ -112,8 +115,8 @@ class Catalog:
         """
         if self.data is None or force_reload or force_redownload:
             self.load_from_disk(force_redownload)
-
-        self.make_locator()
+        if self.data is not None and len(self.data) > 0:
+            self.make_locator()
 
     def load_from_disk(self, force_redownload=False):
         """
@@ -143,7 +146,7 @@ class Catalog:
             with fits.open(self.get_fullpath()) as hdul:
                 self.data = np.array(hdul[1].data)
         elif type == "csv":
-            pass
+            self.data = pd.read_csv(self.get_fullpath())
         else:
             raise ValueError(f"Unknown file type: {type}")
 
@@ -181,7 +184,8 @@ class Catalog:
             if os.path.isfile(downloaded_filename):
                 os.remove(downloaded_filename)
 
-    def check_sanitizer(self, input_str):
+    @staticmethod
+    def check_sanitizer(input_str):
         return SANITIZE_RE.sub("", input_str)
 
     def make_locator(self):
@@ -189,7 +193,8 @@ class Catalog:
         Generate a dictionary that translates
         from object name to row index.
         """
-
+        if self.data is None:
+            raise ValueError("Catalog not loaded.")
         self.name_to_row = {
             name: index
             for name, index in zip(
@@ -205,9 +210,16 @@ class Catalog:
         default = default.lower().replace("_", " ").replace("-", " ")
 
         if default == "test":
-            self.pars.filename = "catalogs/test.csv"
-            if not os.path.isfile(self.pars.filename):
-                self.make_test_catalog()
+            self.pars.catalog_name = "test catalog"
+            self.pars.name_column = "object_id"
+            self.pars.ra_column = "ra"
+            self.pars.dec_column = "dec"
+            self.pars.mag_column = "mag"
+            self.pars.mag_error_column = "magerr"
+            self.pars.mag_filter_name = "R"
+            self.pars.filename = "test.csv"
+            if not os.path.isfile(self.get_fullpath()):
+                self.make_test_catalog(self.pars.filename)
         elif default == "wd" or default == "white dwarfs":
             self.pars.catalog_name = "Gaia eDR3 white dwarfs"
             # file to save inside "catalogs" directory
@@ -230,12 +242,26 @@ class Catalog:
             self.pars.mag_err_column = "phot_g_mean_mag_error"
             self.pars.mag_filter_name = "Gaia_G"
 
-    def make_test_catalog(self):
+    def make_test_catalog(self, filename=None, number=10):
         """
         Make a test catalog, save it to catalogs/test.csv.
         """
-        pass
-        # TODO: finish this and add tests of this module
+
+        ra = np.random.uniform(0, 360, number)
+        dec = np.random.uniform(-90, 90, number)
+        mag = np.random.uniform(15, 20, number)
+        mag_err = np.random.uniform(0.1, 0.5, number)
+        names = []
+        for i in range(len(ra)):
+            names.append(f"J{self.ra2sex(ra[i])}{self.dec2sex(dec[i])}")
+
+        data = {"object_id": names, "ra": ra, "dec": dec, "mag": mag, "magerr": mag_err}
+
+        df = pd.DataFrame(data)
+        if filename is None:
+            filename = "test.csv"
+        filename = os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
+        df.to_csv(filename, index=False, header=True)
 
     def get_row(self, loc, index_type="number"):
 
@@ -282,6 +308,25 @@ class Catalog:
             return string.decode("utf-8")
         else:
             return string
+
+    @staticmethod
+    def ra2sex(ra):
+        """
+        Convert an RA in degrees to a string in sexagesimal format.
+        """
+        if ra < 0 or ra > 360:
+            raise ValueError("RA out of range.")
+        ra /= 15.0  # convert to hours
+        return f"{int(ra):d}:{int((ra % 1) * 60):d}:{((ra % 1) * 60) % 1 * 60:.2f}"
+
+    @staticmethod
+    def dec2sex(dec):
+        """
+        Convert a Dec in degrees to a string in sexagesimal format.
+        """
+        if dec < -90 or dec > 90:
+            raise ValueError("Dec out of range.")
+        return f"{int(dec):+d}:{int((dec % 1) * 60):d}:{((dec % 1) * 60) % 1 * 60:.1f}"
 
 
 if __name__ == "__main__":
