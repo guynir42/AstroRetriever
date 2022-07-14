@@ -16,6 +16,7 @@ distlib==0.3.4
 filelock==3.7.0
 fonttools==4.33.3
 greenlet==1.1.2
+h5py==3.7.0
 healpix-alchemy==1.0.1
 html5lib==1.1
 identify==2.5.0

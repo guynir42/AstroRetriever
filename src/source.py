@@ -1,5 +1,6 @@
 import warnings
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.orm import relationship
 from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -21,6 +22,9 @@ DEFAULT_PROJECT = "test_project"
 warnings.filterwarnings(
     "ignore", ".*Class .* will not make use of SQL compilation caching.*"
 )
+
+
+utcnow = func.timezone("UTC", func.current_timestamp())
 
 
 def get_source_identifiers(project_name, column="id"):
@@ -87,6 +91,23 @@ class Source(Base, conesearch_alchemy.Point):
         autoincrement=True,
         doc="Unique identifier for this source",
     )
+
+    created_at = sa.Column(
+        sa.DateTime,
+        nullable=False,
+        default=utcnow,
+        index=True,
+        doc="UTC time of insertion of object's row into the database.",
+    )
+
+    modified = sa.Column(
+        sa.DateTime,
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+        doc="UTC time the object's row was last modified in the database.",
+    )
+
     name = sa.Column(sa.String, nullable=False, index=True, doc="Name of the source")
 
     # ra and dec are included from the Point class
@@ -145,24 +166,35 @@ class Source(Base, conesearch_alchemy.Point):
         JSONB, nullable=True, doc="Row from the catalog used to create this source"
     )
 
-    datasets = relationship(
-        "Dataset",
+    raw_data = relationship(
+        "RawData",
         backref="sources",
         cascade="save-update, merge, refresh-expire, expunge, delete",
         lazy="selectin",
         single_parent=True,
         passive_deletes=True,
-        doc="Datasets associated with this source",
+        doc="Raw Datasets associated with this source",
     )
-    detections = relationship(
-        "Detection",
+
+    lightcurves = relationship(
+        "PhotometricData",
         backref="sources",
         cascade="save-update, merge, refresh-expire, expunge, delete",
         lazy="selectin",
         single_parent=True,
         passive_deletes=True,
-        doc="Detections associated with this source",
+        doc="Photometric Datasets associated with this source",
     )
+
+    # detections = relationship(
+    #     "Detection",
+    #     backref="sources",
+    #     cascade="save-update, merge, refresh-expire, expunge, delete",
+    #     lazy="selectin",
+    #     single_parent=True,
+    #     passive_deletes=True,
+    #     doc="Detections associated with this source",
+    # )
 
     __table_args__ = (
         UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
@@ -241,7 +273,7 @@ class Source(Base, conesearch_alchemy.Point):
     def __repr__(self):
         string = (
             f'Source(name="{self.name}", ra={self.ra}, dec={self.dec}, mag= {self.mag}, '
-            f'project="{self.project}", datasets= {len(self.datasets)}, detections= {len(self.detections)})'
+            f'project="{self.project}", datasets= {len(self.raw_data)})'
         )
         return string
 

@@ -1,6 +1,7 @@
 .idea
 *credentials.yaml*
 catalogs/*
+tests/data_temp/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

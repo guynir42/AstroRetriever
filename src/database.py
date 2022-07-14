@@ -30,12 +30,20 @@ Base = declarative_base()
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import Dataset
+    from src.dataset import RawData, PhotometricData
     from src.detection import Detection
 
     Source.metadata.drop_all(engine)
-    Dataset.metadata.drop_all(engine)
-    Detection.metadata.drop_all(engine)
+    RawData.metadata.drop_all(engine)
+    PhotometricData.metadata.drop_all(engine)
+    # Detection.metadata.drop_all(engine)
+
+
+def clear_test_sources():
+    from src.source import Source
+
+    with Session() as session:
+        session.query(Source).filter(Source.project == "test_project").delete()
 
 
 if __name__ == "__main__":
@@ -44,16 +52,16 @@ if __name__ == "__main__":
 
     Source.metadata.create_all(engine)
 
-    with Session() as session:
-        new_source = Source(
-            name=str(uuid.uuid4()),
-            ra=np.random.uniform(0, 360),
-            dec=np.random.uniform(-90, 90),
-        )
-        if not new_source.check_duplicates(session=session, sep=2 / 3600):
-            session.add(new_source)
-            session.commit()
-        else:
-            print(
-                f'Duplicate source found within {2}" of ra= {new_source.ra:.3f} / dec= {new_source.dec:.3f}'
-            )
+    # with Session() as session:
+    #     new_source = Source(
+    #         name=str(uuid.uuid4()),
+    #         ra=np.random.uniform(0, 360),
+    #         dec=np.random.uniform(-90, 90),
+    #     )
+    #     if not new_source.check_duplicates(session=session, sep=2 / 3600):
+    #         session.add(new_source)
+    #         session.commit()
+    #     else:
+    #         print(
+    #             f'Duplicate source found within {2}" of ra= {new_source.ra:.3f} / dec= {new_source.dec:.3f}'
+    #         )

@@ -4,30 +4,21 @@ import yaml
 import uuid
 import pytest
 
+import numpy as np
+import pandas as pd
 
-from src import utils
+import sqlalchemy as sa
+
 from src.parameters import Parameters
 from src.project import Project
 from src.observatory import VirtualDemoObs
 from src.ztf import VirtualZTF
 
+from src.database import Session
+from src.source import Source
+from src.dataset import RawData
+
 basepath = os.path.abspath(os.path.dirname(__file__))
-
-
-def test_utils():
-    pass  # TODO: add tests to other util functions
-    # filename = "passwords_test.yml"
-    # with open(filename, "w") as file:
-    #     data = {"test": {"username": "guy", "password": "12345"}}
-    #     yaml.dump(data, file, sort_keys=False)
-    # try:
-    #     credentials = utils.get_username_password("test", filename)
-    #
-    #     assert credentials[0] == "guy"
-    #     assert credentials[1] == "12345"
-    #
-    # finally:
-    #     os.remove(filename)
 
 
 def test_load_save_parameters():
@@ -210,3 +201,63 @@ def test_project_config_file():
     finally:
         os.remove(filename)
         os.remove(data["ztf"]["credentials"]["filename"])
+
+
+def test_add_source_and_data():
+    with Session() as session:
+        # create a random source
+        source_id = str(uuid.uuid4())
+        new_source = Source(
+            name=source_id,
+            ra=np.random.uniform(0, 360),
+            dec=np.random.uniform(-90, 90),
+        )
+
+        # add some data to that
+        num_datasets = 2
+        num_points = 10
+        frames = []
+        for i in range(num_datasets):
+            filt = np.random.choice(["r", "g", "i", "z"])
+            mjd = np.random.uniform(57000, 58000, num_points)
+            mag = np.random.uniform(15, 20, num_points)
+            mag_err = np.random.uniform(0.1, 0.5, num_points)
+            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err)
+            df = pd.DataFrame(test_data)
+            df["filter"] = filt
+            frames.append(df)
+
+        # add the data to the database
+        if not os.path.isdir("data_temp"):
+            os.mkdir("data_temp")
+        filename = f"data_temp/{str(uuid.uuid4())}.h5"
+        df = pd.concat(frames)
+        new_data = RawData(df, filename, "lightcurve_1")
+        new_data.altdata = dict(foo="bar")
+        new_source.raw_data.append(new_data)
+
+        session.add(new_source)
+        session.commit()
+
+        try:
+            new_data.save()
+
+            assert new_source.id is not None
+            assert new_source.id == new_data.source_id
+
+            with pd.HDFStore(filename) as store:
+                df_from_file = store.get("lightcurve_1")
+                assert df_from_file.equals(df)
+                dict_from_file = store.get_storer("lightcurve_1").attrs
+                assert dict_from_file["foo"] == "bar"
+
+        finally:
+            if os.path.isfile(filename):
+                os.remove(filename)
+
+    # check that the data is in the database
+    with Session() as session:
+        sources = session.scalars(
+            sa.select(Source).where(Source.name == source_id)
+        ).first()
+        assert sources is not None

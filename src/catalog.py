@@ -3,6 +3,12 @@ import requests
 import re
 import subprocess
 import shutil
+from datetime import datetime, timezone
+import dateutil.parser
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astropy.time import Time
+
 
 import numpy as np
 import pandas as pd
@@ -263,6 +269,9 @@ class Catalog:
         filename = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
         )
+        path = os.path.dirname(filename)
+        if not os.path.isdir(path):
+            os.makedirs(path)
         df.to_csv(filename, index=False, header=True)
 
     def get_row(self, loc, index_type="number"):
@@ -319,7 +328,9 @@ class Catalog:
         if ra < 0 or ra > 360:
             raise ValueError("RA out of range.")
         ra /= 15.0  # convert to hours
-        return f"{int(ra):d}:{int((ra % 1) * 60):d}:{((ra % 1) * 60) % 1 * 60:.2f}"
+        return (
+            f"{int(ra):02d}:{int((ra % 1) * 60):02d}:{((ra % 1) * 60) % 1 * 60:05.2f}"
+        )
 
     @staticmethod
     def dec2sex(dec):
@@ -328,7 +339,104 @@ class Catalog:
         """
         if dec < -90 or dec > 90:
             raise ValueError("Dec out of range.")
-        return f"{int(dec):+d}:{int((dec % 1) * 60):d}:{((dec % 1) * 60) % 1 * 60:.1f}"
+        return f"{int(dec):+03d}:{int((dec % 1) * 60):02d}:{((dec % 1) * 60) % 1 * 60:04.1f}"
+
+    @staticmethod
+    def ra2deg(ra):
+        """
+        Convert the input right ascension into a float of decimal degrees.
+        The input can be a string (with hour angle units) or a float (degree units!).
+
+        Parameters
+        ----------
+        ra: scalar float or str
+            Input RA (right ascension).
+            Can be given in decimal degrees or in sexagesimal string (in hours!)
+            Example 1: 271.3
+            Example 2: 18:23:21.1
+
+        Returns
+        -------
+        ra: scalar float
+            The RA as a float, in decimal degrees
+
+        """
+        if type(ra) == str:
+            c = SkyCoord(ra=ra, dec=0, unit=(u.hourangle, u.degree))
+            ra = c.ra.value  # output in degrees
+        else:
+            ra = float(ra)
+
+        if not 0.0 < ra < 360.0:
+            raise ValueError(f"Value of RA ({ra}) is outside range (0 -> 360).")
+
+        return ra
+
+    @staticmethod
+    def dec2deg(dec):
+        """
+        Convert the input right ascension into a float of decimal degrees.
+        The input can be a string (with hour angle units) or a float (degree units!).
+
+        Parameters
+        ----------
+        dec: scalar float or str
+            Input declination.
+            Can be given in decimal degrees or in sexagesimal string (in degrees as well)
+            Example 1: +33.21 (northern hemisphere)
+            Example 2: -22.56 (southern hemisphere)
+            Example 3: +12.34.56.7
+
+        Returns
+        -------
+        dec: scalar float
+            The declination as a float, in decimal degrees
+
+        """
+        if type(dec) == str:
+            c = SkyCoord(ra=0, dec=dec, unit=(u.degree, u.degree))
+            dec = c.dec.value  # output in degrees
+        else:
+            dec = float(dec)
+
+        if not -90.0 < dec < 90.0:
+            raise ValueError(f"Value of dec ({dec}) is outside range (-90 -> +90).")
+
+        return dec
+
+    @staticmethod
+    def date2jd(date):
+        """
+        Parse a string or datetime object into a Julian Date (JD) float.
+        If string, will parse using dateutil.parser.parse.
+        If datetime, will convert to UTC or add that timezone if is naive.
+        If given as float, will just return it as a float.
+
+        Parameters
+        ----------
+        date: float or string or datetime
+            The input date or datetime object.
+
+        Returns
+        -------
+        jd: scalar float
+            The Julian Date associated with the input date.
+
+        """
+        if isinstance(date, datetime):
+            t = date
+        elif isinstance(date, str):
+            t = dateutil.parser.parse(date)
+        else:
+            return float(date)
+
+        if t.tzinfo is None:  # naive datetime (no timezone)
+            # turn a naive datetime into a UTC datetime
+            t = t.replace(tzinfo=timezone.utc)
+        else:  # non naive (has timezone)
+            t = t.astimezone(timezone.utc)
+
+        return Time(t).jd
 
 
 if __name__ == "__main__":

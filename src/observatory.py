@@ -11,6 +11,7 @@ from astropy.io import fits
 
 from src.database import Session
 from src.source import Source, get_source_identifiers
+from src.dataset import Dataset
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.calibration import Calibration
@@ -199,10 +200,8 @@ class VirtualObservatory:
 
     def run_analysis(self):
         """
-        Perform the the calibration and analysis
+        Perform calibration and analysis
         on each object in the catalog.
-
-
 
         """
         self.analysis.load_simulator()
@@ -211,7 +210,9 @@ class VirtualObservatory:
         for row in self.catalog:
             source = self.get_source(row)
             if source is not None:
-                self.calibration.apply_calibration(source)
+                for d in source.datasets:
+                    d.load()
+                    self.calibration.apply(d)
                 self.analysis.run(source, histograms=self.histograms)
 
     def get_source(self, row):
@@ -277,7 +278,7 @@ class VirtualObservatory:
                     for j, k in enumerate(keys):
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
-                        self.save_source(data, cat_id, source_ids, session)
+                        self.save_source(data, cat_id, source_ids, filename, k, session)
 
         if self.pars.verbose:
             print("Done populating sources.")
@@ -330,7 +331,7 @@ class VirtualObservatory:
 
         return value
 
-    def save_source(self, data, cat_id, source_ids, session):
+    def save_source(self, data, cat_id, source_ids, filename, key, session):
         """
         Save a source to the database,
         using the dataset loaded from file,
@@ -355,6 +356,10 @@ class VirtualObservatory:
             exist in the database.
             Any new data with the same identifier is skipped,
             and any new data not in the set is added.
+        filename: str
+            Full path to the file from which the data was loaded.
+        key: str
+            Key inside the file if multiple datasets are in each file.
         session: sqlalchemy.orm.session.Session
             The current session to which we add
             newly created sources.
@@ -385,6 +390,7 @@ class VirtualObservatory:
             filter_name,
             alias,
         ) = self.catalog.extract_from_row(row)
+
         new_source = Source(
             name=name,
             ra=ra,
@@ -398,28 +404,21 @@ class VirtualObservatory:
         new_source.cat_id = name
         new_source.cat_index = index
         new_source.cat_name = self.catalog.pars.catalog_name
-        new_source.datasets = self.parse_datasets(data)
-
-        # TODO: is here the point where we also do analysis?
 
         session.add(new_source)
         session.commit()
+        new_source.datasets = Dataset(
+            source_id=new_source.id,
+            data=data,
+            observatory=self.name,
+            filename=filename,
+            key=key,
+        )
+        session.add(new_source.datasets)
+        session.commit()
         source_ids.add(cat_id)
 
-    def parse_datasets(self, data):
-        """
-
-        Parameters
-        ----------
-        data
-
-        Returns
-        -------
-
-        """
-
-        # TODO: finish this
-        return []
+        # TODO: is here the point where we also do analysis?
 
 
 class VirtualDemoObs(VirtualObservatory):

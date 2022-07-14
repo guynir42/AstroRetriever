@@ -23,7 +23,7 @@ class Detection(Base):
     )
     dataset_id = sa.Column(
         sa.Integer,
-        sa.ForeignKey("datasets.id"),
+        sa.ForeignKey("raw_data.id"),
         nullable=True,
         index=True,
         doc="ID of the dataset this detection is associated with",
