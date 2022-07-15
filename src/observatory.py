@@ -18,6 +18,8 @@ from src.calibration import Calibration
 from src.histograms import Histograms
 from src.analysis import Analysis
 
+PHOT_ZP = 23.9
+
 
 class VirtualObservatory:
     """
@@ -419,6 +421,87 @@ class VirtualObservatory:
 
         # TODO: is here the point where we also do analysis?
 
+    def reduce(self, dataset, to="lcs", source=None, **kwargs):
+        """
+        Reduce raw data into more useful,
+        second level data product.
+        Input raw data could be
+        raw photometry, images, cutouts, spectra.
+        The type of reduction to use is inferred
+        from the dataset's "type" attribute.
+
+        The output that should be produced from
+        the raw data can be lightcurves (i.e.,
+        processed photometry ready for analysis)
+        or SED (i.e., Spectral Energy Distrubution,
+        which is just a reduced spectra ready for
+        analysis) or even just calibrating an image.
+        Possible values for the "to" input are:
+        "lcs", "sed", "img", "thumb".
+
+        Parameters
+        ----------
+        dataset: a src.dataset.RawData object (or list of such objects)
+            The raw data to reduce.
+        to: str
+            The type of output to produce.
+            Possible values are:
+            "lcs", "sed", "img", "thumb".
+            If the input type is photometric data,
+            the "to" will be replaced by "lcs".
+            If the input type is a spectrum,
+            the "to" will be replaced by "sed".
+            Imaging data can be reduced into
+            "img" (a calibrated image), "thumb" (a thumbnail),
+            or "lcs" (a lightcurve of extracted sources).
+        source: src.source.Source object
+            The source to which the dataset belongs.
+            If None, the reduction will not use any
+            data of the source, such as the expected
+            magnitude, the position, etc.
+        kwargs: dict
+            Additional arguments to pass to the reduction function.
+
+        Returns
+        -------
+        an object of a subclass of src.dataset.Dataset
+            The reduced dataset,
+            can be, e.g., a PhotometricData object.
+        """
+        if isinstance(dataset, list):
+            datasets = dataset
+        else:
+            datasets = [dataset]
+
+        for i, d in enumerate(datasets):
+            if not isinstance(d, RawData):
+                raise ValueError(
+                    f"Expected RawData object, but dataset {i} was a {type(d)}"
+                )
+
+        if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
+            return self.reduce_to_lightcurves(datasets, source, **kwargs)
+        elif to.lower() in ("sed", "seds", "spectra", "spectrum"):
+            return self.reduce_to_sed(datasets, source, **kwargs)
+        elif to.lower() == "img":
+            return self.reduce_to_image(datasets, source, **kwargs)
+        elif to.lower() == "thumb":
+            return self.reduce_to_thumbnail(datasets, source, **kwargs)
+        else:
+            raise ValueError(f'Unknown value for "to" input: {to}')
+
+    def reduce_to_lightcurves(self, datasets, source=None, **kwargs):
+        raise NotImplementedError("Photometric reduction not implemented in this class")
+
+    def reduce_to_sed(self, datasets, source=None, **kwargs):
+        raise NotImplementedError("SED reduction not implemented in this class")
+
+    def reduce_to_image(self, datasets, source=None, **kwargs):
+        raise NotImplementedError("Image reduction not implemented in this class")
+
+    def reduce_to_thumbnail(self, datasets, source=None, **kwargs):
+        raise NotImplementedError("Thumbnail reduction not implemented in this class")
+
 
 class VirtualDemoObs(VirtualObservatory):
     def __init__(self, project_name, config=None, keyname=None):
@@ -491,3 +574,75 @@ class VirtualDemoObs(VirtualObservatory):
         """
         pass
         # TODO: figure out how this will work!
+
+    def reduce_to_lightcurves(self, datasets, source=None, median=True, mag_range=None):
+        """
+        Reduce the datasets to lightcurves.
+
+        Parameters
+        ----------
+        datasets: a list of src.dataset.RawData objects
+            The raw data to reduce.
+        source: src.source.Source object
+            The source to which the dataset belongs.
+            If None, the reduction will not use any
+            data of the source, such as the expected
+            magnitude, the position, etc.
+        median: bool
+            If True, the median flux of each lightcurve
+            will be adjusted to the median of all measurements.
+        mag_range: float or None
+            If not None, and if the source is also given,
+            this value will be used to remove datasets
+            where the median magnitude is outside of this range,
+            relative to the source's magnitude.
+
+        Returns
+        -------
+        a list of src.dataset.PhotometricData objects
+            The reduced datasets, after minimal processing.
+            The reduced datasets will have uniform filter,
+            the median exposure time and frame rate is calculated,
+            and flux values will be calculated from the magnitudes.
+        """
+        allowed_types = "photometry"
+        allowed_dataclasses = pd.DataFrame
+        for i, d in enumerate(datasets):
+            # check the raw input types make sense
+            if d.type is None or d.type not in allowed_types:
+                raise ValueError(
+                    f"Expected RawData to contain {str(allowed_types)}, "
+                    f"but dataset {i} was a {d.type} dataset."
+                )
+            if not isinstance(d.data, allowed_dataclasses):
+                raise ValueError(
+                    f"Expected RawData to contain {str(allowed_dataclasses)}, "
+                    f"but data in dataset {i} was a {type(d.data)} object."
+                )
+
+        # check the source magnitude is within the range
+        if source and source.mag is not None and mag_range:
+            # need to make a copy of the list so we don't
+            # delete what we are iterating over!
+            for d in list(datasets):
+                mag = d.data[d.mag_col]
+
+                if not (
+                    source.mag - mag_range < np.nanmedian(mag) < source.mag + mag_range
+                ):
+                    datasets.remove(d)
+
+        # split the data by filters
+        # (assume all datasets have the same data class
+        # and that the internal column structure is the same)
+        if isinstance(datasets[0].data, pd.DataFrame):
+            frames = [d.data for d in datasets]
+            df = pd.concat(frames)
+            filt_col = datasets[0].filter_col
+            filters = df[filt_col].unique()
+            dfs = []
+            for f in filters:
+                dfs.append(df[df[filt_col] == f].reset_index(drop=True))
+                print(dfs[-1])
+
+        return []

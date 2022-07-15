@@ -9,7 +9,7 @@ from astropy.time import Time
 import h5py
 
 import sqlalchemy as sa
-from sqlalchemy import func, event
+from sqlalchemy import orm, func, event
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -20,6 +20,11 @@ from src.database import Base, Session, engine
 DATA_ROOT = os.getenv("VO_DATA")
 if DATA_ROOT is None:
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+
+
+AUTOLOAD = True
+AUTOSAVE = False
+OVERWRITE = False
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -55,10 +60,22 @@ class DatasetMixin:
         from the correct observatory object.
 
         """
+
+        self.set_default_attrs()
+
+        # these are only set when generating a new
+        # object, not when loading from database
+        self.autoload = AUTOLOAD
+        self.autosave = AUTOSAVE
+        self.overwrite = OVERWRITE
+
+        # first input data to allow
+        # the object to calculate some attributes
         if "data" in kwargs:
             self.data = kwargs["data"]
             del kwargs["data"]
 
+        # override any existing attributes
         for k, v in kwargs.items():
             if hasattr(self, k):
                 setattr(self, k, v)
@@ -77,6 +94,35 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         # TODO: figure out the series identifier and object
+
+    @orm.reconstructor
+    def init_on_load(self):
+        """
+        This is called when the object
+        is loaded from the database.
+        ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
+        """
+        self.set_default_attrs()
+
+    def set_default_attrs(self):
+        """
+        Sets up all the attributes that are
+        not mapped to the database.
+        These will be set to None when
+        the object is constructed and also
+        when it is loaded from the database.
+        """
+        self._data = None
+
+        # these will be filled when
+        # loading the data from disk
+        self.time_col = None
+        self.time_format = None
+        self.mag_col = None
+        self.mag_err_col = None
+        self.flux_col = None
+        self.flux_err_col = None
+        self.filter_col = None
 
     def guess_format(self):
         """
@@ -131,6 +177,19 @@ class DatasetMixin:
         else:
             raise ValueError(f"Unknown format {self.format}")
 
+    def guess_type(self):
+        """
+        Guess the type of data,
+        based on the shape and type of data.
+
+        Returns
+        -------
+        str
+            Can be either photometry, spectrum, image.
+        """
+        # TODO: make this a little bit smarter...
+        return "photometry"
+
     def calc_size(self):
         """
         Calculate the size of the data file.
@@ -164,14 +223,19 @@ class DatasetMixin:
         """
         Get the full path to the data file.
         """
-
-        return os.path.join(self.get_path(), self.filename)
+        if self.filename:
+            return os.path.join(self.get_path(), self.filename)
+        else:
+            return None
 
     def check_file_exists(self):
         """
         Check if the file exists on disk.
         """
-        return os.path.exists(self.get_fullname())
+        if self.filename:
+            return os.path.exists(self.get_fullname())
+        else:
+            return False
 
     def load(self):
         """
@@ -306,9 +370,11 @@ class DatasetMixin:
 
     def delete_data_from_disk(self):
         """
-        Delete the data file from disk.
+        Delete the data file from disk,
+        if it exists.
         """
-        os.remove(self.get_fullname())
+        if self.check_file_exists():
+            os.remove(self.get_fullname())
 
     @property
     def data(self):
@@ -330,38 +396,110 @@ class DatasetMixin:
         self.number = len(data)  # for imaging data this would be different?
         self.size = self.calc_size()
         self.format = self.guess_format()
+        self.type = self.guess_type()
+        self.set_col_names(data)
 
+    def set_col_names(self, data):
         if isinstance(data, pd.DataFrame):
             columns = data.columns
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
+        self.time_col = None
         t = None  # datetimes for each epoch
         for c in columns:
-            if c.lower() in ("jd", "jds", "juliandate", "juliandates"):
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "jd",
+                "jds",
+                "juliandate",
+                "juliandates",
+            ):
                 t = data[c].values
                 t = Time(t, format="jd", scale="utc").datetime
+                self.time_col = c
                 break
-            elif c.lower() in ("mjd", "mjds"):
+            elif c.lower().replace(" ", "").replace("_", "") in ("mjd", "mjds"):
                 t = data[c].values
                 t = Time(t, format="mjd", scale="utc").datetime
+                self.time_col = c
                 break
-            elif c.lower() in ("time", "times", "datetime", "datetimes"):
+            elif c.lower().replace(" ", "").replace("_", "") in (
+                "time",
+                "times",
+                "datetime",
+                "datetimes",
+            ):
                 t = data[c].values
                 if isinstance(t[0], (str, bytes)):
                     if "T" in t[0]:
                         t = Time(t, format="isot", scale="utc").datetime
                     else:
                         t = Time(t, format="iso", scale="utc").datetime
+                self.time_col = c
                 break
-            elif c.lower() == "timestamps":
+            elif c.lower().replace(" ", "").replace("_", "") == "timestamps":
                 t = data[c].values
                 t = Time(t, format="unix", scale="utc").datetime
+                self.time_col = c
                 break
 
         if t is not None:
             self.time_start = min(t)
             self.time_end = max(t)
+
+        self.mag_col = None
+        for c in columns:
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "mag",
+                "mags",
+                "magnitude",
+                "magnitudes",
+            ):
+                self.mag_col = c
+                break
+        self.mag_err_col = None
+        for c in columns:
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "magerr",
+                "magerr",
+                "magerror",
+            ):
+                self.mag_err_col = c
+                break
+
+        self.flux_col = None
+        for c in columns:
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "flux",
+                "fluxes",
+                "count",
+                "counts",
+            ):
+                self.flux_col = c
+                break
+
+        self.flux_err_col = None
+        for c in columns:
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "fluxerr",
+                "fluxerr",
+                "fluxerror",
+                "counterr",
+                "counterror",
+            ):
+                self.flux_err_col = c
+                break
+
+        self.filter_col = None
+        for c in columns:
+            if c.lower().replace(" ", "").replace("_", "") in (
+                "filt",
+                "filter",
+                "filtername",
+                "filtercode",
+            ):
+                self.filter_col = c
+                break
 
     id = sa.Column(
         sa.Integer,
@@ -491,24 +629,24 @@ class DatasetMixin:
         doc="Whether this dataset is publicly available",
     )
 
-    autosave = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        doc="Whether this dataset should be automatically saved",
-    )
-
     autoload = sa.Column(
         sa.Boolean,
         nullable=False,
-        default=True,
+        default=AUTOLOAD,
         doc="Whether this dataset should be automatically loaded (lazy loaded)",
+    )
+
+    autosave = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=AUTOSAVE,
+        doc="Whether this dataset should be automatically saved",
     )
 
     overwrite = sa.Column(
         sa.Boolean,
         nullable=False,
-        default=False,
+        default=OVERWRITE,
         doc="Whether the data on disk should be overwritten if it already exists "
         "(if False, an error will be raised)",
     )
@@ -599,9 +737,8 @@ class PhotometricData(DatasetMixin, Base):
     )
 
 
-# make sure the table exists
+# make sure all the tables exist
 RawData.metadata.create_all(engine)
-# make sure the table exists
 PhotometricData.metadata.create_all(engine)
 
 

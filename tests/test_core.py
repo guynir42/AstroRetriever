@@ -1,6 +1,6 @@
 import os
 import yaml
-
+import time
 import uuid
 import pytest
 
@@ -19,6 +19,7 @@ from src.database import Session
 from src.source import Source
 import src.dataset
 from src.dataset import RawData
+from src.observatory import VirtualDemoObs
 
 basepath = os.path.abspath(os.path.dirname(__file__))
 src.dataset.DATA_ROOT = basepath
@@ -211,32 +212,28 @@ def test_catalog():
 
 
 def test_add_source_and_data():
-    with Session() as session:
-        # create a random source
-        source_id = str(uuid.uuid4())
-        new_source = Source(
-            name=source_id,
-            ra=np.random.uniform(0, 360),
-            dec=np.random.uniform(-90, 90),
-        )
+    fullname = ""
+    try:  # at end, delete the temp file
 
-        # add some data to that
-        num_datasets = 2
-        num_points = 10
-        frames = []
-        for i in range(num_datasets):
+        with Session() as session:
+            # create a random source
+            source_id = str(uuid.uuid4())
+            new_source = Source(
+                name=source_id,
+                ra=np.random.uniform(0, 360),
+                dec=np.random.uniform(-90, 90),
+            )
+
+            # add some data to the source
+            num_points = 10
             filt = np.random.choice(["r", "g", "i", "z"], num_points)
             mjd = np.random.uniform(57000, 58000, num_points)
             mag = np.random.uniform(15, 20, num_points)
             mag_err = np.random.uniform(0.1, 0.5, num_points)
             test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt)
             df = pd.DataFrame(test_data)
-            frames.append(df)
 
-        fullname = ""
-        try:  # at end, delete the temp file
-            # add the data to the database
-            df = pd.concat(frames)
+            # add the data to a database mapped object
             new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
 
             # check the times make sense
@@ -258,17 +255,18 @@ def test_add_source_and_data():
             new_data.filename = "test_data.h5"
             # this should not work because the file
             # does not yet exist and autosave is False
+            assert new_data.autosave is False
+            assert new_data.check_file_exists() is False
             with pytest.raises(ValueError):
                 session.commit()
             session.rollback()
-            session.add(new_source)
-
             new_data.filename = None  # reset the filename
+
+            session.add(new_source)
 
             # filename should be auto-generated
             new_data.save()  # must save to allow RawData to be added to DB
-
-            session.commit()
+            session.commit()  # this should now work fine
             assert new_source.id is not None
             assert new_source.id == new_data.source_id
 
@@ -283,17 +281,85 @@ def test_add_source_and_data():
                 dict_from_file = store.get_storer(key).attrs
                 assert dict_from_file["foo"] == "bar"
 
-        finally:
-            if os.path.isfile(fullname):
-                os.remove(fullname)
+        # check that the data is in the database
+        with Session() as session:
+            sources = session.scalars(
+                sa.select(Source).where(Source.name == source_id)
+            ).first()
+            assert sources is not None
+            assert len(sources.raw_data) == 1
+            assert sources.raw_data[0].filename == filename
+            assert sources.raw_data[0].key == new_data.key
+            assert sources.raw_data[0].source_id == new_source.id
+            # this autoloads the data:
+            assert sources.raw_data[0].data.equals(df)
 
-    # check that the data is in the database
+    finally:
+        if os.path.isfile(fullname):
+            os.remove(fullname)
+    with pytest.raises(FileNotFoundError):
+        with open(fullname) as file:
+            pass
+
+    # make sure loading this data does not work without file
     with Session() as session:
         sources = session.scalars(
             sa.select(Source).where(Source.name == source_id)
         ).first()
         assert sources is not None
         assert len(sources.raw_data) == 1
-        assert sources.raw_data[0].filename == filename
-        assert sources.raw_data[0].key == new_data.key
-        assert sources.raw_data[0].source_id == new_source.id
+        with pytest.raises(FileNotFoundError):
+            sources.raw_data[0].data.equals(df)
+
+    # make sure deleting the source also cleans up the data
+    with Session() as session:
+        session.execute(sa.delete(Source).where(Source.name == source_id))
+        session.commit()
+        data = session.scalars(
+            sa.select(RawData).where(RawData.key == new_data.key)
+        ).first()
+        assert data is None
+
+
+def test_data_reduction(test_project, new_source):
+    fullname = ""
+    with Session() as session:
+        try:  # at end, delete the temp file
+            # add some data to the source
+            num_points = 30
+            filt = np.random.choice(["r", "g", "i"], num_points)
+            mjd = np.random.uniform(57000, 58000, num_points)
+            mag = np.random.uniform(15, 20, num_points)
+            mag_err = np.random.uniform(0.1, 0.5, num_points)
+            oid = np.random.randint(0, 5, num_points)
+            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
+            df = pd.DataFrame(test_data)
+
+            # add the data to a database mapped object
+            source_id = new_source.id
+            new_source.project = test_project.name
+            new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
+            new_source.raw_data.append(new_data)
+
+            # reduce the data use the demo observatory
+            assert len(test_project.observatories) == 1
+            obs_key = list(test_project.observatories.keys())[0]
+            obs = test_project.observatories[obs_key]  # key should be "demo"
+            assert isinstance(obs, VirtualDemoObs)
+            new_source.lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
+
+            # save to disk
+            # session.add(new_source)
+            # session.commit()
+
+        finally:
+            new_data.delete_data_from_disk()
+            assert not os.path.isfile(fullname)
+
+        # make sure deleting the source also cleans up the data
+        session.execute(sa.delete(Source).where(Source.name == source_id))
+        session.commit()
+        data = session.scalars(
+            sa.select(RawData).where(RawData.key == new_data.key)
+        ).first()
+        assert data is None
