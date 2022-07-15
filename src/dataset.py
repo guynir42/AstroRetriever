@@ -1,14 +1,19 @@
 import os
+import uuid
+
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+from astropy.time import Time
 import h5py
+
 import sqlalchemy as sa
-from sqlalchemy import func
+from sqlalchemy import func, event
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base
+from src.database import Base, Session, engine
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -19,8 +24,8 @@ if DATA_ROOT is None:
 utcnow = func.timezone("UTC", func.current_timestamp())
 
 
-class Dataset:
-    def __init__(self, data, filename, key=None, observatory=None):
+class DatasetMixin:
+    def __init__(self, **kwargs):
         """
         Produce a Dataset object,
         which maps a location on disk
@@ -28,50 +33,49 @@ class Dataset:
         Each Dataset is associated with one source
         (via the source_id foreign key).
         If there are multiple datasets in a file,
-        use the key to identify which one is associated
-        with this Dataset.
+        use the "key" parameter to identify which
+        one is associated with this Dataset.
 
-        A Dataset should be calibrated to produce
-        useful inputs for an analysis.
+        Parameters will be applied from kwargs
+        if they match any existing attributes.
+        If "data" is given as an input,
+        it will be set first, allowing the object
+        to calculate some attributes
+        (like type and start/end times).
+        After that any other properties will be
+        assigned and can override the values
+        calculated from the data.
 
+        Subclasses of this mixin will contain
+        specific type of data. For example
+        the RawData class will contain raw data
+        directly from the observatory.
+        This can be turned into e.g.,
+        a PhotometricData using a reducer function
+        from the correct observatory object.
 
-        Parameters
-        ----------
-        data: xr.Dataset or pd.Dataframe or np.array
-            Raw data as it was loaded from file.
-        filename: str
-            Full path to the file on disk.
-        key: str or int or None
-            Key to identify this dataset in the file.
-            Leave None if there's only one Dataset per file.
-        observatory: str
-            Name of the observatory from which
-            this dataset was taken.
         """
-        # self.source_id = source_id
-        if not isinstance(data, (np.ndarray, pd.DataFrame, xr.Dataset)):
+        if "data" in kwargs:
+            self.data = kwargs["data"]
+            del kwargs["data"]
+
+        for k, v in kwargs.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
+
+        # verify some inputs are the right type
+        if not isinstance(self.filename, (str, type(None))):
+            raise ValueError(f"Filename must be a string, not {type(self.filename)}")
+
+        if not isinstance(self.key, (str, int, type(None))):
             raise ValueError(
-                "Data must be a numpy array, "
-                "pandas DataFrame, or xarray Dataset, "
-                f"not {type(data)}"
+                f"Key must be a string, int, or None, not {type(self.key)}"
             )
-        self.data = data
-        if not isinstance(filename, str):
-            raise ValueError(f"Filename must be a string, not {type(filename)}")
-        self.filename = filename
-        if not isinstance(key, (str, int, type(None))):
-            raise ValueError(f"Key must be a string, int, or None, not {type(key)}")
-        # optional parameters are None by default
-        self.key = key
-        self.observatory = observatory
 
-        self.shape = data.shape
-        self.number = len(data)  # for imaging data this would be different?
-        self.size = self.calc_size()
-        self.format = self.guess_format()
+        # guess some attributes that were not given
+        if self.format is None:
+            self.format = self.guess_format()
 
-        # TODO: figure out start/end date from data
-        # TODO: figure out the frame rate, exp time, uniformity, from data
         # TODO: figure out the series identifier and object
 
     def guess_format(self):
@@ -84,19 +88,48 @@ class Dataset:
         str
             Format of the data file.
         """
-        ext = os.path.splitext(self.filename)[1]
-        if ext == ".h5" or ext == ".hdf5":
-            return "hdf5"
-        elif ext == ".fits":
-            return "fits"
-        elif ext == ".csv":
-            return "csv"
-        elif ext == ".json":
-            return "json"
-        elif ext == ".nc":
-            return "netcdf"
+        if self.filename is not None:
+            ext = os.path.splitext(self.filename)[1]
+            if ext == ".h5" or ext == ".hdf5":
+                return "hdf5"
+            elif ext == ".fits":
+                return "fits"
+            elif ext == ".csv":
+                return "csv"
+            elif ext == ".json":
+                return "json"
+            elif ext == ".nc":
+                return "netcdf"
+            else:
+                raise ValueError(f'Unknown data format "{ext}"')
+        elif self.data is not None:
+            if isinstance(self.data, np.ndarray):
+                return "fits"
+            elif isinstance(self.data, pd.DataFrame):
+                return "hdf5"
+            elif isinstance(self.data, xr.Dataset):
+                return "netcdf"
         else:
-            raise ValueError(f'Unknown data format "{ext}"')
+            return None
+
+    def guess_extension(self):
+        """
+        Guess the extension of the data file
+        based on the format.
+        """
+
+        if self.format == "hdf5":
+            return ".h5"
+        elif self.format == "fits":
+            return ".fits"
+        elif self.format == "csv":
+            return ".csv"
+        elif self.format == "json":
+            return ".json"
+        elif self.format == "netcdf":
+            return ".nc"
+        else:
+            raise ValueError(f"Unknown format {self.format}")
 
     def calc_size(self):
         """
@@ -133,6 +166,202 @@ class Dataset:
         """
 
         return os.path.join(self.get_path(), self.filename)
+
+    def check_file_exists(self):
+        """
+        Check if the file exists on disk.
+        """
+        return os.path.exists(self.get_fullname())
+
+    def load(self):
+        """
+        Loads the data from disk.
+        Also attempts to load any
+        additional attributes into "altdata".
+
+        If file does not exist,
+        or if loading fails,
+        will raise an error.
+
+        """
+
+        if not self.check_file_exists():
+            raise FileNotFoundError(f"File {self.get_fullname()} does not exist")
+
+        if self.format == "hdf5":
+            self.load_hdf5()
+        elif self.format == "fits":
+            self.load_fits()
+        elif self.format == "csv":
+            self.load_csv()
+        elif self.format == "json":
+            self.load_json()
+        elif self.format == "netcdf":
+            self.load_netcdf()
+        else:
+            raise ValueError(f"Unknown format {self.format}")
+
+    def load_hdf5(self):
+        """
+        Load the data from a HDF5 file.
+        """
+        with pd.HDFStore(self.get_fullname()) as store:
+            key = self.key
+            if key is None:
+                if len(store.keys()) == 1:
+                    key = store.keys()[0]
+                else:
+                    raise ValueError("No key specified and multiple keys found in file")
+
+            # load the data
+            self.data = store.get(key)
+            if self.data is None:
+                raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
+            # load metadata
+            self.altdata = store.get_storer(key).attrs
+
+    def load_fits(self):
+        pass
+
+    def load_csv(self):
+        pass
+
+    def load_json(self):
+        pass
+
+    def load_netcdf(self):
+        pass
+
+    def save(self, overwrite=None):
+        """
+        Save the data to disk.
+
+        Parameters
+        ----------
+        overwrite: bool
+            If True, overwrite the file if it already exists.
+            If False, raise an error if the file already exists.
+            If None, use the "overwrite" attribute of the object
+
+        """
+        # if no filename/key are given, make them up
+        if self.filename is None:
+            self.filename = str(uuid.uuid4()) + self.guess_extension()
+
+        if self.key is None and self.format in ("hdf5"):
+            self.key = str(uuid.uuid4())
+
+        if overwrite is None:
+            overwrite = self.overwrite
+        if not overwrite and self.check_file_exists():
+            raise ValueError(f"File {self.get_fullname()} already exists")
+
+        # make a path if missing
+        if not os.path.isdir(self.get_path(full=True)):
+            os.makedirs(self.get_path(full=True))
+
+        # specific format save functions
+        if self.format == "hdf5":
+            self.save_hdf5()
+        elif self.format == "fits":
+            self.save_fits()
+        elif self.format == "csv":
+            self.save_csv()
+        elif self.format == "json":
+            self.save_json()
+        elif self.format == "netcdf":
+            self.save_netcdf()
+        else:
+            raise ValueError(f"Unknown format {self.format}")
+
+    def save_hdf5(self):
+        if isinstance(self.data, xr.Dataset):
+            self.data.to_hdf(self.get_fullname(), key=self.key)  # this actually works??
+        elif isinstance(self.data, pd.DataFrame):
+            with pd.HDFStore(self.get_fullname(), "w") as store:
+                store.put(self.key, self.data)
+                if self.altdata:
+                    for k, v in self.altdata.items():
+                        setattr(store.get_storer(self.key).attrs, k, v)
+        elif isinstance(self.data, np.ndarray):
+            with h5py.File(self.get_fullname(), "w") as f:
+                f.create_dataset(self.key, data=self.data)
+                if self.altdata:
+                    for k, v in self.altdata.items():
+                        f[self.key].attrs[k] = v
+        else:
+            raise ValueError(f"Unknown data type {type(self.data)}")
+
+    def save_fits(self):
+        pass
+
+    def save_csv(self):
+        pass
+
+    def save_json(self):
+        pass
+
+    def save_netcdf(self):
+        pass
+
+    def delete_data_from_disk(self):
+        """
+        Delete the data file from disk.
+        """
+        os.remove(self.get_fullname())
+
+    @property
+    def data(self):
+        if self._data is None and self.autoload and self.filename is not None:
+            self.load()
+        return self._data
+
+    @data.setter
+    def data(self, data):
+        if not isinstance(data, (np.ndarray, pd.DataFrame, xr.Dataset)):
+            raise ValueError(
+                "Data must be a numpy array, "
+                "pandas DataFrame, or xarray Dataset, "
+                f"not {type(data)}"
+            )
+        self._data = data
+
+        self.shape = data.shape
+        self.number = len(data)  # for imaging data this would be different?
+        self.size = self.calc_size()
+        self.format = self.guess_format()
+
+        if isinstance(data, pd.DataFrame):
+            columns = data.columns
+        # other datatypes will call this differently...
+        # TODO: get the columns for other data types
+
+        t = None  # datetimes for each epoch
+        for c in columns:
+            if c.lower() in ("jd", "jds", "juliandate", "juliandates"):
+                t = data[c].values
+                t = Time(t, format="jd", scale="utc").datetime
+                break
+            elif c.lower() in ("mjd", "mjds"):
+                t = data[c].values
+                t = Time(t, format="mjd", scale="utc").datetime
+                break
+            elif c.lower() in ("time", "times", "datetime", "datetimes"):
+                t = data[c].values
+                if isinstance(t[0], (str, bytes)):
+                    if "T" in t[0]:
+                        t = Time(t, format="isot", scale="utc").datetime
+                    else:
+                        t = Time(t, format="iso", scale="utc").datetime
+                break
+            elif c.lower() == "timestamps":
+                t = data[c].values
+                t = Time(t, format="unix", scale="utc").datetime
+                break
+
+        if t is not None:
+            self.time_start = min(t)
+            self.time_end = max(t)
 
     id = sa.Column(
         sa.Integer,
@@ -197,6 +426,12 @@ class Dataset:
         doc="Folder inside the DATA_ROOT folder where this dataset is stored",
     )
 
+    key = sa.Column(
+        sa.String,
+        nullable=True,
+        doc="Key of the dataset (e.g., in the HDF5 " "file it would be the group name)",
+    )
+
     type = sa.Column(
         sa.String, nullable=False, default="photometry", doc="Type of the dataset"
     )
@@ -256,74 +491,31 @@ class Dataset:
         doc="Whether this dataset is publicly available",
     )
 
-    def check_file_exists(self):
-        """
-        Check if the file exists on disk.
-        """
-        return os.path.exists(self.get_fullname())
+    autosave = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        doc="Whether this dataset should be automatically saved",
+    )
 
-    def load(self):
-        pass
+    autoload = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=True,
+        doc="Whether this dataset should be automatically loaded (lazy loaded)",
+    )
 
-    def save(self, overwrite=False):
-        if not overwrite and self.check_file_exists():
-            raise ValueError(f"File {self.get_fullname()} already exists")
-
-        if not os.path.isdir(self.get_path(full=True)):
-            os.makedirs(self.get_path(full=True))
-
-        if self.format == "hdf5":
-            self.save_hdf5()
-        elif self.format == "fits":
-            self.save_fits()
-        elif self.format == "csv":
-            self.save_csv()
-        elif self.format == "json":
-            self.save_json()
-        elif self.format == "netcdf":
-            self.save_netcdf()
-        else:
-            raise ValueError(f"Unknown format {self.format}")
-
-    def save_hdf5(self):
-        if isinstance(self.data, xr.Dataset):
-            self.data.to_hdf(self.get_fullname(), key=self.key)  # this actually works??
-        elif isinstance(self.data, pd.DataFrame):
-            with pd.HDFStore(self.get_fullname(), "w") as store:
-                store.put(self.key, self.data)
-                if self.altdata:
-                    for k, v in self.altdata.items():
-                        setattr(store.get_storer(self.key).attrs, k, v)
-        elif isinstance(self.data, np.ndarray):
-            with h5py.File(self.get_fullname(), "w") as f:
-                f.create_dataset(self.key, data=self.data)
-                if self.altdata:
-                    for k, v in self.altdata.items():
-                        f[self.key].attrs[k] = v
-        else:
-            raise ValueError(f"Unknown data type {type(self.data)}")
-
-    def save_fits(self):
-        pass
-
-    def save_csv(self):
-        pass
-
-    def save_json(self):
-        pass
-
-    def save_netcdf(self):
-        pass
-
-    def delete_data_from_disk(self):
-        """
-        Delete the data file from disk.
-        """
-        os.remove(self.get_fullname())
+    overwrite = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        doc="Whether the data on disk should be overwritten if it already exists "
+        "(if False, an error will be raised)",
+    )
 
 
-class RawData(Dataset, Base):
-    def __init__(self, *args, **kwargs):
+class RawData(DatasetMixin, Base):
+    def __init__(self, **kwargs):
         """
         This class is used to store raw data from a survey,
         that should probably need to be reduced into more
@@ -332,14 +524,14 @@ class RawData(Dataset, Base):
         Parameters are the same as in as the __init__ of the Dataset class.
 
         """
-        Dataset.__init__(self, *args, **kwargs)
+        DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
 
     __tablename__ = "raw_data"
 
 
-class PhotometricData(Dataset, Base):
-    def __init__(self, *args, **kwargs):
+class PhotometricData(DatasetMixin, Base):
+    def __init__(self, **kwargs):
         """
         This class keeps a set of photometric measurements
         for a source, after performing some data reduction.
@@ -355,7 +547,7 @@ class PhotometricData(Dataset, Base):
         Parameters are the same as the __init__ of the Dataset class.
 
         """
-        Dataset.__init__(self, *args, **kwargs)
+        DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
         self.type = "photometry"
 
@@ -405,3 +597,32 @@ class PhotometricData(Dataset, Base):
         default=False,
         doc="Is the dataset sampled uniformly in time?",
     )
+
+
+# make sure the table exists
+RawData.metadata.create_all(engine)
+# make sure the table exists
+PhotometricData.metadata.create_all(engine)
+
+
+@event.listens_for(RawData, "before_insert")
+# @event.listens_for(PhotometricData, 'before_insert')
+def insert_new_dataset(mapper, connection, target):
+    """
+    This function is called before a new dataset is inserted into the database.
+    It checks that a file is associated with this object
+    and if it doesn't exist, it creates it (if autoload is True)
+    otherwise it raises an error.
+    """
+    if target.filename is None:
+        raise ValueError("No filename specified for this dataset")
+
+    if not target.check_file_exists():
+        if target.autosave:
+            target.save()
+        else:
+            raise ValueError(
+                f"File {target.get_fullname()}"
+                "does not exist and autosave is disabled. "
+                "Please create the file manually."
+            )

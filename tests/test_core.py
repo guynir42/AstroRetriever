@@ -6,6 +6,7 @@ import pytest
 
 import numpy as np
 import pandas as pd
+from astropy.time import Time
 
 import sqlalchemy as sa
 
@@ -224,38 +225,62 @@ def test_add_source_and_data():
         num_points = 10
         frames = []
         for i in range(num_datasets):
-            filt = np.random.choice(["r", "g", "i", "z"])
+            filt = np.random.choice(["r", "g", "i", "z"], num_points)
             mjd = np.random.uniform(57000, 58000, num_points)
             mag = np.random.uniform(15, 20, num_points)
             mag_err = np.random.uniform(0.1, 0.5, num_points)
-            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err)
+            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt)
             df = pd.DataFrame(test_data)
-            df["filter"] = filt
             frames.append(df)
 
-        # add the data to the database
-        filename = f"{str(uuid.uuid4())}.h5"
-        fullname = os.path.join(basepath, "data_temp", filename)
-        df = pd.concat(frames)
-        new_data = RawData(df, filename, "lightcurve_1")
-        new_data.altdata = dict(foo="bar")
-        new_data.folder = "data_temp"
-        new_source.raw_data.append(new_data)
+        fullname = ""
+        try:  # at end, delete the temp file
+            # add the data to the database
+            df = pd.concat(frames)
+            new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
 
-        session.add(new_source)
-        session.commit()
+            # check the times make sense
+            start_time = Time(min(df.mjd), format="mjd").datetime
+            end_time = Time(max(df.mjd), format="mjd").datetime
+            assert start_time == new_data.time_start
+            assert end_time == new_data.time_end
 
-        try:
-            print(new_data.get_fullname())
-            new_data.save()
+            new_source.raw_data.append(new_data)
+            session.add(new_source)
 
+            # this should not work because
+            # no filename was specified
+            with pytest.raises(ValueError):
+                session.commit()
+            session.rollback()
+            session.add(new_source)
+
+            new_data.filename = "test_data.h5"
+            # this should not work because the file
+            # does not yet exist and autosave is False
+            with pytest.raises(ValueError):
+                session.commit()
+            session.rollback()
+            session.add(new_source)
+
+            new_data.filename = None  # reset the filename
+
+            # filename should be auto-generated
+            new_data.save()  # must save to allow RawData to be added to DB
+
+            session.commit()
             assert new_source.id is not None
             assert new_source.id == new_data.source_id
 
+            # try to recover the data
+            filename = new_data.filename
+            fullname = os.path.join(basepath, "data_temp", filename)
+
             with pd.HDFStore(fullname) as store:
-                df_from_file = store.get("lightcurve_1")
+                key = store.keys()[0]
+                df_from_file = store.get(key)
                 assert df_from_file.equals(df)
-                dict_from_file = store.get_storer("lightcurve_1").attrs
+                dict_from_file = store.get_storer(key).attrs
                 assert dict_from_file["foo"] == "bar"
 
         finally:
@@ -268,3 +293,7 @@ def test_add_source_and_data():
             sa.select(Source).where(Source.name == source_id)
         ).first()
         assert sources is not None
+        assert len(sources.raw_data) == 1
+        assert sources.raw_data[0].filename == filename
+        assert sources.raw_data[0].key == new_data.key
+        assert sources.raw_data[0].source_id == new_source.id

@@ -10,8 +10,6 @@ import healpix_alchemy as ha
 from astropy import units as u
 
 from src.database import Base, Session, engine
-from src.dataset import Dataset
-from src.detection import Detection
 
 # ref: https://github.com/skyportal/conesearch-alchemy
 

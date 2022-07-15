@@ -11,7 +11,7 @@ from astropy.io import fits
 
 from src.database import Session
 from src.source import Source, get_source_identifiers
-from src.dataset import Dataset
+from src.dataset import RawData
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.calibration import Calibration
@@ -407,8 +407,7 @@ class VirtualObservatory:
 
         session.add(new_source)
         session.commit()
-        new_source.datasets = Dataset(
-            source_id=new_source.id,
+        new_source.datasets = RawData(
             data=data,
             observatory=self.name,
             filename=filename,
