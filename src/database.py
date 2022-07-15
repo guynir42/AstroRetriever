@@ -50,7 +50,7 @@ if __name__ == "__main__":
     import numpy as np
     from src.source import Source
 
-    Source.metadata.create_all(engine)
+    # Source.metadata.create_all(engine)
 
     # with Session() as session:
     #     new_source = Source(

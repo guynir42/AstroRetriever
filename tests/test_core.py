@@ -16,9 +16,11 @@ from src.ztf import VirtualZTF
 
 from src.database import Session
 from src.source import Source
+import src.dataset
 from src.dataset import RawData
 
 basepath = os.path.abspath(os.path.dirname(__file__))
+src.dataset.DATA_ROOT = basepath
 
 
 def test_load_save_parameters():
@@ -203,6 +205,10 @@ def test_project_config_file():
         os.remove(data["ztf"]["credentials"]["filename"])
 
 
+def test_catalog():
+    pass
+
+
 def test_add_source_and_data():
     with Session() as session:
         # create a random source
@@ -228,32 +234,33 @@ def test_add_source_and_data():
             frames.append(df)
 
         # add the data to the database
-        if not os.path.isdir("data_temp"):
-            os.mkdir("data_temp")
-        filename = f"data_temp/{str(uuid.uuid4())}.h5"
+        filename = f"{str(uuid.uuid4())}.h5"
+        fullname = os.path.join(basepath, "data_temp", filename)
         df = pd.concat(frames)
         new_data = RawData(df, filename, "lightcurve_1")
         new_data.altdata = dict(foo="bar")
+        new_data.folder = "data_temp"
         new_source.raw_data.append(new_data)
 
         session.add(new_source)
         session.commit()
 
         try:
+            print(new_data.get_fullname())
             new_data.save()
 
             assert new_source.id is not None
             assert new_source.id == new_data.source_id
 
-            with pd.HDFStore(filename) as store:
+            with pd.HDFStore(fullname) as store:
                 df_from_file = store.get("lightcurve_1")
                 assert df_from_file.equals(df)
                 dict_from_file = store.get_storer("lightcurve_1").attrs
                 assert dict_from_file["foo"] == "bar"
 
         finally:
-            if os.path.isfile(filename):
-                os.remove(filename)
+            if os.path.isfile(fullname):
+                os.remove(fullname)
 
     # check that the data is in the database
     with Session() as session:

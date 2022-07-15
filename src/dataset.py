@@ -10,7 +10,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base
 
-DATA_ROOT = os.getenv("VO_DATA") or ""
+# root folder is either defined via an environment variable
+# or is the in the main repository, under subfolder "data"
+DATA_ROOT = os.getenv("VO_DATA")
+if DATA_ROOT is None:
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -101,6 +105,35 @@ class Dataset:
         # TODO: implement this
         return 0
 
+    def get_path(self, full=False):
+        """
+        Get the name of the folder inside
+        the DATA_ROOT folder where this dataset is stored.
+        """
+
+        if self.folder is not None:
+            f = self.folder
+        elif self.observatory is not None:
+            f = self.observatory.upper()
+        else:
+            f = "DATA"
+
+        f = os.path.join(DATA_ROOT, f)
+
+        if full:
+            append_folder = os.path.dirname(self.filename)
+            if append_folder:
+                f = os.path.join(f, append_folder)
+
+        return f
+
+    def get_fullname(self):
+        """
+        Get the full path to the data file.
+        """
+
+        return os.path.join(self.get_path(), self.filename)
+
     id = sa.Column(
         sa.Integer,
         primary_key=True,
@@ -157,6 +190,13 @@ class Dataset:
         index=True,
         doc="Filename of the dataset, including path, relative to the DATA_ROOT",
     )
+
+    folder = sa.Column(
+        sa.String,
+        nullable=True,
+        doc="Folder inside the DATA_ROOT folder where this dataset is stored",
+    )
+
     type = sa.Column(
         sa.String, nullable=False, default="photometry", doc="Type of the dataset"
     )
@@ -220,14 +260,18 @@ class Dataset:
         """
         Check if the file exists on disk.
         """
-        return os.path.exists(self.filename)
+        return os.path.exists(self.get_fullname())
 
     def load(self):
         pass
 
     def save(self, overwrite=False):
         if not overwrite and self.check_file_exists():
-            raise ValueError(f"File {self.filename} already exists")
+            raise ValueError(f"File {self.get_fullname()} already exists")
+
+        if not os.path.isdir(self.get_path(full=True)):
+            os.makedirs(self.get_path(full=True))
+
         if self.format == "hdf5":
             self.save_hdf5()
         elif self.format == "fits":
@@ -243,15 +287,15 @@ class Dataset:
 
     def save_hdf5(self):
         if isinstance(self.data, xr.Dataset):
-            self.data.to_hdf(self.filename, key=self.key)  # this actually works??
+            self.data.to_hdf(self.get_fullname(), key=self.key)  # this actually works??
         elif isinstance(self.data, pd.DataFrame):
-            with pd.HDFStore(self.filename, "w") as store:
+            with pd.HDFStore(self.get_fullname(), "w") as store:
                 store.put(self.key, self.data)
                 if self.altdata:
                     for k, v in self.altdata.items():
                         setattr(store.get_storer(self.key).attrs, k, v)
         elif isinstance(self.data, np.ndarray):
-            with h5py.File(self.filename, "w") as f:
+            with h5py.File(self.get_fullname(), "w") as f:
                 f.create_dataset(self.key, data=self.data)
                 if self.altdata:
                     for k, v in self.altdata.items():
@@ -275,7 +319,7 @@ class Dataset:
         """
         Delete the data file from disk.
         """
-        os.remove(self.filename)
+        os.remove(self.get_fullname())
 
 
 class RawData(Dataset, Base):

@@ -9,7 +9,7 @@ import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
 
-from src.database import Base, Session
+from src.database import Base, Session, engine
 from src.dataset import Dataset
 from src.detection import Detection
 
@@ -276,6 +276,10 @@ class Source(Base, conesearch_alchemy.Point):
             f'project="{self.project}", datasets= {len(self.raw_data)})'
         )
         return string
+
+
+# make sure the table exists
+Source.metadata.create_all(engine)
 
 
 if __name__ == "__main__":
