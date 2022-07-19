@@ -5,20 +5,15 @@ import yaml
 import validators
 import numpy as np
 import pandas as pd
-import sqlalchemy as sa
-
-from astropy.io import fits
 
 from src.database import Session
 from src.source import Source, get_source_identifiers
-from src.dataset import RawData
+from src.dataset import RawData, PhotometricData
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.calibration import Calibration
 from src.histograms import Histograms
 from src.analysis import Analysis
-
-PHOT_ZP = 23.9
 
 
 class VirtualObservatory:
@@ -479,16 +474,28 @@ class VirtualObservatory:
                     f"Expected RawData object, but dataset {i} was a {type(d)}"
                 )
 
+        # parameters for the reduction
+        # are taken from the config first,
+        # then from the user inputs
+        if hasattr(self.pars, "reducer") and isinstance(self.pars.reducer, dict):
+            parameters = {}
+            parameters.update(self.pars.reducer)
+            parameters.update(kwargs)
+            kwargs = parameters
+
         if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
-            return self.reduce_to_lightcurves(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_lightcurves(datasets, source, **kwargs)
         elif to.lower() in ("sed", "seds", "spectra", "spectrum"):
-            return self.reduce_to_sed(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_sed(datasets, source, **kwargs)
         elif to.lower() == "img":
-            return self.reduce_to_image(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_image(datasets, source, **kwargs)
         elif to.lower() == "thumb":
-            return self.reduce_to_thumbnail(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_thumbnail(datasets, source, **kwargs)
         else:
             raise ValueError(f'Unknown value for "to" input: {to}')
+
+        new_datasets = sorted(new_datasets, key=lambda d: d.time_start)
+        return new_datasets
 
     def reduce_to_lightcurves(self, datasets, source=None, **kwargs):
         raise NotImplementedError("Photometric reduction not implemented in this class")
@@ -575,7 +582,9 @@ class VirtualDemoObs(VirtualObservatory):
         pass
         # TODO: figure out how this will work!
 
-    def reduce_to_lightcurves(self, datasets, source=None, median=True, mag_range=None):
+    def reduce_to_lightcurves(
+        self, datasets, source=None, median=True, mag_range=None, **_
+    ):
         """
         Reduce the datasets to lightcurves.
 
@@ -602,8 +611,10 @@ class VirtualDemoObs(VirtualObservatory):
         a list of src.dataset.PhotometricData objects
             The reduced datasets, after minimal processing.
             The reduced datasets will have uniform filter,
-            the median exposure time and frame rate is calculated,
-            and flux values will be calculated from the magnitudes.
+            each dataset will be sorted by time,
+            the median exposure time and frame rate will be calculated,
+            and flux values will be inferred from the magnitudes
+            (or vice-versa).
         """
         allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
@@ -634,15 +645,29 @@ class VirtualDemoObs(VirtualObservatory):
 
         # split the data by filters
         # (assume all datasets have the same data class
-        # and that the internal column structure is the same)
+        # and that the internal column structure is the same
+        # which is a reasonable assumption as they all come
+        # from the same observatory)
         if isinstance(datasets[0].data, pd.DataFrame):
+            # make sure there is some photometric data available
+
             frames = [d.data for d in datasets]
-            df = pd.concat(frames)
-            filt_col = datasets[0].filter_col
-            filters = df[filt_col].unique()
+            all_dfs = pd.concat(frames)
+
+            filt_col = datasets[0].colmap["filter"]
+            filters = all_dfs[filt_col].unique()
             dfs = []
             for f in filters:
-                dfs.append(df[df[filt_col] == f].reset_index(drop=True))
-                print(dfs[-1])
+                # new dataframe for each filter
+                # each one with a new index
+                df_new = all_dfs[all_dfs[filt_col] == f].reset_index(drop=True)
+                # df_new = df_new.sort([datasets[0].time_col], inplace=False)
+                # df_new.reset_index(drop=True, inplace=True)
+                dfs.append(df_new)
+                # TODO: what happens if filter is in altdata, not in dataframe?
 
-        return []
+            new_datasets = []
+            for df in dfs:
+                new_datasets.append(PhotometricData(data=df))
+
+        return new_datasets

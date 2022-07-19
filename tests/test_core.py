@@ -18,7 +18,7 @@ from src.ztf import VirtualZTF
 from src.database import Session
 from src.source import Source
 import src.dataset
-from src.dataset import RawData
+from src.dataset import RawData, PhotometricData, PHOT_ZP
 from src.observatory import VirtualDemoObs
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -322,7 +322,10 @@ def test_add_source_and_data():
 
 
 def test_data_reduction(test_project, new_source):
-    fullname = ""
+
+    new_data = None
+    lightcurves = None
+
     with Session() as session:
         try:  # at end, delete the temp file
             # add some data to the source
@@ -339,6 +342,7 @@ def test_data_reduction(test_project, new_source):
             source_id = new_source.id
             new_source.project = test_project.name
             new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
+            new_data.save()
             new_source.raw_data.append(new_data)
 
             # reduce the data use the demo observatory
@@ -346,15 +350,80 @@ def test_data_reduction(test_project, new_source):
             obs_key = list(test_project.observatories.keys())[0]
             obs = test_project.observatories[obs_key]  # key should be "demo"
             assert isinstance(obs, VirtualDemoObs)
-            new_source.lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
 
-            # save to disk
-            # session.add(new_source)
-            # session.commit()
+            # cannot generate photometric data without an exposure time
+            with pytest.raises(ValueError) as exc:
+                obs.reduce(new_data, to="lcs", source=new_source)
+            assert "No exposure time" in str(exc.value)
+
+            # add exposure time to the dataframe:
+            df["exp_time"] = 30.0
+            new_source.raw_data[0].data = df
+            lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
+            new_source.lightcurves = lightcurves
+            session.add(new_source)
+
+            with pytest.raises(ValueError) as exc:
+                session.commit()
+            assert "No filename" in str(exc.value)
+            session.rollback()
+
+            # must save dataset before adding it to DB
+            [lc.save() for lc in lightcurves]
+            session.commit()
+
+            # check that the data has been reduced as expected
+            for lc in lightcurves:
+                filt = lc.filter
+                dff = df[df["filter"] == filt]
+                dff = dff.sort_values(by="mjd", inplace=False)
+                dff.reset_index(drop=True, inplace=True)
+
+                # make sure it picks out the right points
+                assert dff["mjd"].equals(lc.data["mjd"])
+                assert dff["mag"].equals(lc.data["mag"])
+                assert dff["mag_err"].equals(lc.data["mag_err"])
+
+                # make sure the number of points are correct
+                assert lc.number == len(dff)
+                assert lc.shape == (len(dff), len(lc.colmap))
+
+                # make sure the frame rate and exposure time are correct
+                assert lc.exp_time == 30.0
+                assert np.isclose(
+                    1.0 / lc.frame_rate, dff["mjd"].diff().median() * 24 * 3600
+                )
+                assert not lc.is_uniformly_sampled
+
+                # make sure the average flux is correct
+                flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
+                assert np.isclose(lc.flux_mean, np.mean(flux))
+
+                # make sure flux min/max are correct
+                assert np.isclose(lc.flux_min, np.min(flux))
+                assert np.isclose(lc.flux_max, np.max(flux))
+
+                # make sure superfluous columns are dropped
+                assert "oid" not in lc.data.columns
+
+                # make sure the start/end times are correct
+                assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
+                assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
+
+                # make sure relationships are correct
+                assert lc.source_id == new_source.id
+                assert lc.raw_data_id == new_data.id
 
         finally:
-            new_data.delete_data_from_disk()
-            assert not os.path.isfile(fullname)
+            if new_data:
+                filename = new_data.filename
+                new_data.delete_data_from_disk()
+                assert not os.path.isfile(filename)
+
+            if lightcurves:
+                filenames = [lc.filename for lc in lightcurves]
+                [lc.delete_data_from_disk() for lc in lightcurves]
+                assert not any([os.path.isfile(f) for f in filenames])
 
         # make sure deleting the source also cleans up the data
         session.execute(sa.delete(Source).where(Source.name == source_id))
@@ -363,3 +432,24 @@ def test_data_reduction(test_project, new_source):
             sa.select(RawData).where(RawData.key == new_data.key)
         ).first()
         assert data is None
+        data = session.scalars(
+            sa.select(PhotometricData).where(PhotometricData.source_id == source_id)
+        ).all()
+        assert len(data) == 0
+
+
+def test_reducer_with_outliers(test_project, new_source):
+    pass
+    # TODO: add data from one filter,
+    #  but add some outliers, bad flags,
+    #  Test against num_good, robust stats, KEEP_FLAGGED,
+    #  flux max/min without outliers, etc.
+    #  Can also make this uniformly sampled and test that
+
+
+def test_reducer_magnitude_conversions(test_project, new_source):
+    pass
+    # TODO: make sure all conversions of flux to magnitude are correct
+    #  use explicit values and check them online with a magnitude calculator
+    #  make sure the statistical errors are correct using a large number of points
+    #  make sure the flux_min/max are correct

@@ -22,11 +22,21 @@ if DATA_ROOT is None:
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
 
+PHOT_ZP = 23.9
+LOG_BASES = np.log(10) / 2.5
+
 AUTOLOAD = True
 AUTOSAVE = False
 OVERWRITE = False
 
+# 1% difference in time is considered uniform
+UNIFORMITY_THRESHOLD = 0.01
+
 utcnow = func.timezone("UTC", func.current_timestamp())
+
+
+def simplify(key):
+    return key.lower().replace(" ", "").replace("_", "").replace("-", "")
 
 
 class DatasetMixin:
@@ -61,7 +71,10 @@ class DatasetMixin:
 
         """
 
-        self.set_default_attrs()
+        self._data = None
+        self.colmap = {}
+        self.times = None
+        self.time_info = {}
 
         # these are only set when generating a new
         # object, not when loading from database
@@ -102,27 +115,10 @@ class DatasetMixin:
         is loaded from the database.
         ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
         """
-        self.set_default_attrs()
-
-    def set_default_attrs(self):
-        """
-        Sets up all the attributes that are
-        not mapped to the database.
-        These will be set to None when
-        the object is constructed and also
-        when it is loaded from the database.
-        """
         self._data = None
-
-        # these will be filled when
-        # loading the data from disk
-        self.time_col = None
-        self.time_format = None
-        self.mag_col = None
-        self.mag_err_col = None
-        self.flux_col = None
-        self.flux_err_col = None
-        self.filter_col = None
+        self.colmap = {}
+        self.times = None
+        self.time_info = {}
 
     def guess_format(self):
         """
@@ -376,6 +372,109 @@ class DatasetMixin:
         if self.check_file_exists():
             os.remove(self.get_fullname())
 
+    def find_colmap(self, data):
+        """
+        Calculate the column map for the data.
+        This locates columns in the data that
+        correspond to known types of data and
+        assigns them.
+        """
+
+        if isinstance(data, pd.DataFrame):
+            columns = data.columns
+        # other datatypes will call this differently...
+        # TODO: get the columns for other data types
+
+        t = None  # datetimes for each epoch
+        for c in columns:
+            if simplify(c) in ("jd", "jds", "juliandate", "juliandates"):
+                self.time_info["format"] = "mjd"
+                self.time_info["conversion"] = lambda t: Time(
+                    t, format="jd", scale="utc"
+                ).datetime
+                self.colmap["time"] = c
+                break
+            elif simplify(c) in ("mjd", "mjds"):
+                self.time_info["format"] = "mjd"
+                self.time_info["conversion"] = lambda t: Time(
+                    t, format="mjd", scale="utc"
+                ).datetime
+                self.colmap["time"] = c
+                break
+            elif simplify(c) in ("time", "times", "datetime", "datetimes"):
+                if isinstance(t[0], (str, bytes)):
+                    if "T" in t[0]:
+                        self.time_info["format"] = "isot"
+                        self.time_info["conversion"] = lambda t: Time(
+                            t, format="isot", scale="utc"
+                        ).datetime
+                    else:
+                        self.time_info["format"] = "iso"
+                        self.time_info["conversion"] = lambda t: Time(
+                            t, format="iso", scale="utc"
+                        ).datetime
+                self.colmap["time"] = c
+                break
+            elif simplify(c) == "timestamps":
+                self.time_info["format"] = "unix"
+                self.time_info["conversion"] = lambda t: Time(
+                    t, format="unix", scale="utc"
+                ).datetime
+                self.colmap["time"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("mag", "mags", "magnitude", "magnitudes"):
+                self.colmap["mag"] = c
+                break
+        for c in columns:
+            if simplify(c) in ("magerr", "magerr", "magerror"):
+                self.colmap["magerr"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("flux", "fluxes", "count", "counts"):
+                self.colmap["flux"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in (
+                "fluxerr",
+                "fluxerr",
+                "fluxerror",
+                "counterr",
+                "counterror",
+            ):
+                self.colmap["fluxerr"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("filt", "filter", "filtername", "filtercode"):
+                self.colmap["filter"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("exptime", "exptimes", "exposuretime", "exposure"):
+                self.colmap["exptime"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("flag", "catflag", "baddata"):
+                self.colmap["flag"] = c
+                break
+
+    def calc_times(self, data):
+        """
+        Calculate datetimes for each epoch,
+        based on the conversion found in self.time_info.
+        These values are calculated once when the data
+        is loaded from disk or given as input,
+        but are not saved in the DB or on disk.
+        """
+        self.times = self.time_info["conversion"](data[self.colmap["time"]])
+        self.time_start = min(self.times)
+        self.time_end = max(self.times)
+
     @property
     def data(self):
         if self._data is None and self.autoload and self.filename is not None:
@@ -397,109 +496,8 @@ class DatasetMixin:
         self.size = self.calc_size()
         self.format = self.guess_format()
         self.type = self.guess_type()
-        self.set_col_names(data)
-
-    def set_col_names(self, data):
-        if isinstance(data, pd.DataFrame):
-            columns = data.columns
-        # other datatypes will call this differently...
-        # TODO: get the columns for other data types
-
-        self.time_col = None
-        t = None  # datetimes for each epoch
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "jd",
-                "jds",
-                "juliandate",
-                "juliandates",
-            ):
-                t = data[c].values
-                t = Time(t, format="jd", scale="utc").datetime
-                self.time_col = c
-                break
-            elif c.lower().replace(" ", "").replace("_", "") in ("mjd", "mjds"):
-                t = data[c].values
-                t = Time(t, format="mjd", scale="utc").datetime
-                self.time_col = c
-                break
-            elif c.lower().replace(" ", "").replace("_", "") in (
-                "time",
-                "times",
-                "datetime",
-                "datetimes",
-            ):
-                t = data[c].values
-                if isinstance(t[0], (str, bytes)):
-                    if "T" in t[0]:
-                        t = Time(t, format="isot", scale="utc").datetime
-                    else:
-                        t = Time(t, format="iso", scale="utc").datetime
-                self.time_col = c
-                break
-            elif c.lower().replace(" ", "").replace("_", "") == "timestamps":
-                t = data[c].values
-                t = Time(t, format="unix", scale="utc").datetime
-                self.time_col = c
-                break
-
-        if t is not None:
-            self.time_start = min(t)
-            self.time_end = max(t)
-
-        self.mag_col = None
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "mag",
-                "mags",
-                "magnitude",
-                "magnitudes",
-            ):
-                self.mag_col = c
-                break
-        self.mag_err_col = None
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "magerr",
-                "magerr",
-                "magerror",
-            ):
-                self.mag_err_col = c
-                break
-
-        self.flux_col = None
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "flux",
-                "fluxes",
-                "count",
-                "counts",
-            ):
-                self.flux_col = c
-                break
-
-        self.flux_err_col = None
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "fluxerr",
-                "fluxerr",
-                "fluxerror",
-                "counterr",
-                "counterror",
-            ):
-                self.flux_err_col = c
-                break
-
-        self.filter_col = None
-        for c in columns:
-            if c.lower().replace(" ", "").replace("_", "") in (
-                "filt",
-                "filter",
-                "filtername",
-                "filtercode",
-            ):
-                self.filter_col = c
-                break
+        self.find_colmap(data)
+        self.calc_times(data)
 
     id = sa.Column(
         sa.Integer,
@@ -685,12 +683,229 @@ class PhotometricData(DatasetMixin, Base):
         Parameters are the same as the __init__ of the Dataset class.
 
         """
+        if "data" not in kwargs:
+            raise ValueError("PhotometricData must be initialized with data")
+
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
         self.type = "photometry"
 
-        # TODO: figure out frame rate, exp time, uniformity, from data
-        # TODO: get more statistics on the lightcurve (summary data)
+        filters = self.data[self.colmap["filter"]]
+        if not all([f == filters[0] for f in filters]):
+            raise ValueError("All filters must be the same for a PhotometricData")
+        self.filter = filters[0]
+
+        # sort the data by time it was recorded
+        if isinstance(self.data, pd.DataFrame):
+            self.data = self.data.sort_values([self.colmap["time"]], inplace=False)
+            self.data.reset_index(drop=True, inplace=True)
+
+        # get flux from mag or vice-versa
+        self.calc_mag_flux()
+
+        # make sure keys in altdata are standardized
+        self.translate_altdata()
+
+        # find exposure time, frame rate, uniformity
+        self.find_cadence()
+
+        # get averages and standard deviations
+        self.calc_stats()
+
+        # get the signal to noise ratio
+        self.calc_snr()
+
+        # get the peak flux and S/N
+        self.calc_best()
+
+        # remove columns we don't use
+        self.drop_columns()
+
+    # maybe this should happen at the base class?
+    def translate_altdata(self):
+        """
+        Change the column names given in altdata
+        to conform to internal naming convention.
+        E.g., change an entry for "exposure_time"
+        to one named "exptime".
+        """
+
+        if self.altdata is None:
+            return
+
+        for key, value in self.altdata.items():
+            if simplify(key) in ("exposure_time"):
+                self.altdata["exptime"] = value
+                del self.altdata[key]
+
+    def calc_mag_flux(self):
+        """
+        Calculate the flux from the magnitude,
+        or the magnitude from the flux
+        (if both are given, do nothing).
+        This also updates the colmap.
+
+        """
+        # make sure there is some photometric data available
+        if "mag" not in self.colmap and "flux" not in self.colmap:
+            raise ValueError("No magnitude or flux column found in data.")
+
+        # calculate the fluxes from the magnitudes
+        if "mag" in self.colmap and "flux" not in self.colmap:
+            mags = self.data[self.colmap["mag"]]
+            fluxes = 10 ** ((-mags + PHOT_ZP) / 2.5)
+            self.data["flux"] = fluxes
+            self.colmap["flux"] = "flux"
+
+            # what about the errors?
+            if "magerr" in self.colmap:
+                magerr = self.data[self.colmap["magerr"]]
+                self.data["fluxerr"] = fluxes * magerr * LOG_BASES
+                self.colmap["fluxerr"] = "fluxerr"
+
+        # calculate the magnitudes from the fluxes
+        if "mag" not in self.colmap and "flux" in self.colmap:
+            fluxes = self.data[self.colmap["flux"]]
+            # calculate the magnitudes from the fluxes
+            good_points = np.logical_and(np.invert(np.isnan(fluxes)), fluxes > 0)
+            mags = -2.5 * np.log10(fluxes, where=good_points) + PHOT_ZP
+            mags[np.invert(good_points)] = np.nan
+            self.data[self.colmap["mag"]] = mags
+            self.colmap["mag"] = "mag"
+
+            # what about the errors?
+            if "fluxerr" in self.colmap:
+                fluxerr = self.data[self.colmap["fluxerr"]]
+                magerr = fluxerr / fluxes / LOG_BASES
+                magerr[np.invert(good_points)] = np.nan
+                self.data["magerr"] = magerr
+                self.colmap["magerr"] = "magerr"
+
+    def find_cadence(self):
+        """
+        Find the exposure time and frame rate of the data.
+        """
+        if "exptime" in self.colmap:
+            self.exp_time = np.median(self.data[self.colmap["exptime"]])
+        elif self.altdata and "exptime" in self.altdata:
+            self.exp_time = self.altdata["exptime"]
+        else:
+            raise ValueError("No exposure time found in data or altdata.")
+
+        dt = np.diff(self.times.astype(np.datetime64))
+        dt = dt.astype(np.int64) / 1e6  # convert microseconds to seconds
+        self.frame_rate = 1 / np.nanmedian(dt)
+
+        # check the relative amplitude of the time difference
+        # between measurements.
+        dt_amp = np.quantile(dt, 0.95) - np.quantile(dt, 0.05)
+        dt_amp *= self.frame_rate  # divide by median(dt)
+        self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
+
+    def calc_stats(self):
+        """
+        Calculate summary statistics on this lightcurve.
+        """
+        fluxes = self.data[self.colmap["flux"]]
+
+        if "flag" in self.colmap:
+            flags = self.data[self.colmap["flags"]]
+            fluxes = fluxes[np.invert(flags)]
+
+        self.flux_mean = np.nanmean(fluxes)
+        self.flux_rms = np.nanstd(fluxes)
+
+        # robust statistics
+        self.flux_mean_robust, self.flux_rms_robust = self.sigma_clipping(fluxes)
+
+        # only count the good points
+        self.num_good = len(fluxes)
+        # additional statistics like first/last detected?
+
+    @staticmethod
+    def sigma_clipping(input_values, iterations=3, sigma=3.0):
+        """
+        Calculate a robust estimate of the mean and scatter
+        of the values given to it, using a few iterations
+        of finding the median and standard deviation from it,
+        and removing any outliers more than "sigma" times
+        from that median.
+        If the number of samples is less than 5,
+        the function returns the nanmedian and nanstd of
+        those values without removing outliers.
+
+        Parameters
+        ----------
+        input_values: one dimensional array of floats
+            The input values, either magnitudes or fluxes.
+        iterations: int scalar
+            Maximum number of iterations to use to remove
+            outliers. If no outliers are found, the loop
+            is cut short. Default is 3.
+        sigma: float scalar
+            How many times the standard deviation should
+            a measurement fall from the median value,
+            to be considered an outlier.
+            Default is 3.0.
+
+        Returns
+        -------
+        2-tuple of floats
+            get the median and scatter (RMS) of the distribution,
+            without including outliers.
+        """
+
+        if len(input_values) < 5:
+            return np.nanmedian(input_values), np.nanstd(input_values)
+
+        values = input_values.copy()
+
+        mean_value = np.nanmedian(values)
+        scatter = np.nanstd(values)
+        num_values_prev = np.sum(np.isnan(values) == 0)
+
+        for i in range(iterations):
+            # remove outliers
+            values[abs(values - mean_value) / scatter > sigma] = np.nan
+
+            num_values = np.sum(np.isnan(values) == 0)
+
+            # check if there are no new outliers removed this iteration
+            # OR don't proceed with too few data points
+            if num_values_prev == num_values or num_values < 5:
+                break
+
+            num_values_prev = num_values
+            mean_value = np.nanmedian(values)
+            scatter = np.nanstd(values)
+
+        return mean_value, scatter
+
+    def calc_snr(self):
+        fluxes = self.data[self.colmap["flux"]]
+        fluxerrs = self.data[self.colmap["fluxerr"]]
+        worst_err = np.maximum(self.flux_rms_robust, fluxerrs)
+
+        self.data["snr"] = fluxes / worst_err
+        self.colmap["snr"] = "snr"
+
+    def calc_best(self):
+        """
+        Find some minimal/maximal S/N values
+        and other similar properties on the data.
+        """
+
+        self.snr_max = np.nanmax(self.data["snr"])
+        self.snr_min = np.nanmin(self.data["snr"])
+        self.flux_max = np.nanmax(self.data[self.colmap["flux"]])
+        self.flux_min = np.nanmin(self.data[self.colmap["flux"]])
+
+    def drop_columns(self):
+
+        cols = [self.colmap[c] for c in self.colmap.keys()]
+
+        self.data = self.data[cols]
+        # what about other data types, e.g., xarrays?
 
     __tablename__ = "photometric_data"
 
@@ -702,17 +917,91 @@ class PhotometricData(DatasetMixin, Base):
         doc="ID of the raw dataset that was used to produce this reduced dataset.",
     )
 
-    mean_mag = sa.Column(
-        sa.Float,
+    num_good = sa.Column(
+        sa.Integer,
         nullable=False,
         index=True,
-        doc="Mean magnitude of the dataset",
+        doc="Number of good points in the lightcurve.",
     )
-    mag_rms = sa.Column(
+
+    flux_mean = sa.Column(
         sa.Float,
         nullable=False,
         index=True,
-        doc="Mean magnitude error of the dataset",
+        doc="Mean flux of the dataset",
+    )
+
+    @property
+    def mag_mean(self):
+        return -2.5 * np.log10(self.flux_mean) + PHOT_ZP
+
+    flux_rms = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Mean flux scatter of the dataset",
+    )
+
+    @property
+    def mag_rms(self):
+        return self.flux_rms / self.flux_mean / LOG_BASES
+
+    flux_mean_robust = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Robust mean flux of the dataset" "calculated using sigma clipping",
+    )
+
+    @property
+    def mag_mean_robust(self):
+        return -2.5 * np.log10(self.flux_mean_robust) + PHOT_ZP
+
+    flux_rms_robust = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Robust mean flux scatter of the dataset" "calculated using sigma clipping",
+    )
+
+    @property
+    def mag_rms_robust(self):
+        return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+
+    flux_max = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Maximum flux of the dataset",
+    )
+
+    @property
+    def mag_min(self):
+        return -2.5 * np.log10(self.flux_max) + PHOT_ZP
+
+    flux_min = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Minimum flux of the dataset",
+    )
+
+    @property
+    def mag_max(self):
+        return -2.5 * np.log10(self.flux_min) + PHOT_ZP
+
+    snr_max = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Maximum S/N of the dataset",
+    )
+
+    snr_min = sa.Column(
+        sa.Float,
+        nullable=False,
+        index=True,
+        doc="Minimum S/N of the dataset",
     )
 
     filter = sa.Column(
@@ -721,6 +1010,7 @@ class PhotometricData(DatasetMixin, Base):
         index=True,
         doc="Filter used to acquire this dataset",
     )
+
     exp_time = sa.Column(
         sa.Float, nullable=False, doc="Median exposure time of each frame, in seconds."
     )
@@ -743,7 +1033,7 @@ PhotometricData.metadata.create_all(engine)
 
 
 @event.listens_for(RawData, "before_insert")
-# @event.listens_for(PhotometricData, 'before_insert')
+@event.listens_for(PhotometricData, "before_insert")
 def insert_new_dataset(mapper, connection, target):
     """
     This function is called before a new dataset is inserted into the database.
@@ -752,7 +1042,10 @@ def insert_new_dataset(mapper, connection, target):
     otherwise it raises an error.
     """
     if target.filename is None:
-        raise ValueError("No filename specified for this dataset")
+        raise ValueError(
+            "No filename specified for this dataset. "
+            "Save the dataset to disk to generate a uuid4 filename. "
+        )
 
     if not target.check_file_exists():
         if target.autosave:
