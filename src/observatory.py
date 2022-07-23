@@ -8,10 +8,9 @@ import pandas as pd
 
 from src.database import Session
 from src.source import Source, get_source_identifiers
-from src.dataset import RawData, PhotometricData
+from src.dataset import DatasetMixin, RawData, PhotometricData
 from src.parameters import Parameters
 from src.catalog import Catalog
-from src.calibration import Calibration
 from src.histograms import Histograms
 from src.analysis import Analysis
 
@@ -59,7 +58,6 @@ class VirtualObservatory:
         self.project_name = project_name
         self.pars = None  # parameters for the analysis
         self.catalog = None  # a Catalog object
-        self.calibration = Calibration()  # a Calibration object
         self.analysis = Analysis()  # an Analysis object
         self.histograms = Histograms()  # a Histograms object
         self.database = None  # connection to database with objects
@@ -68,7 +66,7 @@ class VirtualObservatory:
         self._keyname = keyname  # key inside config file
         self.pars = Parameters(
             required_pars=[
-                "calibration",
+                "reducer",
                 "analysis",
                 "data_folder",
                 "data_glob",
@@ -76,7 +74,7 @@ class VirtualObservatory:
                 "catalog_matching",
             ]
         )
-        self.pars.calibration = {}
+        self.pars.reducer = {}
         self.pars.analysis = {}
         self.pars.dataset_attribute = "source_name"
         self.pars.dataset_identifier = "key"
@@ -101,9 +99,6 @@ class VirtualObservatory:
 
         if not isinstance(self.catalog, Catalog):
             raise TypeError("No Catalog object has been loaded.")
-
-        if not isinstance(self.calibration, Calibration):
-            raise TypeError("No Calibration object has been loaded.")
 
         if not isinstance(self.analysis, Analysis):
             raise TypeError("No Analysis object has been loaded.")
@@ -197,8 +192,7 @@ class VirtualObservatory:
 
     def run_analysis(self):
         """
-        Perform calibration and analysis
-        on each object in the catalog.
+        Perform analysis on each object in the catalog.
 
         """
         self.analysis.load_simulator()
@@ -209,7 +203,6 @@ class VirtualObservatory:
             if source is not None:
                 for d in source.datasets:
                     d.load()
-                    self.calibration.apply(d)
                 self.analysis.run(source, histograms=self.histograms)
 
     def get_source(self, row):
@@ -273,6 +266,8 @@ class VirtualObservatory:
                 with pd.HDFStore(filename) as store:
                     keys = store.keys()
                     for j, k in enumerate(keys):
+                        # if j > 3:
+                        #     break
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
                         self.save_source(data, cat_id, source_ids, filename, k, session)
@@ -402,15 +397,20 @@ class VirtualObservatory:
         new_source.cat_index = index
         new_source.cat_name = self.catalog.pars.catalog_name
 
-        session.add(new_source)
-        session.commit()
-        new_source.datasets = RawData(
+        new_data = RawData(
             data=data,
             observatory=self.name,
             filename=filename,
             key=key,
         )
-        session.add(new_source.datasets)
+        new_source.raw_data = [new_data]
+        new_source.lightcurves = self.reduce(
+            new_data, to="lightcurves", source=new_source
+        )
+        for lc in new_source.lightcurves:
+            lc.save()
+
+        session.add(new_source)
         session.commit()
         source_ids.add(cat_id)
 
@@ -483,30 +483,59 @@ class VirtualObservatory:
             parameters.update(kwargs)
             kwargs = parameters
 
+        # arguments to be passed into the new dataset constructors
+        init_kwargs = {}
+        for att in DatasetMixin.default_copy_attributes:
+            values = list({getattr(d, att) for d in datasets})
+            # only copy values if they're the same
+            # for all source (raw) datasets
+            if len(values) == 1:
+                init_kwargs[att] = values[0]
+
+        # if all data comes from a single raw dataset
+        # we should link that back from the new datasets
+        raw_data_ids = list({d.id for d in datasets})
+        if len(raw_data_ids) == 1:
+            init_kwargs["raw_data_id"] = raw_data_ids[0]
+
+        for att in DatasetMixin.default_update_attributes:
+            new_dict = {}
+            for d in datasets:
+                new_value = getattr(d, att)
+                if isinstance(new_value, dict):
+                    new_dict.update(new_value)
+            if len(new_dict) > 0:
+                init_kwargs[att] = new_dict
+
         if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
-            new_datasets = self.reduce_to_lightcurves(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_lightcurves(
+                datasets, source, init_kwargs, **kwargs
+            )
         elif to.lower() in ("sed", "seds", "spectra", "spectrum"):
-            new_datasets = self.reduce_to_sed(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_sed(datasets, source, init_kwargs, **kwargs)
         elif to.lower() == "img":
-            new_datasets = self.reduce_to_image(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_image(datasets, source, init_kwargs, **kwargs)
         elif to.lower() == "thumb":
-            new_datasets = self.reduce_to_thumbnail(datasets, source, **kwargs)
+            new_datasets = self.reduce_to_thumbnail(
+                datasets, source, init_kwargs, **kwargs
+            )
         else:
             raise ValueError(f'Unknown value for "to" input: {to}')
 
         new_datasets = sorted(new_datasets, key=lambda d: d.time_start)
+
         return new_datasets
 
-    def reduce_to_lightcurves(self, datasets, source=None, **kwargs):
+    def reduce_to_lightcurves(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Photometric reduction not implemented in this class")
 
-    def reduce_to_sed(self, datasets, source=None, **kwargs):
+    def reduce_to_sed(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("SED reduction not implemented in this class")
 
-    def reduce_to_image(self, datasets, source=None, **kwargs):
+    def reduce_to_image(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Image reduction not implemented in this class")
 
-    def reduce_to_thumbnail(self, datasets, source=None, **kwargs):
+    def reduce_to_thumbnail(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Thumbnail reduction not implemented in this class")
 
 
@@ -572,18 +601,8 @@ class VirtualDemoObs(VirtualObservatory):
         pass
         # TODO: make a simple lightcurve simulator
 
-    def populate_sources(self):
-        """
-        Match the catalog to the data,
-        by creating sources on the database
-        that connect each row in the catalog
-        to a datafile on disk.
-        """
-        pass
-        # TODO: figure out how this will work!
-
     def reduce_to_lightcurves(
-        self, datasets, source=None, median=True, mag_range=None, **_
+        self, datasets, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
     ):
         """
         Reduce the datasets to lightcurves.
@@ -597,14 +616,21 @@ class VirtualDemoObs(VirtualObservatory):
             If None, the reduction will not use any
             data of the source, such as the expected
             magnitude, the position, etc.
-        median: bool
-            If True, the median flux of each lightcurve
-            will be adjusted to the median of all measurements.
+        init_kwargs: dict
+            A dictionary of keyword arguments to be
+            passed to the constructor of the new dataset.
         mag_range: float or None
             If not None, and if the source is also given,
             this value will be used to remove datasets
             where the median magnitude is outside of this range,
             relative to the source's magnitude.
+        drop_bad: bool
+            If True, any points in the lightcurves will be
+            dropped if their flag is non-zero
+            or if their magnitude is NaN.
+            This reduces the output size but will
+            also not let bad data be transferred
+            down the pipeline for further review.
 
         Returns
         -------
@@ -612,9 +638,8 @@ class VirtualDemoObs(VirtualObservatory):
             The reduced datasets, after minimal processing.
             The reduced datasets will have uniform filter,
             each dataset will be sorted by time,
-            the median exposure time and frame rate will be calculated,
-            and flux values will be inferred from the magnitudes
-            (or vice-versa).
+            and some initial processing will be done,
+            using the "reducer" parameter (or function inputs).
         """
         allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
@@ -655,6 +680,9 @@ class VirtualDemoObs(VirtualObservatory):
             all_dfs = pd.concat(frames)
 
             filt_col = datasets[0].colmap["filter"]
+            flag_col = (
+                datasets[0].colmap["flag"] if "flag" in datasets[0].colmap else None
+            )
             filters = all_dfs[filt_col].unique()
             dfs = []
             for f in filters:
@@ -663,11 +691,14 @@ class VirtualDemoObs(VirtualObservatory):
                 df_new = all_dfs[all_dfs[filt_col] == f].reset_index(drop=True)
                 # df_new = df_new.sort([datasets[0].time_col], inplace=False)
                 # df_new.reset_index(drop=True, inplace=True)
+                if drop_bad and flag_col is not None:
+                    df_new = df_new[df_new[flag_col] == 0]
+
                 dfs.append(df_new)
                 # TODO: what happens if filter is in altdata, not in dataframe?
 
             new_datasets = []
             for df in dfs:
-                new_datasets.append(PhotometricData(data=df))
+                new_datasets.append(PhotometricData(data=df, **init_kwargs))
 
         return new_datasets

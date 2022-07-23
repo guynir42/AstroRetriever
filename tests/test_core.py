@@ -439,12 +439,74 @@ def test_data_reduction(test_project, new_source):
 
 
 def test_reducer_with_outliers(test_project, new_source):
-    pass
-    # TODO: add data from one filter,
-    #  but add some outliers, bad flags,
-    #  Test against num_good, robust stats, KEEP_FLAGGED,
-    #  flux max/min without outliers, etc.
-    #  Can also make this uniformly sampled and test that
+    num_points = 20
+    outlier_indices = [5, 8, 12]
+    flagged_indices = [5, 10, 15]
+    new_data = None
+    lightcurves = None
+
+    with Session() as session:
+        try:  # at end, delete the temp file
+            filt = "R"
+            mjd = np.linspace(57000, 58000, num_points)
+            mag_err = np.random.uniform(0.09, 0.11, num_points)
+            mag = np.random.normal(18, 0.1, num_points)
+            mag[outlier_indices] = np.random.normal(10, 0.1, len(outlier_indices))
+            flag = np.zeros(num_points, dtype=bool)
+            flag[flagged_indices] = True
+            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, flag=flag)
+            df = pd.DataFrame(test_data)
+
+            # add the data to a database mapped object
+            source_id = new_source.id
+            new_source.project = test_project.name
+            new_data = RawData(
+                data=df, folder="data_temp", altdata=dict(exptime="25.0")
+            )
+            new_data.save()
+            new_source.raw_data.append(new_data)
+
+            # reduce the data use the demo observatory
+            assert len(test_project.observatories) == 1
+            obs_key = list(test_project.observatories.keys())[0]
+            obs = test_project.observatories[obs_key]  # key should be "demo"
+            assert isinstance(obs, VirtualDemoObs)
+
+            obs.pars.reducer["drop_flagged"] = False
+            lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
+            new_source.lightcurves = lightcurves
+
+            assert len(lightcurves) == 1
+            lc = lightcurves[0]
+            lc.save()
+
+            session.add(new_source)
+            session.commit()
+
+            # check the data has been reduced as expected
+            df2 = df[~df["flag"]]
+            drop_idx = list(set(outlier_indices + flagged_indices))
+            df3 = df.drop(drop_idx, axis=0)
+            assert np.isclose(lc.mag_min, df2["mag"].min())
+            assert np.isclose(lc.mag_max, df2["mag"].max())
+            assert lc.num_good == num_points - len(flagged_indices)
+            assert abs(np.mean(df3["mag"]) - lc.mag_mean_robust) < 0.1
+            assert abs(np.std(df2["mag"]) - lc.mag_rms) < 0.5
+            assert abs(np.std(df3["mag"]) - lc.mag_rms_robust) < 0.1
+
+            # also check that the data is uniformly sampled
+            assert lc.is_uniformly_sampled
+
+        finally:
+            if new_data:
+                filename = new_data.filename
+                new_data.delete_data_from_disk()
+                assert not os.path.isfile(filename)
+
+            if lightcurves:
+                filenames = [lc.filename for lc in lightcurves]
+                [lc.delete_data_from_disk() for lc in lightcurves]
+                assert not any([os.path.isfile(f) for f in filenames])
 
 
 def test_reducer_magnitude_conversions(test_project, new_source):

@@ -1,5 +1,6 @@
 import os
 import uuid
+import string
 
 import numpy as np
 import pandas as pd
@@ -13,7 +14,7 @@ from sqlalchemy import orm, func, event
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base, Session, engine
+from src.database import Base, engine
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -107,6 +108,24 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         # TODO: figure out the series identifier and object
+
+    def __repr__(self):
+        string = (
+            f"Dataset(type= {self.type}, "
+            f"source ID={self.source_id}, "
+            f"num= {self.number}"
+        )
+        if self.observatory:
+            string += f" ({self.observatory.upper()})"
+
+        string += f", file: {self.get_fullname()}"
+
+        if self.key:
+            string += f" (key: {self.key})"
+
+        string += ")"
+
+        return string
 
     @orm.reconstructor
     def init_on_load(self):
@@ -292,6 +311,11 @@ class DatasetMixin:
     def load_netcdf(self):
         pass
 
+    @staticmethod
+    def random_string(length=16):
+        letters = list(string.ascii_lowercase)
+        return "".join(np.random.choice(letters, length))
+
     def save(self, overwrite=None):
         """
         Save the data to disk.
@@ -306,10 +330,10 @@ class DatasetMixin:
         """
         # if no filename/key are given, make them up
         if self.filename is None:
-            self.filename = str(uuid.uuid4()) + self.guess_extension()
+            self.filename = self.random_string(16) + self.guess_extension()
 
         if self.key is None and self.format in ("hdf5"):
-            self.key = str(uuid.uuid4())
+            self.key = self.random_string(8)
 
         if overwrite is None:
             overwrite = self.overwrite
@@ -385,7 +409,6 @@ class DatasetMixin:
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
-        t = None  # datetimes for each epoch
         for c in columns:
             if simplify(c) in ("jd", "jds", "juliandate", "juliandates"):
                 self.time_info["format"] = "mjd"
@@ -424,9 +447,25 @@ class DatasetMixin:
                 break
 
         for c in columns:
+            if simplify(c) in ("exptime", "exptimes", "exposuretime", "exposuretimes"):
+                self.colmap["exptime"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("ra", "ras", "rightascension", "rightascensions"):
+                self.colmap["ra"] = c
+                break
+
+        for c in columns:
+            if simplify(c) in ("dec", "decs", "declination", "declinations"):
+                self.colmap["dec"] = c
+                break
+
+        for c in columns:
             if simplify(c) in ("mag", "mags", "magnitude", "magnitudes"):
                 self.colmap["mag"] = c
                 break
+
         for c in columns:
             if simplify(c) in ("magerr", "magerr", "magerror"):
                 self.colmap["magerr"] = c
@@ -454,12 +493,7 @@ class DatasetMixin:
                 break
 
         for c in columns:
-            if simplify(c) in ("exptime", "exptimes", "exposuretime", "exposure"):
-                self.colmap["exptime"] = c
-                break
-
-        for c in columns:
-            if simplify(c) in ("flag", "catflag", "baddata"):
+            if simplify(c) in ("flag", "catflag", "catflags", "baddata"):
                 self.colmap["flag"] = c
                 break
 
@@ -565,7 +599,7 @@ class DatasetMixin:
     key = sa.Column(
         sa.String,
         nullable=True,
-        doc="Key of the dataset (e.g., in the HDF5 " "file it would be the group name)",
+        doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
     )
 
     type = sa.Column(
@@ -649,6 +683,26 @@ class DatasetMixin:
         "(if False, an error will be raised)",
     )
 
+    # automatically copy these values
+    # when reducing one dataset into another
+    # (only copy if all parent datasets have
+    # the same value)
+    default_copy_attributes = [
+        "series_identifier",
+        "series_object",
+        "autoload",
+        "autosave",
+        "overwrite",
+        "public",
+        "observatory",
+        "folder",
+    ]
+
+    # automatically update the dictionaries
+    # from all parent datasets into a new
+    # dictionary in the child dataset(s)
+    default_update_attributes = ["altdata"]
+
 
 class RawData(DatasetMixin, Base):
     def __init__(self, **kwargs):
@@ -689,6 +743,9 @@ class PhotometricData(DatasetMixin, Base):
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
         self.type = "photometry"
+
+        if "raw_data_it" in kwargs:
+            self.raw_data_it = kwargs["raw_data_it"]
 
         filters = self.data[self.colmap["filter"]]
         if not all([f == filters[0] for f in filters]):
@@ -787,20 +844,27 @@ class PhotometricData(DatasetMixin, Base):
         """
         if "exptime" in self.colmap:
             self.exp_time = np.median(self.data[self.colmap["exptime"]])
-        elif self.altdata and "exptime" in self.altdata:
-            self.exp_time = self.altdata["exptime"]
-        else:
+        elif self.altdata:
+
+            keys = ["exp_time", "exptime", "exposure_time", "exposuretime"]
+            for key in keys:
+                if key in self.altdata:
+                    self.exp_time = self.altdata[key]
+                    break
+
+        if self.exp_time is None:
             raise ValueError("No exposure time found in data or altdata.")
 
-        dt = np.diff(self.times.astype(np.datetime64))
-        dt = dt.astype(np.int64) / 1e6  # convert microseconds to seconds
-        self.frame_rate = 1 / np.nanmedian(dt)
+        if len(self.times) > 1:
+            dt = np.diff(self.times.astype(np.datetime64))
+            dt = dt.astype(np.int64) / 1e6  # convert microseconds to seconds
+            self.frame_rate = 1 / np.nanmedian(dt)
 
-        # check the relative amplitude of the time difference
-        # between measurements.
-        dt_amp = np.quantile(dt, 0.95) - np.quantile(dt, 0.05)
-        dt_amp *= self.frame_rate  # divide by median(dt)
-        self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
+            # check the relative amplitude of the time difference
+            # between measurements.
+            dt_amp = np.quantile(dt, 0.95) - np.quantile(dt, 0.05)
+            dt_amp *= self.frame_rate  # divide by median(dt)
+            self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
 
     def calc_stats(self):
         """
@@ -809,11 +873,11 @@ class PhotometricData(DatasetMixin, Base):
         fluxes = self.data[self.colmap["flux"]]
 
         if "flag" in self.colmap:
-            flags = self.data[self.colmap["flags"]]
+            flags = self.data[self.colmap["flag"]].values.astype(bool)
             fluxes = fluxes[np.invert(flags)]
 
-        self.flux_mean = np.nanmean(fluxes)
-        self.flux_rms = np.nanstd(fluxes)
+        self.flux_mean = np.nanmean(fluxes) if len(fluxes) else None
+        self.flux_rms = np.nanstd(fluxes) if len(fluxes) else None
 
         # robust statistics
         self.flux_mean_robust, self.flux_rms_robust = self.sigma_clipping(fluxes)
@@ -855,6 +919,9 @@ class PhotometricData(DatasetMixin, Base):
             without including outliers.
         """
 
+        if len(input_values) == 0:
+            return None, None
+
         if len(input_values) < 5:
             return np.nanmedian(input_values), np.nanstd(input_values)
 
@@ -884,7 +951,10 @@ class PhotometricData(DatasetMixin, Base):
     def calc_snr(self):
         fluxes = self.data[self.colmap["flux"]]
         fluxerrs = self.data[self.colmap["fluxerr"]]
-        worst_err = np.maximum(self.flux_rms_robust, fluxerrs)
+        if self.flux_rms_robust:
+            worst_err = np.maximum(self.flux_rms_robust, fluxerrs)
+        else:
+            worst_err = fluxerrs
 
         self.data["snr"] = fluxes / worst_err
         self.colmap["snr"] = "snr"
@@ -895,10 +965,19 @@ class PhotometricData(DatasetMixin, Base):
         and other similar properties on the data.
         """
 
-        self.snr_max = np.nanmax(self.data["snr"])
-        self.snr_min = np.nanmin(self.data["snr"])
-        self.flux_max = np.nanmax(self.data[self.colmap["flux"]])
-        self.flux_min = np.nanmin(self.data[self.colmap["flux"]])
+        snr = self.data[self.colmap["snr"]]
+        flux = self.data[self.colmap["flux"]]
+
+        if "flag" in self.colmap:
+            flags = self.data[self.colmap["flag"]].values.astype(bool)
+            snr = snr[np.invert(flags)]
+            flux = flux[np.invert(flags)]
+
+        if len(snr) > 0:
+            self.snr_max = np.nanmax(snr)
+            self.snr_min = np.nanmin(snr)
+            self.flux_max = np.nanmax(flux)
+            self.flux_min = np.nanmin(flux)
 
     def drop_columns(self):
 
@@ -912,7 +991,7 @@ class PhotometricData(DatasetMixin, Base):
     raw_data_id = sa.Column(
         sa.Integer,
         sa.ForeignKey("raw_data.id"),
-        nullable=False,
+        nullable=True,
         index=True,
         doc="ID of the raw dataset that was used to produce this reduced dataset.",
     )
@@ -926,80 +1005,94 @@ class PhotometricData(DatasetMixin, Base):
 
     flux_mean = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Mean flux of the dataset",
     )
 
     @property
     def mag_mean(self):
+        if self.flux_mean is None:
+            return None
         return -2.5 * np.log10(self.flux_mean) + PHOT_ZP
 
     flux_rms = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Mean flux scatter of the dataset",
     )
 
     @property
     def mag_rms(self):
-        return self.flux_rms / self.flux_mean / LOG_BASES
+        if self.flux_mean and self.flux_rms is not None:
+            return self.flux_rms / self.flux_mean / LOG_BASES
+        else:
+            return None
 
     flux_mean_robust = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Robust mean flux of the dataset" "calculated using sigma clipping",
     )
 
     @property
     def mag_mean_robust(self):
+        if self.flux_mean_robust is None:
+            return None
         return -2.5 * np.log10(self.flux_mean_robust) + PHOT_ZP
 
     flux_rms_robust = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Robust mean flux scatter of the dataset" "calculated using sigma clipping",
     )
 
     @property
     def mag_rms_robust(self):
-        return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+        if self.flux_mean_robust and self.flux_rms_robust is not None:
+            return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+        else:
+            return None
 
     flux_max = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Maximum flux of the dataset",
     )
 
     @property
     def mag_min(self):
+        if self.flux_max is None:
+            return None
         return -2.5 * np.log10(self.flux_max) + PHOT_ZP
 
     flux_min = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Minimum flux of the dataset",
     )
 
     @property
     def mag_max(self):
+        if self.flux_min is None:
+            return None
         return -2.5 * np.log10(self.flux_min) + PHOT_ZP
 
     snr_max = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Maximum S/N of the dataset",
     )
 
     snr_min = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Minimum S/N of the dataset",
     )
@@ -1016,7 +1109,7 @@ class PhotometricData(DatasetMixin, Base):
     )
     frame_rate = sa.Column(
         sa.Float,
-        nullable=False,
+        nullable=True,
         doc="Median frame rate (frequency) of exposures in Hz.",
     )
     is_uniformly_sampled = sa.Column(
@@ -1056,3 +1149,7 @@ def insert_new_dataset(mapper, connection, target):
                 "does not exist and autosave is disabled. "
                 "Please create the file manually."
             )
+
+
+if __name__ == "__main__":
+    print(dir(DatasetMixin))

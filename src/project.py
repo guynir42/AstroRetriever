@@ -56,17 +56,15 @@ class Project:
         self.pars = Parameters(
             required_pars=[
                 "observatories",
+                "reducer",
                 "analysis",
-                "calibration",
                 "catalog",
             ]
         )
         # default values in case no config file is loaded:
         self.pars.observatories = set()  # set of observatory names
         self.pars.catalog = {}  # parameters for the catalog
-        self.pars.calibration = (
-            {}
-        )  # global calibration parameters for all observatories
+        self.pars.reducer = {}  # global reducer pars for all observatories
         self.pars.analysis = {}  # global analysis parameters for all observatories
 
         # load the parameters from the config file:
@@ -129,8 +127,7 @@ class Project:
         use the name parameter to figure out
         what kind of subclass to use.
         Load configurations and apply them
-        to the calibration and analysis objects
-        for this observatory.
+        to the analysis objects for this observatory.
 
         Parameters
         ----------
@@ -173,7 +170,7 @@ class Project:
         obs_class = getattr(module, f"Virtual{name}")
         new_obs = obs_class(project_name=self.name, config=config)
         # new_obs should contain all sub-objects
-        # like the calibration and analysis,
+        # like the analysis object,
         # but they are not initialized yet.
         # first, load the parameters, then initialize them
 
@@ -183,11 +180,11 @@ class Project:
             new_obs.pars.update(params)
 
         new_obs.pars.verbose = self.pars.verbose
-        # parse parameters for calibration of this observatory
-        new_obs.calibration.pars.update(self.pars.calibration)  # project pars
-        new_obs.calibration.pars.update(new_obs.pars.calibration)  # observatory pars
-        new_obs.calibration.pars.verify()
-        new_obs.calibration.initialize()
+        # parse parameters for reduction methods for this observatory
+        reducer_dict = {}
+        reducer_dict.update(self.pars.reducer)  # project pars
+        reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
+        new_obs.pars.reducer = reducer_dict
 
         # parse parameters for analysis of this observatory
         new_obs.analysis.pars.update(self.pars.analysis)  # project pars
@@ -241,6 +238,7 @@ if __name__ == "__main__":
         },
         config=False,
     )
+    proj.delete_all_sources()
     proj.observatories["ztf"].populate_sources(number=1)
     sources = proj.get_all_sources()
     print(

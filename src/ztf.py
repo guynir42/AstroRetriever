@@ -12,6 +12,7 @@ from ztfquery import lightcurve
 
 from src import utils
 from src.observatory import VirtualObservatory
+from src.dataset import DatasetMixin, RawData, PhotometricData
 
 
 class VirtualZTF(VirtualObservatory):
@@ -49,6 +50,181 @@ class VirtualZTF(VirtualObservatory):
         """
         super().initialize()
         # verify parameters have the correct type, etc.
+
+    def reduce_to_lightcurves(
+        self,
+        datasets,
+        source=None,
+        init_kwargs={},
+        mag_range=0.75,
+        radius=3,
+        gap=40,
+        drop_bad=False,
+        **_,
+    ):
+        """
+        Reduce the datasets to lightcurves.
+        Splits up the raw data that corresponds
+        to several object IDs (oid) into separate
+        lightcurves. Also will split observing seasons
+        into separate lightcurves, if there's a gap
+        of more than X days (given by the "gap" parameter).
+
+        Parameters
+        ----------
+        datasets: a list of src.dataset.RawData objects
+            The raw data to reduce.
+        source: src.source.Source object
+            The source to which the dataset belongs.
+            If None, the reduction will not use any
+            data of the source, such as the expected
+            magnitude, the position, etc.
+        init_kwargs: dict
+            A dictionary of keyword arguments to be
+            passed to the constructor of the new dataset.
+        mag_range: float or None
+            If not None, and if the source is also given,
+            this value will be used to remove datasets
+            where the median magnitude is outside of this range,
+            relative to the source's magnitude.
+        radius: float
+            The maximum distance (in arcesconds) from the source
+            for each oid lightcurve to be considered a match.
+            If outside the radius, the oid lightcurve will be
+            dropped. Only works if given the source.
+        gap: float
+            If there is a gap in a lightcurve where there are
+            no observations for this many days, split into
+            separate lightcurves.
+        drop_bad: bool
+            If True, any points in the lightcurves will be
+            dropped if their flag is non-zero
+            or if their magnitude is NaN.
+            This reduces the output size but will
+            also not let bad data be transferred
+            down the pipeline for further review.
+
+        Returns
+        -------
+        a list of src.dataset.PhotometricData objects
+            The reduced datasets, after minimal processing.
+            The reduced datasets will have uniform filter,
+            each dataset will be sorted by time,
+            and some initial processing will be done,
+            using the "reducer" parameter (or function inputs).
+        """
+        allowed_types = "photometry"
+        allowed_dataclasses = pd.DataFrame
+        oid_dfs = []
+        for i, d in enumerate(datasets):
+            # check the raw input types make sense
+            if d.type is None or d.type not in allowed_types:
+                raise ValueError(
+                    f"Expected RawData to contain {str(allowed_types)}, "
+                    f"but dataset {i} was a {d.type} dataset."
+                )
+            if not isinstance(d.data, allowed_dataclasses):
+                raise ValueError(
+                    f"Expected RawData to contain {str(allowed_dataclasses)}, "
+                    f"but data in dataset {i} was a {type(d.data)} object."
+                )
+
+        data = pd.concat([d.data for d in datasets])
+
+        time_col = datasets[0].colmap["time"]
+        time_conversion = datasets[0].time_info["conversion"]
+        exp_col = datasets[0].colmap["exptime"]
+        filt_col = datasets[0].colmap["filter"]
+        flag_col = datasets[0].colmap["flag"] if "flag" in datasets[0].colmap else None
+        mag_col = datasets[0].colmap["mag"]
+        magerr_col = datasets[0].colmap["magerr"]
+        ra_col = datasets[0].colmap["ra"]
+        dec_col = datasets[0].colmap["dec"]
+
+        # split the dataset into oids
+        object_ids = list(set(data["oid"]))
+        for oid in object_ids:
+            new_oid_df = data[data["oid"] == oid]
+            bad_idx = (new_oid_df[flag_col] != 0) | (new_oid_df[mag_col].isna())
+            df = new_oid_df[bad_idx]  # cleaned data
+            # check that the objects are close to the source
+            if source and source.ra is not None and source.dec is not None and radius:
+                dRA = (
+                    (df[ra_col].median() - source.ra)
+                    * 3600
+                    * np.cos(np.radians(source.dec))
+                )
+                dDec = (df[dec_col].median() - source.dec) * 3600
+                dist = np.sqrt(dRA**2 + dDec**2)
+                if dist > radius:
+                    continue
+
+            # check the source magnitude is within the range
+            if source and source.mag is not None and mag_range:
+                mag = df[mag_col]
+                if np.all(np.isnan(mag)):
+                    continue
+                mag_diff = abs(source.mag - np.nanmedian(mag))
+                if mag_diff > mag_range:
+                    continue
+
+            # make sure data is in chronological order
+            new_oid_df = new_oid_df.sort_values(by=[time_col])
+            if drop_bad:
+                new_oid_df = df
+
+            oid_dfs.append(new_oid_df)
+
+        # verify that all data for the same oid
+        # has the same filter
+        for df in oid_dfs:
+            filters = list(set(df[filt_col]))
+            if len(filters) > 1:
+                raise ValueError(
+                    f"Expected all data for the same oid to have the same filter, "
+                    f"but the oid {df['oid'].iloc[0]} had filters {filters}."
+                )
+
+        # split the oid_dfs into lightcurves
+        # based on the gap between observations
+        dfs = []
+        for df in oid_dfs:
+            # df_new = df[df[filt_col] == f].reset_index(drop=True)
+            if datasets[0].time_info["format"] in ("mjd", "jd"):
+                dt = np.diff(df[time_col])
+            else:
+                # time in numpy format
+                t = time_conversion(df[time_col]).astype(np.datetime64)
+                # convert time gaps to days
+                dt = np.diff(dt).astype(np.int64) / 1e6 / 24 / 3600
+
+            gaps = np.where(dt > gap)[0]
+            gaps = np.append(gaps, len(df))
+            prev_idx = 0
+            for idx in gaps:
+                new_df = df[prev_idx : idx + 1].reset_index(drop=True, inplace=False)
+
+                if len(new_df) > 0:
+                    dfs.append(new_df)
+                prev_idx = idx + 1
+
+        new_datasets = []
+        keep_columns = [
+            time_col,
+            exp_col,
+            filt_col,
+            mag_col,
+            magerr_col,
+            ra_col,
+            dec_col,
+            flag_col,
+        ]
+        for df in dfs:
+            df = df[keep_columns]
+            if len(df) > 0:
+                new_datasets.append(PhotometricData(data=df, **init_kwargs))
+
+        return new_datasets
 
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
