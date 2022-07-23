@@ -115,7 +115,6 @@ def test_project_user_inputs():
     # check the observatory was loaded correctly
     assert "ztf" in proj.observatories
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
-    assert proj.observatories["ztf"].calibration.pars.cal_key == "cal_value"
     assert proj.observatories["ztf"].analysis.pars.an_key == "an_value"
     assert proj.observatories["ztf"]._credentials["username"] == "guy"
     assert proj.observatories["ztf"]._credentials["password"] == "12345"
@@ -193,7 +192,6 @@ def test_project_config_file():
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        assert proj.observatories["ztf"].calibration.pars.cal_key == "ztf_calibration"
         assert proj.observatories["ztf"].analysis.pars.an_key == "ztf_analysis"
 
         # check the user inputs override the config file
