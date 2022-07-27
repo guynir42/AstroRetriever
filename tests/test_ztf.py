@@ -1,20 +1,10 @@
 import os
-import uuid
-import pytest
-import time
 
 import numpy as np
-import pandas as pd
 from astropy.time import Time
 
-import sqlalchemy as sa
-
-import matplotlib.pyplot as plt
-
 import src.dataset
-from src.database import Session
-from src.catalog import Catalog
-from src.dataset import RawData, PhotometricData, PHOT_ZP
+from src.dataset import RawData
 from src.ztf import VirtualZTF
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -65,7 +55,6 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # check the number of lightcurves is reduced when gap is increased
     filters = np.unique(raw_data.data.filtercode)
-    num_lcs_initial = len(new_lcs)
 
     new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=300)
     new_lc_epochs2 = np.sum([lc.number for lc in new_lcs])

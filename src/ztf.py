@@ -183,9 +183,9 @@ class VirtualZTF(VirtualObservatory):
         # split the data into lightcurves
         # based on the gap between observations
         data = pd.concat(oid_dfs)
-        data_sort = data.sort_values(by=[time_col], inplace=False).reset_index(
-            drop=True
-        )
+        data_sort = data.sort_values(by=[time_col], inplace=False)
+        data_sort.reset_index(drop=True)
+
         if datasets[0].time_info["format"] in ("mjd", "jd"):
             dt = np.diff(data_sort[time_col])
         else:
