@@ -10,6 +10,7 @@ import healpix_alchemy as ha
 from astropy import units as u
 
 from src.database import Base, Session, engine
+from src.catalog import Catalog
 
 # ref: https://github.com/skyportal/conesearch-alchemy
 
@@ -76,6 +77,15 @@ def cone_search(ra, dec, sep=2 / 3600):
     p = conesearch_alchemy.Point(ra=ra, dec=dec)
     stmt = sa.select(Source).where(Source.within(p, sep))
     return stmt
+
+
+def angle_diff(a1, a2):
+    """
+    Find the distance between two angles (in degrees).
+
+    Ref: https://gamedev.stackexchange.com/a/4472
+    """
+    return 180 - abs(abs(a1 - a2) - 180)
 
 
 class Source(Base, conesearch_alchemy.Point):
@@ -270,8 +280,12 @@ class Source(Base, conesearch_alchemy.Point):
 
     def __repr__(self):
         string = (
-            f'Source(name="{self.name}", ra={self.ra}, dec={self.dec}, mag= {self.mag}, '
-            f'project="{self.project}", datasets= {len(self.raw_data)})'
+            f'Source(name="{self.name}", '
+            f"ra={Catalog.ra2sex(self.ra)}, "
+            f"dec={Catalog.dec2sex(self.dec)}, "
+            f"mag= {self.mag:.2f}, "
+            f'project="{self.project}", '
+            f"datasets= {len(self.raw_data)})"
         )
         return string
 

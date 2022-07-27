@@ -21,3 +21,15 @@ def new_source():
 def test_project():
     project = Project(name="test_project", config=False)
     return project
+
+
+@pytest.fixture
+def ztf_project():
+    project = Project(
+        name="test_ZTF",
+        params={
+            "observatories": "ZTF",  # a single observatory named ZTF
+        },
+        config=False,
+    )
+    return project

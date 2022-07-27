@@ -111,9 +111,9 @@ class DatasetMixin:
 
     def __repr__(self):
         string = (
-            f"Dataset(type= {self.type}, "
-            f"source ID={self.source_id}, "
-            f"num= {self.number}"
+            f"{self.__class__.__name__}(type={self.type}, "
+            f"source={self.source_id}, "
+            f"epochs={self.number}"
         )
         if self.observatory:
             string += f" ({self.observatory.upper()})"
@@ -266,6 +266,8 @@ class DatasetMixin:
 
         if not self.check_file_exists():
             raise FileNotFoundError(f"File {self.get_fullname()} does not exist")
+        if self.format is None:
+            self.format = self.guess_format()
 
         if self.format == "hdf5":
             self.load_hdf5()
@@ -303,7 +305,7 @@ class DatasetMixin:
         pass
 
     def load_csv(self):
-        pass
+        self.data = pd.read_csv(self.get_fullname())
 
     def load_json(self):
         pass
@@ -331,6 +333,10 @@ class DatasetMixin:
         # if no filename/key are given, make them up
         if self.filename is None:
             self.filename = self.random_string(16) + self.guess_extension()
+            if self.type:
+                self.filename = self.type + "_" + self.filename
+            else:
+                self.filename = "data_" + self.filename
 
         if self.key is None and self.format in ("hdf5"):
             self.key = self.random_string(8)

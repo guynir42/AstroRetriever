@@ -266,8 +266,8 @@ class VirtualObservatory:
                 with pd.HDFStore(filename) as store:
                     keys = store.keys()
                     for j, k in enumerate(keys):
-                        # if j > 3:
-                        #     break
+                        if j > 3:
+                            break
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
                         self.save_source(data, cat_id, source_ids, filename, k, session)
@@ -428,7 +428,7 @@ class VirtualObservatory:
         The output that should be produced from
         the raw data can be lightcurves (i.e.,
         processed photometry ready for analysis)
-        or SED (i.e., Spectral Energy Distrubution,
+        or SED (i.e., Spectral Energy Distribution,
         which is just a reduced spectra ready for
         analysis) or even just calibrating an image.
         Possible values for the "to" input are:

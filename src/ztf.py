@@ -10,7 +10,7 @@ from timeit import default_timer as timer
 
 from ztfquery import lightcurve
 
-from src import utils
+from src.source import angle_diff
 from src.observatory import VirtualObservatory
 from src.dataset import DatasetMixin, RawData, PhotometricData
 
@@ -115,7 +115,7 @@ class VirtualZTF(VirtualObservatory):
         """
         allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
-        oid_dfs = []
+
         for i, d in enumerate(datasets):
             # check the raw input types make sense
             if d.type is None or d.type not in allowed_types:
@@ -141,19 +141,22 @@ class VirtualZTF(VirtualObservatory):
         ra_col = datasets[0].colmap["ra"]
         dec_col = datasets[0].colmap["dec"]
 
+        # all filters in this dataset
+        filters = list(set(data[filt_col]))
+
         # split the dataset into oids
+        oid_dfs = []
         object_ids = list(set(data["oid"]))
         for oid in object_ids:
             new_oid_df = data[data["oid"] == oid]
             bad_idx = (new_oid_df[flag_col] != 0) | (new_oid_df[mag_col].isna())
-            df = new_oid_df[bad_idx]  # cleaned data
+            df = new_oid_df[~bad_idx].reset_index(
+                drop=True, inplace=False
+            )  # cleaned data
             # check that the objects are close to the source
             if source and source.ra is not None and source.dec is not None and radius:
-                dRA = (
-                    (df[ra_col].median() - source.ra)
-                    * 3600
-                    * np.cos(np.radians(source.dec))
-                )
+                dRA = angle_diff(df[ra_col].median(), source.ra)
+                dRA *= 3600 * np.cos(np.radians(source.dec))
                 dDec = (df[dec_col].median() - source.dec) * 3600
                 dist = np.sqrt(dRA**2 + dDec**2)
                 if dist > radius:
@@ -168,45 +171,50 @@ class VirtualZTF(VirtualObservatory):
                 if mag_diff > mag_range:
                     continue
 
-            # make sure data is in chronological order
-            new_oid_df = new_oid_df.sort_values(by=[time_col])
-            if drop_bad:
-                new_oid_df = df
-
-            oid_dfs.append(new_oid_df)
-
-        # verify that all data for the same oid
-        # has the same filter
-        for df in oid_dfs:
-            filters = list(set(df[filt_col]))
-            if len(filters) > 1:
+            # verify that all data for the same oid
+            # has the same filter
+            if len(list(set(df[filt_col]))) > 1:
                 raise ValueError(
                     f"Expected all data for the same oid to have the same filter, "
                     f"but the oid {df['oid'].iloc[0]} had filters {filters}."
                 )
+            oid_dfs.append(new_oid_df)
 
-        # split the oid_dfs into lightcurves
+        # split the data into lightcurves
         # based on the gap between observations
+        data = pd.concat(oid_dfs)
+        data_sort = data.sort_values(by=[time_col], inplace=False).reset_index(
+            drop=True
+        )
+        if datasets[0].time_info["format"] in ("mjd", "jd"):
+            dt = np.diff(data_sort[time_col])
+        else:
+            # time in numpy format
+            t = time_conversion(data_sort[time_col]).astype(np.datetime64)
+            # convert time gaps to days
+            dt = np.diff(t).astype(np.int64) / 1e6 / 24 / 3600
+
+        gaps = np.where(dt > gap)[0]
+        gaps = np.append(gaps, len(data))
+        prev_idx = 0
+
         dfs = []
-        for df in oid_dfs:
-            # df_new = df[df[filt_col] == f].reset_index(drop=True)
-            if datasets[0].time_info["format"] in ("mjd", "jd"):
-                dt = np.diff(df[time_col])
-            else:
-                # time in numpy format
-                t = time_conversion(df[time_col]).astype(np.datetime64)
-                # convert time gaps to days
-                dt = np.diff(dt).astype(np.int64) / 1e6 / 24 / 3600
+        for idx in gaps:
+            df_gap = data_sort[prev_idx : idx + 1]
+            for filt in filters:
+                df = df_gap[df_gap[filt_col] == filt].reset_index(
+                    drop=True, inplace=False
+                )
 
-            gaps = np.where(dt > gap)[0]
-            gaps = np.append(gaps, len(df))
-            prev_idx = 0
-            for idx in gaps:
-                new_df = df[prev_idx : idx + 1].reset_index(drop=True, inplace=False)
+                # drop the flagged or NaN values
+                if drop_bad:
+                    bad_idx = (df[flag_col] != 0) | (df[mag_col].isna())
+                    df = df[~bad_idx]
 
-                if len(new_df) > 0:
-                    dfs.append(new_df)
-                prev_idx = idx + 1
+                if len(df) > 0:
+                    dfs.append(df)
+
+            prev_idx = idx + 1
 
         new_datasets = []
         keep_columns = [
@@ -279,6 +287,7 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
     if "verbose" in kwargs and kwargs["verbose"]:
         print(f"Calling the ZTF forced photometry service with coordinates: {ra} {dec}")
 
+    # TODO: update utils to use Catalog instead
     ra = utils.ra2deg(ra)
     dec = utils.dec2deg(dec)
 
