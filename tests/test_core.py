@@ -319,29 +319,17 @@ def test_add_source_and_data():
         assert data is None
 
 
-def test_data_reduction(test_project, new_source):
+def test_data_reduction(test_project, new_source, raw_photometry):
 
-    new_data = None
     lightcurves = None
 
     with Session() as session:
         try:  # at end, delete the temp file
-            # add some data to the source
-            num_points = 30
-            filt = np.random.choice(["r", "g", "i"], num_points)
-            mjd = np.random.uniform(57000, 58000, num_points)
-            mag = np.random.uniform(15, 20, num_points)
-            mag_err = np.random.uniform(0.1, 0.5, num_points)
-            oid = np.random.randint(0, 5, num_points)
-            test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
-            df = pd.DataFrame(test_data)
-
             # add the data to a database mapped object
             source_id = new_source.id
             new_source.project = test_project.name
-            new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
-            new_data.save()
-            new_source.raw_data.append(new_data)
+            raw_photometry.save()
+            new_source.raw_data.append(raw_photometry)
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
@@ -351,13 +339,12 @@ def test_data_reduction(test_project, new_source):
 
             # cannot generate photometric data without an exposure time
             with pytest.raises(ValueError) as exc:
-                obs.reduce(new_data, to="lcs", source=new_source)
+                obs.reduce(raw_photometry, to="lcs", source=new_source)
             assert "No exposure time" in str(exc.value)
 
             # add exposure time to the dataframe:
-            df["exp_time"] = 30.0
-            new_source.raw_data[0].data = df
-            lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
+            new_source.raw_data[0].data["exp_time"] = 30.0
+            lightcurves = obs.reduce(raw_photometry, to="lcs", source=new_source)
             new_source.lightcurves = lightcurves
             session.add(new_source)
 
@@ -373,7 +360,7 @@ def test_data_reduction(test_project, new_source):
             # check that the data has been reduced as expected
             for lc in lightcurves:
                 filt = lc.filter
-                dff = df[df["filter"] == filt]
+                dff = raw_photometry.data[raw_photometry.data["filter"] == filt]
                 dff = dff.sort_values(by="mjd", inplace=False)
                 dff.reset_index(drop=True, inplace=True)
 
@@ -410,13 +397,12 @@ def test_data_reduction(test_project, new_source):
 
                 # make sure relationships are correct
                 assert lc.source_id == new_source.id
-                assert lc.raw_data_id == new_data.id
+                assert lc.raw_data_id == raw_photometry.id
 
         finally:
-            if new_data:
-                filename = new_data.filename
-                new_data.delete_data_from_disk()
-                assert not os.path.isfile(filename)
+            filename = raw_photometry.filename
+            raw_photometry.delete_data_from_disk()
+            assert not os.path.isfile(filename)
 
             if lightcurves:
                 filenames = [lc.filename for lc in lightcurves]
@@ -427,13 +413,88 @@ def test_data_reduction(test_project, new_source):
         session.execute(sa.delete(Source).where(Source.name == source_id))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(RawData.key == new_data.key)
+            sa.select(RawData).where(RawData.key == raw_photometry.key)
         ).first()
         assert data is None
         data = session.scalars(
             sa.select(PhotometricData).where(PhotometricData.source_id == source_id)
         ).all()
         assert len(data) == 0
+
+
+def test_data_filenames(raw_photometry):
+    try:  # at end, delete the temp files
+        raw_photometry.save()
+        assert raw_photometry.filename is not None
+        assert "photometry" in raw_photometry.filename
+        assert raw_photometry.filename.endswith(".h5")
+
+    finally:
+        raw_photometry.delete_data_from_disk()
+        assert not os.path.isfile(raw_photometry.get_fullname())
+
+    # just a filename does not affect folder
+    # default folder is given as 'DATA'
+    raw_photometry.folder = None
+    raw_photometry.filename = "test.h5"
+    assert raw_photometry.folder is None
+    assert raw_photometry.filename == "test.h5"
+    assert raw_photometry.get_fullname() == os.path.join(basepath, "DATA/test.h5")
+
+    # no folder is given, but has observatory name to use as default
+    raw_photometry.observatory = "ztf"
+    assert raw_photometry.get_fullname() == os.path.join(basepath, "ZTF/test.h5")
+
+    # give the folder explicitly, will override the default
+    raw_photometry.folder = "test"
+    assert raw_photometry.get_fullname() == os.path.join(basepath, "test/test.h5")
+
+    # adding a path to filename puts that path into "folder"
+    raw_photometry.folder = None
+    raw_photometry.filename = "path/to/test/test.h5"
+    assert raw_photometry.folder == "path/to/test"
+    assert raw_photometry.get_fullname() == os.path.join(
+        basepath, "path/to/test/test.h5"
+    )
+
+    # an absolute path in "folder" will ignore DATA_ROOT
+    raw_photometry.folder = None
+    raw_photometry.filename = "/path/to/test/test.h5"
+    assert raw_photometry.folder == "/path/to/test"
+    assert raw_photometry.get_fullname() == "/path/to/test/test.h5"
+
+
+def test_reduced_data_file_keys(test_project, new_source, raw_photometry):
+
+    obs = test_project.observatories["demo"]
+    raw_photometry.altdata["exptime"] = 30.0
+    lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
+
+    try:  # at end, delete the temp file
+        raw_photometry.save()
+        basename = os.path.splitext(raw_photometry.filename)[0]
+
+        lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
+
+        for lc in lcs:
+            lc.save()
+            assert basename in lc.filename
+
+        # make sure all filenames are the same
+        assert lcs[0].filename == list({lc.filename for lc in lcs})[0]
+
+        # check the all the data exists in the file
+        with pd.HDFStore(lcs[0].get_fullname()) as store:
+            for lc in lcs:
+                assert os.path.join("/", lc.key) in store.keys()
+                assert len(store[lc.key]) == len(lc.data)
+
+    finally:
+        raw_photometry.delete_data_from_disk()
+        assert not os.path.isfile(raw_photometry.get_fullname())
+        for lc in lcs:
+            lc.delete_data_from_disk()
+        assert not os.path.isfile(lcs[0].get_fullname())
 
 
 def test_reducer_with_outliers(test_project, new_source):

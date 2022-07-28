@@ -238,9 +238,13 @@ if __name__ == "__main__":
         },
         config=False,
     )
+
     proj.delete_all_sources()
     proj.observatories["ztf"].populate_sources(number=1)
     sources = proj.get_all_sources()
     print(
         f'Database contains {len(sources)} sources associated with project "{proj.name}"'
     )
+    for source in sources:
+        for lc in source.lightcurves:
+            lc.delete_data_from_disk()

@@ -397,16 +397,15 @@ class VirtualObservatory:
         new_source.cat_index = index
         new_source.cat_name = self.catalog.pars.catalog_name
 
-        new_data = RawData(
+        raw_data = RawData(
             data=data,
             observatory=self.name,
             filename=filename,
             key=key,
         )
-        new_source.raw_data = [new_data]
-        new_source.lightcurves = self.reduce(
-            new_data, to="lightcurves", source=new_source
-        )
+        print(raw_data.filename)
+        new_source.raw_data = [raw_data]
+        new_source.lightcurves = self.reduce(raw_data, to="lcs", source=new_source)
         for lc in new_source.lightcurves:
             lc.save()
 
@@ -493,10 +492,13 @@ class VirtualObservatory:
                 init_kwargs[att] = values[0]
 
         # if all data comes from a single raw dataset
-        # we should link that back from the new datasets
+        # we should link back to it from the new datasets
         raw_data_ids = list({d.id for d in datasets})
         if len(raw_data_ids) == 1:
             init_kwargs["raw_data_id"] = raw_data_ids[0]
+        raw_data_filenames = list({d.filename for d in datasets})
+        if "raw_data_filename" not in init_kwargs and len(raw_data_filenames) == 1:
+            init_kwargs["raw_data_filename"] = raw_data_filenames[0]
 
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}

@@ -212,7 +212,7 @@ class DatasetMixin:
         # TODO: implement this
         return 0
 
-    def get_path(self, full=False):
+    def get_path(self):
         """
         Get the name of the folder inside
         the DATA_ROOT folder where this dataset is stored.
@@ -225,14 +225,10 @@ class DatasetMixin:
         else:
             f = "DATA"
 
-        f = os.path.join(DATA_ROOT, f)
-
-        if full:
-            append_folder = os.path.dirname(self.filename)
-            if append_folder:
-                f = os.path.join(f, append_folder)
-
-        return f
+        if os.path.isabs(f):
+            return f
+        else:
+            return os.path.join(DATA_ROOT, f)
 
     def get_fullname(self):
         """
@@ -318,6 +314,36 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
+    def invent_filename(self, batch=1000, digits=7):
+        """
+        Generate a random filename.
+        If the source id is given,
+        will put the data in a file named
+        <type>_<source_id_lower>_<source_id_higher>
+        (with the appropriate extension).
+        The lower and higher would be the previous
+        and next batch of sources (given by batch),
+        and zero padded to the number given by digits.
+        """
+        if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:
+            basename = os.path.splitext(self.raw_data_filename)[0]
+            self.filename = basename + "_reduced"
+        else:
+            if self.source_id is not None:
+                lower = self.source_id // batch * batch
+                higher = (self.source_id // batch + 1) * batch
+                self.filename = f"{lower:0{digits}d}_{higher:0{digits}d}"
+            else:
+                self.filename = self.random_string(15)
+            # add prefix using the type of data
+            if self.type:
+                self.filename = self.type + "_" + self.filename
+            else:
+                self.filename = "data_" + self.filename
+
+        # add extension
+        self.filename += self.guess_extension()
+
     def save(self, overwrite=None):
         """
         Save the data to disk.
@@ -332,43 +358,49 @@ class DatasetMixin:
         """
         # if no filename/key are given, make them up
         if self.filename is None:
-            self.filename = self.random_string(16) + self.guess_extension()
-            if self.type:
-                self.filename = self.type + "_" + self.filename
-            else:
-                self.filename = "data_" + self.filename
+            self.invent_filename()
 
         if self.key is None and self.format in ("hdf5"):
             self.key = self.random_string(8)
 
         if overwrite is None:
             overwrite = self.overwrite
-        if not overwrite and self.check_file_exists():
-            raise ValueError(f"File {self.get_fullname()} already exists")
+        # if not overwrite and self.check_file_exists():
+        #     raise ValueError(f"File {self.get_fullname()} already exists")
 
         # make a path if missing
-        if not os.path.isdir(self.get_path(full=True)):
-            os.makedirs(self.get_path(full=True))
+        path = os.path.dirname(self.get_fullname())
+        if not os.path.isdir(path):
+            os.makedirs(path)
 
         # specific format save functions
         if self.format == "hdf5":
-            self.save_hdf5()
+            self.save_hdf5(overwrite)
         elif self.format == "fits":
-            self.save_fits()
+            self.save_fits(overwrite)
         elif self.format == "csv":
-            self.save_csv()
+            self.save_csv(overwrite)
         elif self.format == "json":
-            self.save_json()
+            self.save_json(overwrite)
         elif self.format == "netcdf":
-            self.save_netcdf()
+            self.save_netcdf(overwrite)
         else:
             raise ValueError(f"Unknown format {self.format}")
 
-    def save_hdf5(self):
+    def save_hdf5(self, overwrite):
         if isinstance(self.data, xr.Dataset):
+            # TODO: check if key already exists!
             self.data.to_hdf(self.get_fullname(), key=self.key)  # this actually works??
         elif isinstance(self.data, pd.DataFrame):
-            with pd.HDFStore(self.get_fullname(), "w") as store:
+            with pd.HDFStore(self.get_fullname()) as store:
+                if self.key in store:
+                    if overwrite:
+                        store.remove(self.key)
+                    else:
+                        raise ValueError(
+                            f"Key {self.key} already exists in file {self.get_fullname()}"
+                        )
+
                 store.put(self.key, self.data)
                 if self.altdata:
                     for k, v in self.altdata.items():
@@ -382,16 +414,16 @@ class DatasetMixin:
         else:
             raise ValueError(f"Unknown data type {type(self.data)}")
 
-    def save_fits(self):
+    def save_fits(self, overwrite):
         pass
 
-    def save_csv(self):
+    def save_csv(self, overwrite):
         pass
 
-    def save_json(self):
+    def save_json(self, overwrite):
         pass
 
-    def save_netcdf(self):
+    def save_netcdf(self, overwrite):
         pass
 
     def delete_data_from_disk(self):
@@ -400,7 +432,21 @@ class DatasetMixin:
         if it exists.
         """
         if self.check_file_exists():
-            os.remove(self.get_fullname())
+            need_to_delete = False
+            if self.format == "hdf5":
+                with pd.HDFStore(self.get_fullname()) as store:
+                    if self.key in store:
+                        store.remove(self.key)
+                    if len(store.keys()) == 0:
+                        need_to_delete = True
+
+            elif self.format in ("csv", "json"):
+                need_to_delete = True
+            else:
+                raise ValueError(f"Unknown format {self.format}")
+
+            if need_to_delete:
+                os.remove(self.get_fullname())
 
     def find_colmap(self, data):
         """
@@ -431,8 +477,8 @@ class DatasetMixin:
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "times", "datetime", "datetimes"):
-                if isinstance(t[0], (str, bytes)):
-                    if "T" in t[0]:
+                if isinstance(data[c][0], (str, bytes)):
+                    if "T" in data[c][0]:
                         self.time_info["format"] = "isot"
                         self.time_info["conversion"] = lambda t: Time(
                             t, format="isot", scale="utc"
@@ -516,6 +562,36 @@ class DatasetMixin:
         self.time_end = max(self.times)
 
     @property
+    def filename(self):
+        return self._filename
+
+    @filename.setter
+    def filename(self, value):
+        """
+        The filename ALWAYS refers to the file without path.
+        The path should be determined by "folder" and "DATA_ROOT".
+        If given a full path to a file, the path is removed.
+        If that path is DATA_ROOT/<some_folder> it will assign
+        <some_folder> to self.folder.
+        If it doesn't fit that but has an absolute path,
+        that gets saved in self.folder, which overrides
+        the value of DATA_ROOT
+        (this is not great, as the data could move around
+        and leave the "folder" property fixed in the DB).
+        """
+        if value is None:
+            self._filename = None
+            return
+
+        (path, filename) = os.path.split(value)
+        self._filename = filename
+        if path:
+            if path.startswith(DATA_ROOT):  # relative to root
+                self.folder = path[len(DATA_ROOT) + 1 :]
+            else:
+                self.folder = path
+
+    @property
     def data(self):
         if self._data is None and self.autoload and self.filename is not None:
             self.load()
@@ -535,7 +611,8 @@ class DatasetMixin:
         self.number = len(data)  # for imaging data this would be different?
         self.size = self.calc_size()
         self.format = self.guess_format()
-        self.type = self.guess_type()
+        if self.type is None:
+            self.type = self.guess_type()
         self.find_colmap(data)
         self.calc_times(data)
 
@@ -589,7 +666,7 @@ class DatasetMixin:
     )
 
     # saving the data to file
-    filename = sa.Column(
+    _filename = sa.Column(
         sa.String,
         nullable=False,
         index=True,
@@ -748,10 +825,10 @@ class PhotometricData(DatasetMixin, Base):
 
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
-        self.type = "photometry"
+        self.type = "lightcurves"
 
-        if "raw_data_it" in kwargs:
-            self.raw_data_it = kwargs["raw_data_it"]
+        if "raw_data_id" in kwargs:
+            self.raw_data_id = kwargs["raw_data_id"]
 
         filters = self.data[self.colmap["filter"]]
         if not all([f == filters[0] for f in filters]):
@@ -1000,6 +1077,13 @@ class PhotometricData(DatasetMixin, Base):
         nullable=True,
         index=True,
         doc="ID of the raw dataset that was used to produce this reduced dataset.",
+    )
+
+    raw_data_filename = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Filename of the raw dataset that was used to produce this reduced dataset.",
     )
 
     num_good = sa.Column(
