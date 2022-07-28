@@ -586,10 +586,36 @@ class DatasetMixin:
         (path, filename) = os.path.split(value)
         self._filename = filename
         if path:
-            if path.startswith(DATA_ROOT):  # relative to root
-                self.folder = path[len(DATA_ROOT) + 1 :]
-            else:
-                self.folder = path
+            self.folder = path
+
+    @property
+    def folder(self):
+        return self._folder
+
+    @folder.setter
+    def folder(self, value):
+        """
+        Use the folder to find the file under DATA_ROOT.
+        If given as a relative path, or an absolute path
+        that starts with DATA_ROOT, it will be saved
+        relative to DATA_ROOT.
+        If it is an absolute path different than
+        DATA_ROOT, it will be saved as is.
+        This is not great, as the data could move around
+        and leave the "folder" property fixed in the DB.
+        If you want to deliberately make the folder an
+        absolute path with the current value of DATA_ROOT,
+        set src.dataset.DATA_ROOT to something else,
+        assign the absolute path to "folder" and then
+        change back DATA_ROOT to the original value.
+        """
+        if value is None:
+            self._folder = None
+            return
+        if value.startswith(DATA_ROOT):  # relative to root
+            self._folder = value[len(DATA_ROOT) + 1 :]
+        else:
+            self._folder = value
 
     @property
     def data(self):
@@ -673,10 +699,11 @@ class DatasetMixin:
         doc="Filename of the dataset, including path, relative to the DATA_ROOT",
     )
 
-    folder = sa.Column(
+    _folder = sa.Column(
         sa.String,
         nullable=True,
-        doc="Folder inside the DATA_ROOT folder where this dataset is stored",
+        doc="Folder where this dataset is stored. "
+        "If relative path, it is relative to DATA_ROOT. ",
     )
 
     key = sa.Column(

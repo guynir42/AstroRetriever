@@ -72,7 +72,7 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # try to make some oid's the wrong mag
     oid = raw_data.data.oid.values[0]
-    raw_data.data.mag[raw_data.data.oid == oid] = 12.0
+    raw_data.data.loc[raw_data.data.oid == oid, "mag"] = 12.0
     num_bad = np.sum(raw_data.data.oid == oid)
 
     new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
@@ -83,7 +83,7 @@ def test_ztf_reduction(ztf_project, new_source):
     # try to make some oid's the wrong coordinates
     oid = raw_data.data.oid.values[-1]
     raw_data.load()  # reload the original data
-    raw_data.data.ra[raw_data.data.oid == oid] -= 0.1
+    raw_data.data.loc[raw_data.data.oid == oid, "ra"] -= 0.1
     num_bad = np.sum(raw_data.data.oid == oid)
 
     new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
