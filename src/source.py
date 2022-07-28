@@ -1,5 +1,9 @@
 import warnings
 import sqlalchemy as sa
+
+import matplotlib
+import matplotlib.pyplot as plt
+
 from sqlalchemy import func
 from sqlalchemy.orm import relationship
 from sqlalchemy.schema import UniqueConstraint
@@ -11,6 +15,9 @@ from astropy import units as u
 
 from src.database import Base, Session, engine
 from src.catalog import Catalog
+from src.dataset import RawData, PhotometricData
+
+matplotlib.use("qt5agg")
 
 # ref: https://github.com/skyportal/conesearch-alchemy
 
@@ -89,8 +96,115 @@ def angle_diff(a1, a2):
 
 
 class Source(Base, conesearch_alchemy.Point):
+    def __init__(
+        self,
+        name,
+        ra,
+        dec,
+        project=None,
+        alias=None,
+        mag=None,
+        mag_err=None,
+        mag_filter=None,
+    ):
+
+        self.name = name
+        self.ra = ra
+        self.dec = dec
+
+        if project is not None:
+            self.project = project
+        else:
+            self.project = DEFAULT_PROJECT
+
+        if alias is not None:
+            self.alias = alias
+
+        if mag is not None:
+            self.mag = mag
+
+        if mag_err is not None:
+            self.mag_err = mag_err
+
+        if mag_filter is not None:
+            self.mag_filter = mag_filter
+
+        # assign this coordinate a healpix ID
+        self.healpix = ha.constants.HPX.lonlat_to_healpix(ra * u.deg, dec * u.deg)
+
+    def __repr__(self):
+        string = (
+            f'Source(name="{self.name}", '
+            f"ra={Catalog.ra2sex(self.ra)}, "
+            f"dec={Catalog.dec2sex(self.dec)}, "
+            f"mag= {self.mag:.2f}, "
+            f'project="{self.project}", '
+            f"datasets= {len(self.raw_data)})"
+        )
+        return string
+
+    def plot_photometry(self, ax=None, **kwargs):
+        """
+        Plot this source on a given axis.
+
+        Parameters
+        ----------
+        ax: matplotlib.axes.Axes
+            Axis to plot on.
+            If not given, will create a new axis.
+        **kwargs:
+            Keyword arguments to pass to `matplotlib.pyplot.plot`.
+        """
+        if ax is None:
+            ax = plt.gca()
+
+        for d in self.raw_data:
+            if d.type == "photometry":
+                d.plot(ax=ax, **kwargs)
+        for lc in self.lightcurves:
+            lc.plot(ax=ax, **kwargs)
+
+        return ax
+
+    def check_duplicates(self, project=None, sep=2 / 3600, session=None):
+        """
+        Check if this source is a duplicate of another source,
+        by using a cone search on other sources from the same project.
+
+        Parameters
+        ----------
+        project: str
+            Project name to search for duplicates in.
+            If not given, will default to DEFAULT_PROJECT
+        sep: float
+            Separation in degrees to search for duplicates.
+            Default is 2 arcseconds.
+        session: sqlalchemy.orm.session.Session
+            Session to use for the cone search.
+            If not given, will use a new session.
+
+        Returns
+        -------
+        boolean
+            True if this source is a duplicate, False otherwise.
+        """
+        if project is None:
+            project = DEFAULT_PROJECT
+
+        stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
+        stmt = stmt.where(Source.project == project)
+
+        if session is None:
+            session = Session()
+
+        sources = session.scalars(stmt).first()
+        return sources is not None
 
     __tablename__ = "sources"
+
+    __table_args__ = (
+        UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
+    )
 
     id = sa.Column(
         sa.Integer,
@@ -204,95 +318,17 @@ class Source(Base, conesearch_alchemy.Point):
     #     doc="Detections associated with this source",
     # )
 
-    __table_args__ = (
-        UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
-    )
-
-    def __init__(
-        self,
-        name,
-        ra,
-        dec,
-        project=None,
-        alias=None,
-        mag=None,
-        mag_err=None,
-        mag_filter=None,
-    ):
-
-        self.name = name
-        self.ra = ra
-        self.dec = dec
-
-        if project is not None:
-            self.project = project
-        else:
-            self.project = DEFAULT_PROJECT
-
-        if alias is not None:
-            self.alias = alias
-
-        if mag is not None:
-            self.mag = mag
-
-        if mag_err is not None:
-            self.mag_err = mag_err
-
-        if mag_filter is not None:
-            self.mag_filter = mag_filter
-
-        # assign this coordinate a healpix ID
-        self.healpix = ha.constants.HPX.lonlat_to_healpix(ra * u.deg, dec * u.deg)
-
-    def check_duplicates(self, project=None, sep=2 / 3600, session=None):
-        """
-        Check if this source is a duplicate of another source,
-        by using a cone search on other sources from the same project.
-
-        Parameters
-        ----------
-        project: str
-            Project name to search for duplicates in.
-            If not given, will default to DEFAULT_PROJECT
-        sep: float
-            Separation in degrees to search for duplicates.
-            Default is 2 arcseconds.
-        session: sqlalchemy.orm.session.Session
-            Session to use for the cone search.
-            If not given, will use a new session.
-
-        Returns
-        -------
-        boolean
-            True if this source is a duplicate, False otherwise.
-        """
-        if project is None:
-            project = DEFAULT_PROJECT
-
-        stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
-        stmt = stmt.where(Source.project == project)
-
-        if session is None:
-            session = Session()
-
-        sources = session.scalars(stmt).first()
-        return sources is not None
-
-    def __repr__(self):
-        string = (
-            f'Source(name="{self.name}", '
-            f"ra={Catalog.ra2sex(self.ra)}, "
-            f"dec={Catalog.dec2sex(self.dec)}, "
-            f"mag= {self.mag:.2f}, "
-            f'project="{self.project}", '
-            f"datasets= {len(self.raw_data)})"
-        )
-        return string
-
 
 # make sure the table exists
 Source.metadata.create_all(engine)
 
 
 if __name__ == "__main__":
-    print(get_source_identifiers(DEFAULT_PROJECT, "id"))
+    import src.dataset
+
+    src.dataset.DATA_ROOT = "/home/guyn/data"
+
+    session = Session()
+    sources = session.scalars(sa.select(Source).where(Source.project == "WD")).all()
+
+    sources[0].plot_photometry()

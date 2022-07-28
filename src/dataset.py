@@ -6,6 +6,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+import matplotlib
+import matplotlib.pyplot as plt
+
 from astropy.time import Time
 import h5py
 
@@ -14,7 +17,8 @@ from sqlalchemy import orm, func, event
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base, engine
+from src.database import Base, Session, engine
+
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -74,7 +78,7 @@ class DatasetMixin:
 
         self._data = None
         self.colmap = {}
-        self.times = None
+        self._times = None
         self.time_info = {}
 
         # these are only set when generating a new
@@ -136,7 +140,7 @@ class DatasetMixin:
         """
         self._data = None
         self.colmap = {}
-        self.times = None
+        self._times = None
         self.time_info = {}
 
     def guess_format(self):
@@ -561,6 +565,70 @@ class DatasetMixin:
         self.time_start = min(self.times)
         self.time_end = max(self.times)
 
+    def plot(self, ax=None, **kwargs):
+        """
+        Plot the data, depending on its type
+        """
+        if self.type == "photometry":
+            return self.plot_photometry(ax=ax, **kwargs)
+        elif self.type == "spectrum":
+            return self.plot_spectrum(ax=ax, **kwargs)
+        elif self.type == "image":
+            return self.plot_image(ax=ax, **kwargs)
+        elif self.type == "cutouts":
+            return self.plot_cutouts(ax=ax, **kwargs)
+        else:
+            pass  # should this be an error?
+
+    def plot_photometry(self, ttype="times", ftype="mag", ax=None, **kwargs):
+        """
+        Plot the photometry data.
+        """
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        if ttype == "times":
+            t = self.times
+        elif ttype == "mjd":
+            pass
+        else:
+            raise ValueError('ttype must be either "times" or "mjd"')
+
+        if ftype == "mag":
+            m = self.data[self.colmap["mag"]] if "mag" in self.colmap else None
+            # e = self.data[self.colmap["magerr"]] if 'magerr' in self.colmap else None
+        elif ftype == "flux":
+            m = self.data[self.colmap["flux"]] if "flux" in self.colmap else None
+            # e = self.data[self.colmap["fluxerr"]] if 'fluxerr' in self.colmap else None
+        else:
+            raise ValueError('ftype must be either "mag" or "flux"')
+
+        if m is None:
+            return ax  # short circuit if no data
+
+        ax.plot(t, m, ".k", **kwargs, zorder=2)
+
+        if ttype == "times":
+            ax.set_xlabel("Time")
+        elif ttype == "mjd":
+            ax.set_xlabel("MJD")
+
+        if ftype == "mag":
+            ax.set_ylabel("Magnitude")
+        elif ftype == "flux":
+            ax.set_ylabel("Flux")
+
+        return ax
+
+    def plot_spectrum(self, ax=None, **kwargs):
+        pass
+
+    def plot_image(self, ax=None, **kwargs):
+        pass
+
+    def plot_cutouts(self, ax=None, **kwargs):
+        pass
+
     @property
     def filename(self):
         return self._filename
@@ -642,6 +710,28 @@ class DatasetMixin:
         self.find_colmap(data)
         self.calc_times(data)
 
+    @property
+    def times(self):
+        if self._data is None and self.autoload and self.filename is not None:
+            self.load()
+        if self._times is None:
+            self.calc_times()
+        return self._times
+
+    @times.setter
+    def times(self, value):
+        self._times = value
+
+    @declared_attr
+    def source_id(cls):
+        return sa.Column(
+            sa.Integer,
+            sa.ForeignKey("sources.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+            doc="ID of the source this dataset is associated with",
+        )
+
     id = sa.Column(
         sa.Integer,
         primary_key=True,
@@ -665,16 +755,6 @@ class DatasetMixin:
         nullable=False,
         doc="UTC time the object's row was last modified in the database.",
     )
-
-    @declared_attr
-    def source_id(cls):
-        return sa.Column(
-            sa.Integer,
-            sa.ForeignKey("sources.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-            doc="ID of the source this dataset is associated with",
-        )
 
     # original series of images used to make this dataset
     series_identifier = sa.Column(
@@ -1096,6 +1176,95 @@ class PhotometricData(DatasetMixin, Base):
         self.data = self.data[cols]
         # what about other data types, e.g., xarrays?
 
+    def get_filter_plot_color(self):
+        """
+        Get a color for plotting the lightcurve.
+        """
+        colors = {
+            "g": "green",
+            "zg": "green",
+            "r": "red",
+            "zr": "red",
+            "i": "#660000",
+            "zi": "#660000",
+            "b": "blue",
+        }
+        default_color = "#ff00ff"
+
+        return colors.get(self.filter.lower(), default_color)
+
+    def plot(self, ttype="times", ftype="mag", font_size=14, ax=None, **kwargs):
+        """
+        Plot the lightcurve.
+
+        """
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        if ttype == "times":
+            t = self.times
+        elif ttype == "mjd":
+            pass
+        else:
+            raise ValueError('ttype must be either "times" or "mjd"')
+
+        if ftype == "mag":
+            m = self.data[self.colmap["mag"]] if "mag" in self.colmap else None
+            e = self.data[self.colmap["magerr"]] if "magerr" in self.colmap else None
+        elif ftype == "flux":
+            m = self.data[self.colmap["flux"]] if "flux" in self.colmap else None
+            e = self.data[self.colmap["fluxerr"]] if "fluxerr" in self.colmap else None
+        else:
+            raise ValueError('ftype must be either "mag" or "flux"')
+
+        if m is None:
+            return ax  # short circuit if no data
+
+        options = dict(fmt="o", color=self.get_filter_plot_color(), zorder=1)
+        options.update(dict(label=self.filter))
+        options.update(kwargs)
+
+        if e is not None:
+            ax.errorbar(t, m, e, **options)
+        else:
+            ax.plot(t, m, **options)
+
+        if ttype == "times":
+            ax.set_xlabel("Time", fontsize=font_size)
+            for tick in ax.get_xticklabels():
+                tick.set_rotation(45)
+        elif ttype == "mjd":
+            ax.set_xlabel("MJD", fontsize=font_size)
+
+        if ftype == "mag":
+            ax.set_ylabel("Magnitude", fontsize=font_size)
+        elif ftype == "flux":
+            ax.set_ylabel("Flux", fontsize=font_size)
+
+        pos = ax.get_position()
+        pos.y0 = 0.2
+        pos.y1 = 0.88
+        pos.x0 = 0.15
+        pos.x1 = 0.8
+        ax.set_position(pos)
+
+        # handle the legend
+        # remove repeated labes: https://stackoverflow.com/a/56253636/18256949
+        handles, labels = ax.get_legend_handles_labels()
+        unique = [
+            (h, l)
+            for i, (h, l) in enumerate(zip(handles, labels))
+            if l not in labels[:i]
+        ]
+        ax.legend(
+            *zip(*unique),
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.02),
+            fontsize=font_size,
+        )
+
+        return ax
+
     __tablename__ = "photometric_data"
 
     raw_data_id = sa.Column(
@@ -1269,4 +1438,7 @@ def insert_new_dataset(mapper, connection, target):
 
 
 if __name__ == "__main__":
-    print(dir(DatasetMixin))
+
+    with Session() as session:
+        p = session.scalars(sa.select(PhotometricData)).first()
+        p.plot()

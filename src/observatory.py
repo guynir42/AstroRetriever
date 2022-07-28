@@ -222,7 +222,7 @@ class VirtualObservatory:
     def download(self):
         raise NotImplementedError("download() must be implemented in subclass")
 
-    def populate_sources(self, number=None):
+    def populate_sources(self, num_files=None, num_sources=None):
         # raise NotImplementedError("populate_sources() must be implemented in subclass")
         """
         Read the list of files with data,
@@ -233,10 +233,14 @@ class VirtualObservatory:
 
         Parameters
         ----------
-        number: int
+        num_files: int
             The maximum number of files to read.
-            Default is None, which means all files
+            If zero or None (default), all files
             found in the directory.
+        num_sources: int
+            The maximum number of sources to read from
+            each file. If zero or None (default), which means
+            all sources found in each file.
 
         """
         if self.pars.catalog_matching == "number":
@@ -257,7 +261,7 @@ class VirtualObservatory:
             for i, filename in enumerate(
                 glob.glob(os.path.join(dir, self.pars.data_glob))
             ):
-                if number is not None and i >= number:
+                if num_files and i >= num_files:
                     break
 
                 if self.pars.verbose:
@@ -266,8 +270,8 @@ class VirtualObservatory:
                 with pd.HDFStore(filename) as store:
                     keys = store.keys()
                     for j, k in enumerate(keys):
-                        # if j > 3:
-                        #     break
+                        if num_sources and j >= num_sources:
+                            break
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
                         self.save_source(data, cat_id, source_ids, filename, k, session)
