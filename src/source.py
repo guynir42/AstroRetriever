@@ -15,7 +15,6 @@ from astropy import units as u
 
 from src.database import Base, Session, engine
 from src.catalog import Catalog
-from src.dataset import RawData, PhotometricData
 
 matplotlib.use("qt5agg")
 
