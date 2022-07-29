@@ -9,6 +9,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
+# ref: https://github.com/skyportal/conesearch-alchemy
 import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
@@ -16,9 +17,8 @@ from astropy import units as u
 from src.database import Base, Session, engine
 from src.catalog import Catalog
 
-matplotlib.use("qt5agg")
+# matplotlib.use("qt5agg")
 
-# ref: https://github.com/skyportal/conesearch-alchemy
 
 DEFAULT_PROJECT = "test_project"
 
