@@ -18,7 +18,7 @@ from src.ztf import VirtualZTF
 from src.database import Session
 from src.source import Source
 import src.dataset
-from src.dataset import RawData, PhotometricData, PHOT_ZP
+from src.dataset import RawData, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -417,7 +417,7 @@ def test_data_reduction(test_project, new_source, raw_photometry):
         ).first()
         assert data is None
         data = session.scalars(
-            sa.select(PhotometricData).where(PhotometricData.source_id == source_id)
+            sa.select(Lightcurve).where(Lightcurve.source_id == source_id)
         ).all()
         assert len(data) == 0
 

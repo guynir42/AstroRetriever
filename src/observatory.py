@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.database import Session
 from src.source import Source, get_source_identifiers
-from src.dataset import DatasetMixin, RawData, PhotometricData
+from src.dataset import DatasetMixin, RawData, Lightcurve
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.histograms import Histograms
@@ -464,7 +464,7 @@ class VirtualObservatory:
         -------
         an object of a subclass of src.dataset.Dataset
             The reduced dataset,
-            can be, e.g., a PhotometricData object.
+            can be, e.g., a Lightcurve object.
         """
         if isinstance(dataset, list):
             datasets = dataset
@@ -640,7 +640,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         Returns
         -------
-        a list of src.dataset.PhotometricData objects
+        a list of src.dataset.Lightcurve objects
             The reduced datasets, after minimal processing.
             The reduced datasets will have uniform filter,
             each dataset will be sorted by time,
@@ -705,6 +705,6 @@ class VirtualDemoObs(VirtualObservatory):
 
             new_datasets = []
             for df in dfs:
-                new_datasets.append(PhotometricData(data=df, **init_kwargs))
+                new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets

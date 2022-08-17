@@ -12,7 +12,7 @@ from ztfquery import lightcurve
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory
-from src.dataset import DatasetMixin, RawData, PhotometricData
+from src.dataset import DatasetMixin, RawData, Lightcurve
 
 
 class VirtualZTF(VirtualObservatory):
@@ -106,7 +106,7 @@ class VirtualZTF(VirtualObservatory):
 
         Returns
         -------
-        a list of src.dataset.PhotometricData objects
+        a list of src.dataset.Lightcurve objects
             The reduced datasets, after minimal processing.
             The reduced datasets will have uniform filter,
             each dataset will be sorted by time,
@@ -230,7 +230,7 @@ class VirtualZTF(VirtualObservatory):
         for df in dfs:
             df = df[keep_columns]
             if len(df) > 0:
-                new_datasets.append(PhotometricData(data=df, **init_kwargs))
+                new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets
 

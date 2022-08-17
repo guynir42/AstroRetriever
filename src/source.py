@@ -298,7 +298,7 @@ class Source(Base, conesearch_alchemy.Point):
     )
 
     lightcurves = relationship(
-        "PhotometricData",
+        "Lightcurve",
         backref="sources",
         cascade="save-update, merge, refresh-expire, expunge, delete",
         lazy="selectin",

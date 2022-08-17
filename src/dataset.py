@@ -71,7 +71,7 @@ class DatasetMixin:
         the RawData class will contain raw data
         directly from the observatory.
         This can be turned into e.g.,
-        a PhotometricData using a reducer function
+        a Lightcurve using a reducer function
         from the correct observatory object.
 
         """
@@ -910,7 +910,7 @@ class RawData(DatasetMixin, Base):
     __tablename__ = "raw_data"
 
 
-class PhotometricData(DatasetMixin, Base):
+class Lightcurve(DatasetMixin, Base):
     def __init__(self, **kwargs):
         """
         This class keeps a set of photometric measurements
@@ -928,7 +928,7 @@ class PhotometricData(DatasetMixin, Base):
 
         """
         if "data" not in kwargs:
-            raise ValueError("PhotometricData must be initialized with data")
+            raise ValueError("Lightcurve must be initialized with data")
 
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
@@ -939,7 +939,7 @@ class PhotometricData(DatasetMixin, Base):
 
         filters = self.data[self.colmap["filter"]]
         if not all([f == filters[0] for f in filters]):
-            raise ValueError("All filters must be the same for a PhotometricData")
+            raise ValueError("All filters must be the same for a Lightcurve")
         self.filter = filters[0]
 
         # sort the data by time it was recorded
@@ -1408,16 +1408,16 @@ class PhotometricData(DatasetMixin, Base):
 
 # make sure all the tables exist
 RawData.metadata.create_all(engine)
-PhotometricData.metadata.create_all(engine)
+Lightcurve.metadata.create_all(engine)
 
 
 @event.listens_for(RawData, "before_insert")
-@event.listens_for(PhotometricData, "before_insert")
+@event.listens_for(Lightcurve, "before_insert")
 def insert_new_dataset(mapper, connection, target):
     """
     This function is called before a new dataset is inserted into the database.
     It checks that a file is associated with this object
-    and if it doesn't exist, it creates it (if autoload is True)
+    and if it doesn't exist, it creates it, if autosave is True,
     otherwise it raises an error.
     """
     if target.filename is None:
@@ -1440,5 +1440,5 @@ def insert_new_dataset(mapper, connection, target):
 if __name__ == "__main__":
 
     with Session() as session:
-        p = session.scalars(sa.select(PhotometricData)).first()
+        p = session.scalars(sa.select(Lightcurve)).first()
         p.plot()

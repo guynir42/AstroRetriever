@@ -30,12 +30,12 @@ Base = declarative_base()
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import RawData, PhotometricData
+    from src.dataset import RawData, Lightcurve
     from src.detection import Detection
 
     Source.metadata.drop_all(engine)
     RawData.metadata.drop_all(engine)
-    PhotometricData.metadata.drop_all(engine)
+    Lightcurve.metadata.drop_all(engine)
     # Detection.metadata.drop_all(engine)
 
 
