@@ -895,6 +895,9 @@ class DatasetMixin:
 
 
 class RawData(DatasetMixin, Base):
+
+    __tablename__ = "raw_data"
+
     def __init__(self, **kwargs):
         """
         This class is used to store raw data from a survey,
@@ -907,10 +910,11 @@ class RawData(DatasetMixin, Base):
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
 
-    __tablename__ = "raw_data"
-
 
 class Lightcurve(DatasetMixin, Base):
+
+    __tablename__ = "lightcurves"
+
     def __init__(self, **kwargs):
         """
         This class keeps a set of photometric measurements
@@ -1264,8 +1268,6 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         return ax
-
-    __tablename__ = "photometric_data"
 
     raw_data_id = sa.Column(
         sa.Integer,

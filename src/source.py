@@ -95,6 +95,9 @@ def angle_diff(a1, a2):
 
 
 class Source(Base, conesearch_alchemy.Point):
+
+    __tablename__ = "sources"
+
     def __init__(
         self,
         name,
@@ -198,8 +201,6 @@ class Source(Base, conesearch_alchemy.Point):
 
         sources = session.scalars(stmt).first()
         return sources is not None
-
-    __tablename__ = "sources"
 
     __table_args__ = (
         UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
