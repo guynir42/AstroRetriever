@@ -132,7 +132,7 @@ class VirtualZTF(VirtualObservatory):
         data = pd.concat([d.data for d in datasets])
 
         time_col = datasets[0].colmap["time"]
-        time_conversion = datasets[0].time_info["conversion"]
+        mjd_conversion = datasets[0].time_info["to mjd"]
         exp_col = datasets[0].colmap["exptime"]
         filt_col = datasets[0].colmap["filter"]
         flag_col = datasets[0].colmap["flag"] if "flag" in datasets[0].colmap else None
@@ -186,13 +186,7 @@ class VirtualZTF(VirtualObservatory):
         data_sort = data.sort_values(by=[time_col], inplace=False)
         data_sort.reset_index(drop=True)
 
-        if datasets[0].time_info["format"] in ("mjd", "jd"):
-            dt = np.diff(data_sort[time_col])
-        else:
-            # time in numpy format
-            t = time_conversion(data_sort[time_col]).astype(np.datetime64)
-            # convert time gaps to days
-            dt = np.diff(t).astype(np.int64) / 1e6 / 24 / 3600
+        dt = np.diff(mjd_conversion(data_sort[time_col]))
 
         gaps = np.where(dt > gap)[0]
         gaps = np.append(gaps, len(data))

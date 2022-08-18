@@ -7,7 +7,6 @@ from src.database import Session
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.source import Source
-from src.calibration import Calibration
 from src.analysis import Analysis
 
 
