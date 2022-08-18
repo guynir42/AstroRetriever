@@ -1,4 +1,6 @@
 # This file is used to control database interaction.
+
+# The following lines are probably not needed anymore:
 # Make sure to define a virtualobserver database by
 # going to /etc/postgresql/14/main/pg_hba.conf and adding:
 # host virtualobserver virtualobserver 127.0.0.1/32 trust
@@ -9,6 +11,7 @@
 
 # create DB using: psql -U postgres -d postgres -c "CREATE DATABASE virtualobserver"
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
+
 import uuid
 import sqlalchemy as sa
 from sqlalchemy_utils import database_exists, create_database
