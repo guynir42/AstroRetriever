@@ -8,6 +8,7 @@ import xarray as xr
 
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from astropy.time import Time
 import h5py
@@ -79,6 +80,7 @@ class DatasetMixin:
         self._data = None
         self.colmap = {}
         self._times = None
+        self._mjds = None
         self.time_info = {}
 
         # these are only set when generating a new
@@ -122,7 +124,7 @@ class DatasetMixin:
         if self.observatory:
             string += f" ({self.observatory.upper()})"
 
-        string += f", file: {self.get_fullname()}"
+        string += f", file: {self.filename}"
 
         if self.key:
             string += f" (key: {self.key})"
@@ -141,6 +143,7 @@ class DatasetMixin:
         self._data = None
         self.colmap = {}
         self._times = None
+        self._mjds = None
         self.time_info = {}
 
     def guess_format(self):
@@ -465,74 +468,87 @@ class DatasetMixin:
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
-        for c in columns:
+        for c in columns:  # timestamps
             if simplify(c) in ("jd", "jds", "juliandate", "juliandates"):
                 self.time_info["format"] = "mjd"
-                self.time_info["conversion"] = lambda t: Time(
+                self.time_info["to datetime"] = lambda t: Time(
                     t, format="jd", scale="utc"
                 ).datetime
+                self.time_info["to mjd"] = lambda t: Time(
+                    t, format="jd", scale="utc"
+                ).mjd
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("mjd", "mjds"):
                 self.time_info["format"] = "mjd"
-                self.time_info["conversion"] = lambda t: Time(
+                self.time_info["to datetime"] = lambda t: Time(
                     t, format="mjd", scale="utc"
                 ).datetime
+                self.time_info["to mjd"] = lambda t: t
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "times", "datetime", "datetimes"):
                 if isinstance(data[c][0], (str, bytes)):
                     if "T" in data[c][0]:
                         self.time_info["format"] = "isot"
-                        self.time_info["conversion"] = lambda t: Time(
+                        self.time_info["to datetime"] = lambda t: Time(
                             t, format="isot", scale="utc"
                         ).datetime
+                        self.time_info["to mjd"] = lambda t: Time(
+                            t, format="isot", scale="utc"
+                        ).mjd
                     else:
                         self.time_info["format"] = "iso"
-                        self.time_info["conversion"] = lambda t: Time(
+                        self.time_info["to datetime"] = lambda t: Time(
                             t, format="iso", scale="utc"
                         ).datetime
+                        self.time_info["to mjd"] = lambda t: Time(
+                            t, format="iso", scale="utc"
+                        ).mjd
                 self.colmap["time"] = c
                 break
             elif simplify(c) == "timestamps":
                 self.time_info["format"] = "unix"
-                self.time_info["conversion"] = lambda t: Time(
+                self.time_info["to datetime"] = lambda t: Time(
                     t, format="unix", scale="utc"
                 ).datetime
+                self.time_info["to mjd"] = lambda t: Time(
+                    t, format="unix", scale="utc"
+                ).mjd
                 self.colmap["time"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # exposure time
             if simplify(c) in ("exptime", "exptimes", "exposuretime", "exposuretimes"):
                 self.colmap["exptime"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # right ascension
             if simplify(c) in ("ra", "ras", "rightascension", "rightascensions"):
                 self.colmap["ra"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # declination
             if simplify(c) in ("dec", "decs", "declination", "declinations"):
                 self.colmap["dec"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # magnitude
             if simplify(c) in ("mag", "mags", "magnitude", "magnitudes"):
                 self.colmap["mag"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # magnitude error
             if simplify(c) in ("magerr", "magerr", "magerror"):
                 self.colmap["magerr"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # fluxes
             if simplify(c) in ("flux", "fluxes", "count", "counts"):
                 self.colmap["flux"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # flux errors
             if simplify(c) in (
                 "fluxerr",
                 "fluxerr",
@@ -543,27 +559,29 @@ class DatasetMixin:
                 self.colmap["fluxerr"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # filter
             if simplify(c) in ("filt", "filter", "filtername", "filtercode"):
                 self.colmap["filter"] = c
                 break
 
-        for c in columns:
+        for c in columns:  # bad data flags
             if simplify(c) in ("flag", "catflag", "catflags", "baddata"):
                 self.colmap["flag"] = c
                 break
 
     def calc_times(self, data):
         """
-        Calculate datetimes for each epoch,
-        based on the conversion found in self.time_info.
+        Calculate datetimes and MJDs for each epoch,
+        based on the conversions found in self.time_info.
         These values are calculated once when the data
         is loaded from disk or given as input,
         but are not saved in the DB or on disk.
         """
-        self.times = self.time_info["conversion"](data[self.colmap["time"]])
+        self.times = self.time_info["to datetime"](data[self.colmap["time"]])
         self.time_start = min(self.times)
         self.time_end = max(self.times)
+
+        self.mjds = self.time_info["to mjd"](data[self.colmap["time"]])
 
     def plot(self, ax=None, **kwargs):
         """
@@ -580,9 +598,31 @@ class DatasetMixin:
         else:
             pass  # should this be an error?
 
-    def plot_photometry(self, ttype="times", ftype="mag", ax=None, **kwargs):
+    def plot_photometry(
+        self, ttype="mjd", ftype="mag", use_phot_zp=False, ax=None, **kwargs
+    ):
         """
         Plot the photometry data.
+
+        Parameters
+        ----------
+        ttype : str
+            Type of time to plot. Options are:
+            - "mjd": Modified Julian Date
+            - "times": dates in YYYY-MM-DD format
+        ftype: str
+            Type of flux to plot. Options are:
+            - "mag": Magnitude
+            - "flux": Flux
+        use_phot_zp : bool
+            If True, use the photometric zero point (PHOT_ZP) to show fluxes.
+            If false, use the fluxes as-is. If fluxes are not given,
+            will default to using the PHOT_ZP.
+            Only used when ftype="flux".
+        ax: matplotlib.axes.Axes
+            Axis to plot on. If None, a new figure is created.
+        kwargs: dict
+            Any additional keyword arguments are passed to matplotlib.
         """
 
         if ax is None:
@@ -590,35 +630,55 @@ class DatasetMixin:
         if ttype == "times":
             t = self.times
         elif ttype == "mjd":
-            pass
+            t = self.mjds
         else:
             raise ValueError('ttype must be either "times" or "mjd"')
 
         if ftype == "mag":
-            m = self.data[self.colmap["mag"]] if "mag" in self.colmap else None
-            # e = self.data[self.colmap["magerr"]] if 'magerr' in self.colmap else None
+            if "mag" in self.colmap:
+                m = self.data[self.colmap["mag"]]
+            else:  # short circuit if no data
+                return ax
         elif ftype == "flux":
-            m = self.data[self.colmap["flux"]] if "flux" in self.colmap else None
-            # e = self.data[self.colmap["fluxerr"]] if 'fluxerr' in self.colmap else None
+            if not use_phot_zp and "flux" in self.colmap:
+                m = self.data[self.colmap["flux"]] if "flux" in self.colmap else None
+            elif "mag" in self.colmap:
+                m = 10 ** (-0.4 * (self.data[self.colmap["mag"]] - PHOT_ZP))
+            else:  # short circuit if no data
+                return ax
         else:
             raise ValueError('ftype must be either "mag" or "flux"')
 
-        if m is None:
-            return ax  # short circuit if no data
-
         ax.plot(t, m, ".k", **kwargs, zorder=2)
 
-        if ttype == "times":
-            ax.set_xlabel("Time")
-        elif ttype == "mjd":
-            ax.set_xlabel("MJD")
+        bad_idx = self.data[self.colmap["flag"]] > 0
+        ax.plot(t[bad_idx], m[bad_idx], "xk", **kwargs, zorder=2)
 
-        if ftype == "mag":
-            ax.set_ylabel("Magnitude")
-        elif ftype == "flux":
-            ax.set_ylabel("Flux")
+        # add labels like "MJD" and "mag" to axes
+        self.axis_labels(ax, ttype=ttype, ftype=ftype)  # TODO: add font_size
 
         return ax
+
+    @staticmethod
+    def axis_labels(ax, ttype, ftype, font_size=12):
+        if ttype == "times":
+            # ax.set_xlabel("Time", fontsize=font_size) # don't need label on dates?
+            formatter = mdates.DateFormatter("%Y-%m-%d")
+            ax.xaxis.set_major_formatter(formatter)
+            locator = mdates.AutoDateLocator()
+            ax.xaxis.set_major_locator(locator)
+            for tick in ax.get_xticklabels():
+                tick.set_rotation(-45)
+        elif ttype == "mjd":
+            ax.set_xlabel("MJD", fontsize=font_size)
+        plt.xticks(fontsize=font_size - 4)
+
+        # labels for flux/mag axis
+        if ftype == "mag":
+            ax.set_ylabel("Magnitude", fontsize=font_size)
+        elif ftype == "flux":
+            ax.set_ylabel("Flux", fontsize=font_size)
+        plt.yticks(fontsize=font_size - 4)
 
     def plot_spectrum(self, ax=None, **kwargs):
         pass
@@ -721,6 +781,18 @@ class DatasetMixin:
     @times.setter
     def times(self, value):
         self._times = value
+
+    @property
+    def mjds(self):
+        if self._data is None and self.autoload and self.filename is not None:
+            self.load()
+        if self._mjds is None:
+            self.calc_times()
+        return self._mjds
+
+    @mjds.setter
+    def mjds(self, value):
+        self._mjds = value
 
     @declared_attr
     def source_id(cls):
@@ -972,6 +1044,24 @@ class Lightcurve(DatasetMixin, Base):
         # remove columns we don't use
         self.drop_columns()
 
+    def __repr__(self):
+        string = (
+            f"{self.__class__.__name__}("
+            f"source={self.source_id}, "
+            f"epochs={self.number}"
+        )
+        if self.observatory:
+            string += f" ({self.observatory.upper()})"
+        string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
+        string += f", file: {self.filename}"
+
+        if self.key:
+            string += f" (key: {self.key})"
+
+        string += ")"
+
+        return string
+
     # maybe this should happen at the base class?
     def translate_altdata(self):
         """
@@ -1150,7 +1240,7 @@ class Lightcurve(DatasetMixin, Base):
         else:
             worst_err = fluxerrs
 
-        self.data["snr"] = fluxes / worst_err
+        self.data["snr"] = (fluxes - self.flux_mean_robust) / worst_err
         self.colmap["snr"] = "snr"
 
     def calc_best(self):
@@ -1197,18 +1287,20 @@ class Lightcurve(DatasetMixin, Base):
 
         return colors.get(self.filter.lower(), default_color)
 
-    def plot(self, ttype="times", ftype="mag", font_size=14, ax=None, **kwargs):
+    def plot(self, ttype="mjd", ftype="mag", font_size=16, ax=None, **kwargs):
         """
         Plot the lightcurve.
 
         """
+
+        # parameter validation
         if ax is None:
             fig, ax = plt.subplots()
 
         if ttype == "times":
             t = self.times
         elif ttype == "mjd":
-            pass
+            t = self.mjds
         else:
             raise ValueError('ttype must be either "times" or "mjd"')
 
@@ -1224,32 +1316,52 @@ class Lightcurve(DatasetMixin, Base):
         if m is None:
             return ax  # short circuit if no data
 
+        # color options, etc
         options = dict(fmt="o", color=self.get_filter_plot_color(), zorder=1)
-        options.update(dict(label=self.filter))
+        options.update(dict(label=f"{self.filter} {ftype} values"))
         options.update(kwargs)
 
+        # actual plot function (with or without errors)
         if e is not None:
             ax.errorbar(t, m, e, **options)
         else:
             ax.plot(t, m, **options)
 
-        if ttype == "times":
-            ax.set_xlabel("Time", fontsize=font_size)
-            for tick in ax.get_xticklabels():
-                tick.set_rotation(45)
-        elif ttype == "mjd":
-            ax.set_xlabel("MJD", fontsize=font_size)
+        # add labels like "MJD" and "mag" to axes
+        self.axis_labels(ax, ttype=ttype, ftype=ftype, font_size=font_size)
 
+        # add area scatter
         if ftype == "mag":
-            ax.set_ylabel("Magnitude", fontsize=font_size)
+            mean_value = np.ones(len(t)) * self.mag_mean_robust
+            scatter = np.ones(len(t)) * self.mag_rms_robust
         elif ftype == "flux":
-            ax.set_ylabel("Flux", fontsize=font_size)
+            mean_value = np.ones(len(t)) * self.flux_mean_robust
+            scatter = np.ones(len(t)) * self.flux_rms_robust
+        ax.fill_between(
+            t,
+            mean_value - 3 * scatter,
+            mean_value + 3 * scatter,
+            color=self.get_filter_plot_color(),
+            zorder=0,
+            alpha=0.2,
+            label=f"{self.filter} 3-\u03C3 scatter",
+        )
 
+        # add annotations for points with S/N above 5 sigma
+        det_idx = np.where(abs(self.data["snr"]) > 5.0)[0]
+        for i in det_idx:
+            if self.data[self.colmap["flag"]][i] == 0:
+                ax.annotate(
+                    text=f' {self.data["snr"][i]:.2f}',
+                    xy=(t[i], m[i]),
+                )
+
+        # setup the axis position for the legend
         pos = ax.get_position()
         pos.y0 = 0.2
-        pos.y1 = 0.88
-        pos.x0 = 0.15
-        pos.x1 = 0.8
+        pos.y1 = 0.98
+        pos.x0 = 0.1
+        pos.x1 = 0.7
         ax.set_position(pos)
 
         # handle the legend
@@ -1264,7 +1376,7 @@ class Lightcurve(DatasetMixin, Base):
             *zip(*unique),
             loc="upper left",
             bbox_to_anchor=(1.02, 1.02),
-            fontsize=font_size,
+            fontsize=font_size - 2,
         )
 
         return ax
@@ -1440,7 +1552,11 @@ def insert_new_dataset(mapper, connection, target):
 
 
 if __name__ == "__main__":
+    import matplotlib
+    from src.source import Source
 
+    matplotlib.use("qt5agg")
     with Session() as session:
-        p = session.scalars(sa.select(Lightcurve)).first()
-        p.plot()
+
+        sources = session.scalars(sa.select(Source).where(Source.project == "WD")).all()
+        ax = sources[0].plot_photometry(ttype="mjd", ftype="flux")

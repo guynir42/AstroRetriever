@@ -145,7 +145,7 @@ class Source(Base, conesearch_alchemy.Point):
         )
         return string
 
-    def plot_photometry(self, ax=None, **kwargs):
+    def plot_photometry(self, ax=None, ftype="mag", ttype="times", **kwargs):
         """
         Plot this source on a given axis.
 
@@ -162,9 +162,9 @@ class Source(Base, conesearch_alchemy.Point):
 
         for d in self.raw_data:
             if d.type == "photometry":
-                d.plot(ax=ax, **kwargs)
+                d.plot(ax=ax, ftype=ftype, ttype=ttype, use_phot_zp=True, **kwargs)
         for lc in self.lightcurves:
-            lc.plot(ax=ax, **kwargs)
+            lc.plot(ax=ax, ftype=ftype, ttype=ttype, **kwargs)
 
         return ax
 
