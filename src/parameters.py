@@ -2,7 +2,7 @@ import os
 import yaml
 from pprint import pprint
 
-from src.dataset import DATA_ROOT
+from src.database import DATA_ROOT
 
 
 class Parameters:

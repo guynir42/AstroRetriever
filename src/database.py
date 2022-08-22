@@ -12,11 +12,14 @@
 # create DB using: psql -U postgres -d postgres -c "CREATE DATABASE virtualobserver"
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
 
-import uuid
+import os
 import sqlalchemy as sa
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+DATA_ROOT = os.getenv("VO_DATA")
+if DATA_ROOT is None:
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
 url = "postgresql://postgres:postgres@localhost:5432/virtualobserver"
 

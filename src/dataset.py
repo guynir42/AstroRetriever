@@ -23,10 +23,8 @@ from src.database import Base, Session, engine
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
-DATA_ROOT = os.getenv("VO_DATA")
-if DATA_ROOT is None:
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
+from src.database import DATA_ROOT
 
 PHOT_ZP = 23.9
 LOG_BASES = np.log(10) / 2.5
