@@ -42,7 +42,9 @@ The module contains several classes:
   Each project would have a list of observatories, a catalog, and a unique project name that associates all database objects
   with a particular project. After initializing a project, with a given configuration, the object can then download
   any files not yet saved to disk, load the all files, reduce the data and run analysis.
-- `Parameters`:
+- `Parameters`: Keep track of parameters from the user input or from a config file.
+  This class is an attribute of `Project`, `VirtualObservatory` and `Analysis` objects,
+  so all the tunable parameters can be kept in one place.
 - `Catalog`: stores a list of objects, each with a name, RA, Dec, and magnitude etc.
 - `VirtualObservatory`: contains methods to download and store images, lightcurves, or other datasets.
   Subclasses of the `VirtualObservatory` class are used to download data from specific surveys.
@@ -70,7 +72,7 @@ The module contains several classes:
   A `Source` can contain zero or more `Detections`s.
 - `Simulator`: takes the data that should be input to an `Analysis` object and injects a simulated event into it.
   Each `Analysis` must be able to run in "simulation mode" that produces `Detection` objects marked as "simulated".
-- `Histograms`: To be added...
+- `Histogram`: To be added...
 
 ### Files and directories
 
@@ -94,6 +96,16 @@ Important files in the `src` folder are:
 
 ## Installation
 
+#### Prerequisites
+
+PostgreSQL version 14 to run the database server.
+
+```
+sudo apt install postgresql libpq-dev
+```
+
+#### Install from github
+
 Download the code from github:
 
 ```commandline
@@ -114,12 +126,20 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### additional requirements
+Virtual environments can be deactivated using `deactivate`.
+To re-activate the environment, use `source venv/bin/activate`,
+inside the `virtualobserver` directory.
+This makes sure that the code uses the specific versions of the packages
+given by the `requirements.txt` file.
 
-PostgreSQL version 14 to run the database server.
+#### Testing
 
-```
-sudo apt install postgresql
+To make sure the pacakge is working,
+either after installation or after making changes,
+run the unit tests:
+
+```commandline
+pytest
 ```
 
 #### Data folder

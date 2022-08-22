@@ -115,12 +115,14 @@ class Project:
             obs_params = {}
 
         self.observatories = [
-            self.make_observatory(name=obs, params=obs_params.get(obs), config=config)
+            self.make_observatory(
+                name=obs, params=obs_params.get(obs, {}), config=config
+            )
             for obs in self.pars.observatories
         ]
         self.observatories = {obs.name: obs for obs in self.observatories}
 
-    def make_observatory(self, name, params=None, config=None):
+    def make_observatory(self, name, params={}, config=None):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -148,7 +150,7 @@ class Project:
             Dictionary of parameters for the observatory.
             These would override any parameters
             loaded from the config file.
-            If none, not parameters will be loaded
+            If none, no parameters will be loaded
             after the config file (if any).
         config: str or bool
             Name of the file to load.
@@ -165,38 +167,30 @@ class Project:
         else:
             module_name = name.lower()
 
+        if not isinstance(params, dict):
+            raise TypeError(f"params must be a dictionary, not {type(params)}")
+
         module = importlib.import_module("." + module_name, package="src")
         obs_class = getattr(module, f"Virtual{name}")
-        new_obs = obs_class(project_name=self.name, config=config)
-        # new_obs should contain all sub-objects
-        # like the analysis object,
-        # but they are not initialized yet.
-        # first, load the parameters, then initialize them
+        new_obs = obs_class(project=self.name, config=config, **params)
 
-        if params is not None:
-            if not isinstance(params, dict):
-                raise TypeError(f"params must be a dictionary, not {type(params)}")
-            new_obs.pars.update(params)
-
-        new_obs.pars.verbose = self.pars.verbose
         # parse parameters for reduction methods for this observatory
         reducer_dict = {}
         reducer_dict.update(self.pars.reducer)  # project pars
         reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
         new_obs.pars.reducer = reducer_dict
 
-        # parse parameters for analysis of this observatory
-        new_obs.analysis.pars.update(self.pars.analysis)  # project pars
-        new_obs.analysis.pars.update(new_obs.pars.analysis)  # observatory pars
-        new_obs.analysis.pars.verify()
-        new_obs.analysis.initialize()
+        # don't think we need analysis inside observatory anymore
+        # # parse parameters for analysis of this observatory
+        # new_obs.analysis.pars.update(self.pars.analysis)  # project pars
+        # new_obs.analysis.pars.update(new_obs.pars.analysis)  # observatory pars
+        # new_obs.analysis.pars.verify()
+        # new_obs.analysis.initialize()
 
-        # the catalog is just referenced
-        # from the project object
+        new_obs.pars.verbose = self.pars.verbose
+
+        # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
-
-        # verify parameter values and setup observatory
-        new_obs.initialize()
 
         return new_obs
 

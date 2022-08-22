@@ -1013,7 +1013,26 @@ class Lightcurve(DatasetMixin, Base):
         if "raw_data_id" in kwargs:
             self.raw_data_id = kwargs["raw_data_id"]
 
-        filters = self.data[self.colmap["filter"]]
+        fcol = self.colmap["filter"]  # shorthand
+
+        # replace the filter name with a more specific one
+        if "filtmap" in kwargs:
+            if isinstance(kwargs["filtmap"], dict):
+
+                def filter_mapping(filt):
+                    return kwargs["filtmap"].get(filt, filt)
+
+            elif isinstance(kwargs["filtmap"], str):
+
+                def filter_mapping(filt):
+                    new_filt = kwargs["filtmap"]
+                    if self.observatory:
+                        new_filt = new_filt.replace("<observatory>", self.observatory)
+                    return new_filt.replace("<filter>", filt)
+
+            self.data[fcol] = self.data[fcol].map(filter_mapping)
+
+        filters = self.data[fcol]
         if not all([f == filters[0] for f in filters]):
             raise ValueError("All filters must be the same for a Lightcurve")
         self.filter = filters[0]

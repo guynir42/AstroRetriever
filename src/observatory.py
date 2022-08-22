@@ -11,7 +11,7 @@ from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawData, Lightcurve
 from src.parameters import Parameters
 from src.catalog import Catalog
-from src.histograms import Histograms
+from src.histogram import Histogram
 from src.analysis import Analysis
 
 
@@ -24,7 +24,7 @@ class VirtualObservatory:
     save the results for later, and so on.
     """
 
-    def __init__(self, obs_name=None, project_name=None, config=True, keyname=None):
+    def __init__(self, name=None, project=None, config=True, cfg_key=None, **kwargs):
         """
         Create a new VirtualObservatory object,
         which is a base class for other observatories,
@@ -48,71 +48,62 @@ class VirtualObservatory:
             default to "configs/<project-name>.yaml"
             If a non-empty string is given,
             it will be used as the config filename.
-        keyname: str
+        cfg_key: str
             Key inside file which is relevant to
             this observatory.
             Defaults to the observatory name
             (turned to lower case).
         """
-        self.name = obs_name
-        self.project_name = project_name
+        self.name = name
+        self.project = project
         self.pars = None  # parameters for the analysis
         self.catalog = None  # a Catalog object
-        self.analysis = Analysis()  # an Analysis object
-        self.histograms = Histograms()  # a Histograms object
-        self.database = None  # connection to database with objects
-        self._credentials = None  # dictionary with usernames/passwords
+        self._credentials = {}  # dictionary with usernames/passwords
         self._config = config  # True/False or config filename
-        self._keyname = keyname  # key inside config file
+        self._cfg_key = cfg_key  # key inside config file
         self.pars = Parameters(
             required_pars=[
                 "reducer",
-                "analysis",
                 "data_folder",
                 "data_glob",
                 "dataset_identifier",
                 "catalog_matching",
             ]
         )
-        self.pars.reducer = {}
-        self.pars.analysis = {}
-        self.pars.dataset_attribute = "source_name"
-        self.pars.dataset_identifier = "key"
-        self.pars.catalog_matching = "name"
 
-    def initialize(self):
+        self.load_parameters()  # from YAML file
+        self.pars.default_values(
+            reducer={},
+            dataset_attribute="source_name",
+            dataset_identifier="key",
+            catalog_matching="name",
+        )
+
+        # pass any user arguments into the parameters object
+        self.pars.read(kwargs)  # override parameters
+
+    def verify(self):
         """
-        Run this initialization code after loading the parameters.
         Verifies that all required parameters are set,
         and that the values are the right type, in range, etc.
-        Calls any other initialization code needed to setup.
-
+        This should be called at the end of the __init__ method
+        of any SUBCLASS of VirtualObservatory.
         """
         if not isinstance(self.name, str):
             raise TypeError("Observatory name was not set")
 
-        if not isinstance(self.project_name, str):
-            raise TypeError("project_name not set")
+        if not isinstance(self.project, str):
+            raise TypeError("project name not set")
 
         if not isinstance(self.pars, Parameters):
             raise TypeError("No Parameters object has been loaded.")
 
-        if not isinstance(self.catalog, Catalog):
-            raise TypeError("No Catalog object has been loaded.")
-
-        if not isinstance(self.analysis, Analysis):
-            raise TypeError("No Analysis object has been loaded.")
-
-        # if self.database is None:
-        #     raise ValueError('No database object loaded')
-
-        if not isinstance(self.histograms, Histograms):
-            raise TypeError("No Histograms object has been loaded.")
-
         if hasattr(self.pars, "credentials"):
+            # if credentials contains a filename and key:
             self.load_passwords(**self.pars.credentials)
-            # if any info (username, password, etc.)
-            # is given by the config/user inputs
+
+            # if credentials (username, password, etc.)
+            # are given by the config/user inputs
             # prefer to use that instead of the file content
             self._credentials.update(self.pars.credentials)
 
@@ -149,8 +140,6 @@ class VirtualObservatory:
         if os.path.exists(filepath):
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key)
-        else:
-            self._credentials = {}
 
     def load_parameters(self):
         """
@@ -164,31 +153,22 @@ class VirtualObservatory:
         all required parameters are set.
         """
 
-        if self._keyname is None:
-            keyname = self.name.lower()
+        if self._cfg_key is None:
+            cfg_key = self.name.lower()
         else:
-            keyname = self._keyname
+            cfg_key = self._cfg_key
 
         if self._config:
             if isinstance(self._config, str):
                 filename = self._config
             else:
-                filename = os.path.join("configs", self.project_name + ".yaml")
+                filename = os.path.join("configs", self.project + ".yaml")
 
-            self.pars.load(filename, keyname)
+            self.pars.load(filename, cfg_key)
 
         # after loading parameters from all files,
         # must verify that all required parameters are present
         # by calling self.pars.verify()
-
-    def reset_histograms(self):
-        pass
-
-    def load_histograms(self):
-        pass
-
-    def save_histograms(self):
-        pass
 
     def run_analysis(self):
         """
@@ -251,7 +231,7 @@ class VirtualObservatory:
             raise ValueError("catalog_matching must be either 'number' or 'name'")
 
         # get a list of existing sources and their ID
-        source_ids = get_source_identifiers(self.project_name, column)
+        source_ids = get_source_identifiers(self.project, column)
 
         dir = self.pars.get_data_path()
         if self.pars.verbose:
@@ -391,7 +371,7 @@ class VirtualObservatory:
             name=name,
             ra=ra,
             dec=dec,
-            project=self.project_name,
+            project=self.project,
             alias=[alias] if alias else None,
             mag=mag,
             mag_err=mag_err,
@@ -513,6 +493,12 @@ class VirtualObservatory:
             if len(new_dict) > 0:
                 init_kwargs[att] = new_dict
 
+        if hasattr(self.pars, "filtmap"):
+            if not isinstance(self.pars.filtmap, (str, dict)):
+                raise ValueError("filtmap must be a string or a dictionary")
+            init_kwargs["filtmap"] = self.pars.filtmap
+
+        # choose which kind of reduction to do
         if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
             new_datasets = self.reduce_to_lightcurves(
                 datasets, source, init_kwargs, **kwargs
@@ -520,7 +506,9 @@ class VirtualObservatory:
         elif to.lower() in ("sed", "seds", "spectra", "spectrum"):
             new_datasets = self.reduce_to_sed(datasets, source, init_kwargs, **kwargs)
         elif to.lower() == "img":
-            new_datasets = self.reduce_to_image(datasets, source, init_kwargs, **kwargs)
+            new_datasets = self.reduce_to_images(
+                datasets, source, init_kwargs, **kwargs
+            )
         elif to.lower() == "thumb":
             new_datasets = self.reduce_to_thumbnail(
                 datasets, source, init_kwargs, **kwargs
@@ -538,7 +526,7 @@ class VirtualObservatory:
     def reduce_to_sed(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("SED reduction not implemented in this class")
 
-    def reduce_to_image(self, datasets, source=None, init_kwargs={}, **kwargs):
+    def reduce_to_images(self, datasets, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Image reduction not implemented in this class")
 
     def reduce_to_thumbnail(self, datasets, source=None, init_kwargs={}, **kwargs):
@@ -546,7 +534,7 @@ class VirtualObservatory:
 
 
 class VirtualDemoObs(VirtualObservatory):
-    def __init__(self, project_name, config=None, keyname=None):
+    def __init__(self, project, config=None, cfg_key=None, **kwargs):
         """
         Generate an instance of a VirtualDemoObs object.
         This object can be used to test basic operations
@@ -560,36 +548,31 @@ class VirtualDemoObs(VirtualObservatory):
 
         """
 
-        super().__init__("demo", project_name, config, keyname)
+        super().__init__(
+            name="demo", project=project, config=config, cfg_key=cfg_key, **kwargs
+        )
         self.pars.required_pars += ["demo_url", "demo_boolean"]
-        # define any default parameters at the
-        # source code level here
-        # These could be overridden by the config file.
-        self.pars.demo_url = "http://www.example.com"
-        self.pars.demo_boolean = True
-        self.pars.data_folder = "demo_data"
-        self.pars.data_glob = project_name + "_Demo_*.h5"
+        self.pars.default_values(
+            demo_boolean=True,
+            demo_url="http://example.com",
+            data_folder="demo_data",
+            data_glob=project + "_Demo_*.h5",
+        )
 
-        self.load_parameters()
-        # after loading the parameters
-        # the user may override them in external code
-        # and then call initialize() to verify
-        # that all required parameters are set.
+        self.verify()  # again check all parameters are set and legal
 
-    def initialize(self):
+    def verify(self):
         """
         Verify inputs to the observatory.
         """
-        super().initialize()  # check all required parameters are set
+        super().verify()  # check all required parameters are set
 
         # verify parameters have the correct type, etc.
         if self.pars.demo_url is None:
             raise ValueError("demo_url must be set to a valid URL")
-        validators.url(self.pars.demo_url)
+        validators.url(self.pars.demo_url)  # check URL is a legal one
 
-        if self.pars.demo_boolean is None or not isinstance(
-            self.pars.demo_boolean, bool
-        ):
+        if not isinstance(self.pars.demo_boolean, bool):
             raise ValueError("demo_boolean must be set to a boolean")
 
         if not isinstance(self.pars.data_folder, str):
@@ -597,8 +580,6 @@ class VirtualDemoObs(VirtualObservatory):
 
         if not isinstance(self.pars.data_glob, str):
             raise ValueError("data_glob must be set to a string.")
-
-        # additional setup code would go here...
 
     def download(self):
         """

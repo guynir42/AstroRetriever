@@ -2,7 +2,7 @@ import os
 import yaml
 from pprint import pprint
 
-DATA_ROOT = os.getenv("VO_DATA") or ""
+from src.dataset import DATA_ROOT
 
 
 class Parameters:
@@ -47,6 +47,18 @@ class Parameters:
         for p in self.required_pars:
             if not hasattr(self, p):
                 raise ValueError(f"Parameter {p} is not set.")
+
+    def default_values(self, **kwargs):
+        """
+        Add the input values as attributes of this object,
+        but for each attribute only add it if it has not been
+        defined already.
+        This is useful for hard-coding default values that may or
+        may not have been loaded in a previous call to e.g., load().
+        """
+        for k, v in kwargs.items():
+            if not hasattr(self, k):
+                setattr(self, k, v)
 
     def load(self, filename, key=None):
         """

@@ -16,7 +16,7 @@ from src.dataset import DatasetMixin, RawData, Lightcurve
 
 
 class VirtualZTF(VirtualObservatory):
-    def __init__(self, project_name, config=None, keyname=None):
+    def __init__(self, project, config=None, cfg_key=None, **kwargs):
         """
         Generate an instance of a VirtualZTF object.
         This can be used to download ZTF data
@@ -29,26 +29,23 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        super().__init__("ztf", project_name, config, keyname)
+        super().__init__(
+            name="ztf", project=project, config=config, cfg_key=cfg_key, **kwargs
+        )
         self.pars.required_pars += ["credentials"]
-        # define any default parameters at the
-        # source code level here
-        # These could be overridden by the config file.
-        self.pars.credentials = {}  # load from the default credentials file
-        self.pars.data_folder = "ZTF"
-        self.pars.data_glob = project_name + "_ZTF_*.h5"
+        self.pars.default_values(
+            credentials={},
+            data_folder="ZTF",
+            data_glob=project + "_ZTF_*.h5",
+        )
 
-        self.load_parameters()
-        # after loading the parameters
-        # the user may override them in external code
-        # and then call initialize() to verify
-        # that all required parameters are set.
+        self.verify()
 
-    def initialize(self):
+    def verify(self):
         """
         Verify inputs to the observatory.
         """
-        super().initialize()
+        super().verify()
         # verify parameters have the correct type, etc.
 
     def reduce_to_lightcurves(

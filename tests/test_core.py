@@ -115,7 +115,7 @@ def test_project_user_inputs():
     # check the observatory was loaded correctly
     assert "ztf" in proj.observatories
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
-    assert proj.observatories["ztf"].analysis.pars.an_key == "an_value"
+    assert isinstance(proj.observatories["ztf"]._credentials, dict)
     assert proj.observatories["ztf"]._credentials["username"] == "guy"
     assert proj.observatories["ztf"]._credentials["password"] == "12345"
 
@@ -192,7 +192,7 @@ def test_project_config_file():
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        assert proj.observatories["ztf"].analysis.pars.an_key == "ztf_analysis"
+        # assert proj.observatories["ztf"].analysis.pars.an_key == "ztf_analysis"
 
         # check the user inputs override the config file
         proj = Project(
@@ -319,7 +319,7 @@ def test_add_source_and_data():
         assert data is None
 
 
-def test_data_reduction(test_project, new_source, raw_photometry):
+def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
 
     lightcurves = None
 
@@ -328,8 +328,8 @@ def test_data_reduction(test_project, new_source, raw_photometry):
             # add the data to a database mapped object
             source_id = new_source.id
             new_source.project = test_project.name
-            raw_photometry.save()
-            new_source.raw_data.append(raw_photometry)
+            raw_photometry_no_exptime.save()
+            new_source.raw_data.append(raw_photometry_no_exptime)
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
@@ -339,12 +339,14 @@ def test_data_reduction(test_project, new_source, raw_photometry):
 
             # cannot generate photometric data without an exposure time
             with pytest.raises(ValueError) as exc:
-                obs.reduce(raw_photometry, to="lcs", source=new_source)
+                obs.reduce(raw_photometry_no_exptime, to="lcs", source=new_source)
             assert "No exposure time" in str(exc.value)
 
             # add exposure time to the dataframe:
             new_source.raw_data[0].data["exp_time"] = 30.0
-            lightcurves = obs.reduce(raw_photometry, to="lcs", source=new_source)
+            lightcurves = obs.reduce(
+                raw_photometry_no_exptime, to="lcs", source=new_source
+            )
             new_source.lightcurves = lightcurves
             session.add(new_source)
 
@@ -360,7 +362,9 @@ def test_data_reduction(test_project, new_source, raw_photometry):
             # check that the data has been reduced as expected
             for lc in lightcurves:
                 filt = lc.filter
-                dff = raw_photometry.data[raw_photometry.data["filter"] == filt]
+                dff = raw_photometry_no_exptime.data[
+                    raw_photometry_no_exptime.data["filter"] == filt
+                ]
                 dff = dff.sort_values(by="mjd", inplace=False)
                 dff.reset_index(drop=True, inplace=True)
 
@@ -397,11 +401,11 @@ def test_data_reduction(test_project, new_source, raw_photometry):
 
                 # make sure relationships are correct
                 assert lc.source_id == new_source.id
-                assert lc.raw_data_id == raw_photometry.id
+                assert lc.raw_data_id == raw_photometry_no_exptime.id
 
         finally:
-            filename = raw_photometry.filename
-            raw_photometry.delete_data_from_disk()
+            filename = raw_photometry_no_exptime.filename
+            raw_photometry_no_exptime.delete_data_from_disk()
             assert not os.path.isfile(filename)
 
             if lightcurves:
@@ -413,13 +417,50 @@ def test_data_reduction(test_project, new_source, raw_photometry):
         session.execute(sa.delete(Source).where(Source.name == source_id))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(RawData.key == raw_photometry.key)
+            sa.select(RawData).where(RawData.key == raw_photometry_no_exptime.key)
         ).first()
         assert data is None
         data = session.scalars(
             sa.select(Lightcurve).where(Lightcurve.source_id == source_id)
         ).all()
         assert len(data) == 0
+
+
+def test_filter_mapping(raw_photometry):
+
+    # make a demo observatory with a string filtmap:
+    obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+
+    # check parameter is propagated correctly
+    assert obs.pars.filtmap is not None
+
+    N1 = len(raw_photometry.data) // 2
+    N2 = len(raw_photometry.data)
+
+    raw_photometry.data.loc[0:N1, "filter"] = "g"
+    raw_photometry.data.loc[N1:N2, "filter"] = "r"
+    raw_photometry.observatory = obs.name
+
+    lcs = obs.reduce(raw_photometry, to="lcs")
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
+    assert all(filt == "demo-g" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "demo-r"][0]
+    assert all(filt == "demo-r" for filt in lc_r.data["filter"])
+
+    # now use a dictionary filtmap
+    obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
+
+    lcs = obs.reduce(raw_photometry, to="lcs")
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
+    assert all(filt == "Demo/G" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "Demo/R"][0]
+    assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
 
 
 def test_data_filenames(raw_photometry):
