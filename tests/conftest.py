@@ -5,10 +5,15 @@ import pandas as pd
 
 import pytest
 
-import src.database
+from src.database import engine
 from src.source import Source
 from src.project import Project
-from src.dataset import RawData
+from src.dataset import RawData, Lightcurve
+
+# make sure the tables exists
+Source.metadata.create_all(engine)
+RawData.metadata.create_all(engine)
+Lightcurve.metadata.create_all(engine)
 
 
 @pytest.fixture
