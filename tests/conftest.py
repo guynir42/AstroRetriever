@@ -5,6 +5,7 @@ import pandas as pd
 
 import pytest
 
+import src.database
 from src.source import Source
 from src.project import Project
 from src.dataset import RawData
