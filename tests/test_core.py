@@ -20,6 +20,7 @@ from src.source import Source
 import src.dataset
 from src.dataset import RawData, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
+from src.catalog import Catalog
 
 basepath = os.path.abspath(os.path.dirname(__file__))
 src.dataset.DATA_ROOT = basepath
@@ -206,7 +207,69 @@ def test_project_config_file():
 
 
 def test_catalog():
-    pass
+    filename = "test_catalog.csv"
+    fullname = os.path.abspath(os.path.join(basepath, "../catalogs", filename))
+
+    try:
+        Catalog.make_test_catalog(filename=filename, number=10)
+        assert os.path.isfile(fullname)
+
+        # setup a catalog with the default column definitions
+        cat = Catalog(filename=filename, default="test")
+        cat.load()
+        assert cat.pars.filename == filename
+        assert len(cat.data) == 10
+        assert cat.data["ra"].dtype == np.float64
+        assert cat.data["dec"].dtype == np.float64
+        assert cat.pars.name_column in cat.data.columns
+
+    finally:
+        os.remove(fullname)
+        assert not os.path.isfile(fullname)
+
+
+def test_catalog_hdf5():
+    filename = "test_catalog.h5"
+    fullname = os.path.abspath(os.path.join(basepath, "../catalogs", filename))
+
+    try:
+        Catalog.make_test_catalog(filename=filename, number=10)
+        assert os.path.isfile(fullname)
+
+        # setup a catalog with the default column definitions
+        cat = Catalog(filename=filename, default="test")
+        cat.load()
+        assert cat.pars.filename == filename
+        assert len(cat.data) == 10
+        assert cat.data["ra"].dtype == np.float64
+        assert cat.data["dec"].dtype == np.float64
+        assert cat.pars.name_column in cat.data.columns
+
+    finally:
+        os.remove(fullname)
+        assert not os.path.isfile(fullname)
+
+
+def test_catalog_wds():
+    cat = Catalog(default="wds")
+    cat.load()
+    assert len(cat.data) > 0
+    assert cat.data["ra"].dtype == np.dtype(">f8")
+    assert cat.data["dec"].dtype == np.dtype(">f8")
+    assert cat.pars.name_column in cat.data.dtype.names
+
+    # more than a million sources
+    assert len(cat.data) > 1000_000
+
+    # catalog should be ordered by RA, so first objects are close to 360/0
+    assert cat.data["ra"][0] > 359 or cat.data["ra"][0] < 1
+
+    # average values are weighted by the galactic bulge
+    assert abs(cat.data["ra"].mean() - 229) < 1
+    assert abs(cat.data["dec"].mean() + 20) < 1
+
+    # magnitude hovers around the limit of ~20
+    assert abs(cat.data[cat.pars.mag_column].mean() - 20) < 0.1
 
 
 def test_add_source_and_data():

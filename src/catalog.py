@@ -73,6 +73,8 @@ class Catalog:
             return "fits"
         elif ext.lower() == ".csv":
             return "csv"
+        elif ext.lower() in (".h5", ".hdf5"):
+            return "h5"
         else:
             raise ValueError(f"Unknown file type: {ext}")
 
@@ -153,6 +155,8 @@ class Catalog:
                 self.data = np.array(hdul[1].data)
         elif type == "csv":
             self.data = pd.read_csv(self.get_fullpath())
+        elif type == "h5":
+            self.data = pd.read_hdf(self.get_fullpath())
         else:
             raise ValueError(f"Unknown file type: {type}")
 
@@ -248,49 +252,6 @@ class Catalog:
             self.pars.mag_err_column = "phot_g_mean_mag_error"
             self.pars.mag_filter_name = "Gaia_G"
 
-    def make_test_catalog(self, filename=None, number=10):
-        """
-        Make a test catalog, save it to catalogs/test.csv.
-
-        Parameters
-        ----------
-        filename: str
-            Filename to save the test catalog to.
-            If None, will use the default filename "catalogs/test.csv"
-        number: int
-            Number of objects to generate.
-
-        """
-
-        ra = np.random.uniform(0, 360, number)
-        dec = np.random.uniform(-90, 90, number)
-        mag = np.random.uniform(15, 20, number)
-        mag_err = np.random.uniform(0.1, 0.5, number)
-        filters = np.random.choice(["R", "I", "V"], number)
-        names = []
-        for i in range(len(ra)):
-            names.append(f"J{self.ra2sex(ra[i])}{self.dec2sex(dec[i])}")
-
-        data = {
-            "object_id": names,
-            "ra": ra,
-            "dec": dec,
-            "mag": mag,
-            "magerr": mag_err,
-            "filter": filters,
-        }
-
-        df = pd.DataFrame(data)
-        if filename is None:
-            filename = "test.csv"
-        filename = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
-        )
-        path = os.path.dirname(filename)
-        if not os.path.isdir(path):
-            os.makedirs(path)
-        df.to_csv(filename, index=False, header=True)
-
     def get_row(self, loc, index_type="number"):
 
         if self.data is None:
@@ -325,6 +286,71 @@ class Catalog:
             alias = None
 
         return index, name, ra, dec, mag, mag_err, filter_name, alias
+
+    @staticmethod
+    def make_test_catalog(filename=None, number=10, fmt=None):
+        """
+        Make a test catalog, save it to catalogs/test.csv
+        (or other formats).
+
+        Parameters
+        ----------
+        filename: str
+            Filename to save the test catalog to.
+            If None, will use the default filename "catalogs/test.csv"
+        number: int
+            Number of objects to generate.
+        fmt: str
+            Format to save the catalog in.
+            Options are 'csv', 'fits', 'hdf5'.
+            Default is 'csv', or based on file extension.
+
+        """
+
+        ra = np.random.uniform(0, 360, number)
+        dec = np.random.uniform(-90, 90, number)
+        mag = np.random.uniform(15, 20, number)
+        mag_err = np.random.uniform(0.1, 0.5, number)
+        filters = np.random.choice(["R", "I", "V"], number)
+        names = []
+        for i in range(len(ra)):
+            names.append(f"J{Catalog.ra2sex(ra[i])}{Catalog.dec2sex(dec[i])}")
+
+        data = {
+            "object_id": names,
+            "ra": ra,
+            "dec": dec,
+            "mag": mag,
+            "magerr": mag_err,
+            "filter": filters,
+        }
+
+        df = pd.DataFrame(data)
+        if filename is None:
+            filename = "test"
+        filename = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../catalogs/", filename)
+        )
+        filename, ext = os.path.splitext(filename)
+
+        if fmt is None:
+            fmt = ext[1:]
+
+        if fmt == "hdf5":
+            fmt = ".h5"
+
+        filename += f".{fmt}"
+
+        path = os.path.dirname(filename)
+        if not os.path.isdir(path):
+            os.makedirs(path)
+
+        if fmt == "csv":
+            df.to_csv(filename, index=False, header=True)
+        elif fmt == "fits":
+            pass  # TODO: need to finish this
+        elif fmt == "h5":
+            df.to_hdf(filename, key="catalog", mode="w")
 
     @staticmethod
     def to_string(string):
