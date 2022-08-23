@@ -226,7 +226,7 @@ class Catalog:
             self.pars.filename = "test.csv"
             if not os.path.isfile(self.get_fullpath()):
                 self.make_test_catalog(self.pars.filename)
-        elif default == "wd" or default == "white dwarfs":
+        elif default in ("wd", "wds", "white dwarf", "white_dwarfs"):
             self.pars.catalog_name = "Gaia eDR3 white dwarfs"
             # file to save inside "catalogs" directory
             self.pars.filename = "GaiaEDR3_WD_main.fits"
@@ -238,7 +238,7 @@ class Catalog:
             )
             # paper citation for this catalog:
             self.pars.reference = (
-                "https://ui.adsabs.harvard.edu/abs/" "2021MNRAS.508.3877G/abstract"
+                "https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract"
             )
 
             self.pars.name_column = "WDJ_name"
@@ -251,17 +251,34 @@ class Catalog:
     def make_test_catalog(self, filename=None, number=10):
         """
         Make a test catalog, save it to catalogs/test.csv.
+
+        Parameters
+        ----------
+        filename: str
+            Filename to save the test catalog to.
+            If None, will use the default filename "catalogs/test.csv"
+        number: int
+            Number of objects to generate.
+
         """
 
         ra = np.random.uniform(0, 360, number)
         dec = np.random.uniform(-90, 90, number)
         mag = np.random.uniform(15, 20, number)
         mag_err = np.random.uniform(0.1, 0.5, number)
+        filters = np.random.choice(["R", "I", "V"], number)
         names = []
         for i in range(len(ra)):
             names.append(f"J{self.ra2sex(ra[i])}{self.dec2sex(dec[i])}")
 
-        data = {"object_id": names, "ra": ra, "dec": dec, "mag": mag, "magerr": mag_err}
+        data = {
+            "object_id": names,
+            "ra": ra,
+            "dec": dec,
+            "mag": mag,
+            "magerr": mag_err,
+            "filter": filters,
+        }
 
         df = pd.DataFrame(data)
         if filename is None:

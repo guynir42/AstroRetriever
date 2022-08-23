@@ -1,14 +1,11 @@
-import os
 import uuid
 import numpy as np
-import pandas as pd
 
 import pytest
 
-from src.database import engine
 from src.source import Source
 from src.project import Project
-from src.dataset import RawData, Lightcurve
+from src.dataset import RawData
 
 
 @pytest.fixture
@@ -23,29 +20,16 @@ def new_source():
 
 @pytest.fixture
 def raw_photometry():
-    num_points = 30
-    filt = np.random.choice(["r", "g", "i"], num_points)
-    mjd = np.random.uniform(57000, 58000, num_points)
-    mag = np.random.uniform(15, 20, num_points)
-    mag_err = np.random.uniform(0.1, 0.5, num_points)
-    oid = np.random.randint(0, 5, num_points)
-    test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
-    df = pd.DataFrame(test_data)
-    df["exptime"] = 30
-    return RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
+    data = RawData(folder="data_temp", altdata=dict(foo="bar"))
+    data.make_random_photometry(number=30)
+    return data
 
 
 @pytest.fixture
 def raw_photometry_no_exptime():
-    num_points = 30
-    filt = np.random.choice(["r", "g", "i"], num_points)
-    mjd = np.random.uniform(57000, 58000, num_points)
-    mag = np.random.uniform(15, 20, num_points)
-    mag_err = np.random.uniform(0.1, 0.5, num_points)
-    oid = np.random.randint(0, 5, num_points)
-    test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
-    df = pd.DataFrame(test_data)
-    return RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
+    data = RawData(folder="data_temp", altdata=dict(foo="bar"))
+    data.make_random_photometry(number=30, exptime=None)
+    return data
 
 
 @pytest.fixture

@@ -98,8 +98,8 @@ def test_project_user_inputs():
         params={
             "project_string": project_str,
             "observatories": ["ZTF"],
-            "calibration": {"cal_key": "cal_value"},
-            "analysis": {"an_key": "an_value"},
+            "reducer": {"reducer_key": "reducer_value"},
+            "analysis": {"analysis_key": "analysis_value"},
         },
         obs_params={
             "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
@@ -127,11 +127,11 @@ def test_project_config_file():
     data = {
         "project": {  # project wide definitions
             "project_string": project_str1,  # random string
-            "calibration": {  # should be overriden by observatory calibration
-                "cal_key": "project_calibration",
+            "reducer": {  # should be overriden by observatory calibration
+                "reducer_key": "project_reducer",
             },
             "analysis": {  # should be overriden by observatory analysis
-                "an_key": "project_analysis",
+                "analysis_key": "project_analysis",
             },
         },
         "demo": {  # demo observatory specific definitions
@@ -144,11 +144,11 @@ def test_project_config_file():
                     os.path.join(basepath, "passwords_test.yaml")
                 ),
             },
-            "calibration": {
-                "cal_key": "ztf_calibration",
+            "reducer": {
+                "reducer_key": "ztf_reduction",
             },
             "analysis": {
-                "an_key": "ztf_analysis",
+                "analysis_key": "ztf_analysis",
             },
         },
     }
@@ -178,8 +178,8 @@ def test_project_config_file():
             "default_test", params={"observatories": ["DemoObs", "ZTF"]}, config=True
         )
         assert proj.pars.project_string == project_str1
-        assert proj.pars.calibration["cal_key"] == "project_calibration"
-        assert proj.pars.analysis["an_key"] == "project_analysis"
+        assert proj.pars.reducer["reducer_key"] == "project_reducer"
+        assert proj.pars.analysis["analysis_key"] == "project_analysis"
 
         # check the observatories were loaded correctly
         assert "demo" in proj.observatories

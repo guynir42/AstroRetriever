@@ -2,6 +2,65 @@
 
 A package used for downloading and processing images from various astronomical surveys.
 
+## Installation
+
+#### Prerequisites
+
+PostgreSQL version 14 to run the database server.
+
+```
+sudo apt install postgresql libpq-dev
+```
+
+#### Install from github
+
+Download the code from github:
+
+```commandline
+git clone https://github.com/guynir42/virtualobserver.git
+```
+
+To develop and contribute to this repo,
+first [make a fork](https://docs.github.com/en/get-started/quickstart/fork-a-repo)
+on the github page, then clone your fork to your local machine
+(i.e., replace `guynir42` with your github username).
+
+Generate a virtual environment and install the required python packages:
+
+```commandline
+cd virtualobserver/
+virtualenv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Virtual environments can be deactivated using `deactivate`.
+To re-activate the environment, use `source venv/bin/activate`,
+inside the `virtualobserver` directory.
+This makes sure that the code uses the specific versions of the packages
+given by the `requirements.txt` file.
+
+#### Testing
+
+To make sure the pacakge is working,
+either after installation or after making changes,
+run the unit tests:
+
+```commandline
+pytest
+```
+
+#### Data folder
+
+Raw data folder should be set up with the environment variable `VO_DATA`.
+This folder should be on a drive with enough space to contain the raw data.
+Internally, the `DATA_ROOT` variable in `src/dataset.py` can be modified
+to temporarily save data to other places (e.g., for testing).
+
+#### Additional folders:
+
+You may want to generate folders for `catalogs` and `configs` in the root directory.
+
 ## Architecture
 
 The goal of this project is to download, process,
@@ -94,64 +153,83 @@ Important files in the `src` folder are:
 - `ztf.py` contains the `VirtualZTF` class, which is a subclass of `VirtualObservatory`
   and is used to download data from ZTF, and reduce the data into usable products.
 
-## Installation
+## Usage examples
 
-#### Prerequisites
+### Downloading data
 
-PostgreSQL version 14 to run the database server.
+Define a project:
 
-```
-sudo apt install postgresql libpq-dev
-```
+```python
+from src.project import Project
+proj = Project(
+        name="default_test",
+        params={
+            "project_string": "my project",
+            "observatories": ["ZTF"],
+            "analysis": {"analysis_key": "analysis_value"},
+            "catalog": {"default": "WD"},
+        },
+        obs_params={  # parameters to be passed into the observatory classes
+            "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
+        },
+        config=False,  # don't load a config file
+    )
 
-#### Install from github
-
-Download the code from github:
-
-```commandline
-git clone https://github.com/guynir42/virtualobserver.git
-```
-
-To develope and contribute to this repo,
-first [make a fork](https://docs.github.com/en/get-started/quickstart/fork-a-repo)
-on the github page, then clone your fork to your local machine
-(i.e., replace `guynir42` with your github username).
-
-Generate a virtual environment and install the required python packages:
-
-```commandline
-cd virtualobserver/
-virtualenv venv
-source venv/bin/activate
-pip install -r requirements.txt
+proj.download()  # download raw data for each catalog row
+proj.reduce()  # reduce the data into lightcurves, etc.
+proj.analyze()  # run the analysis pipeline
 ```
 
-Virtual environments can be deactivated using `deactivate`.
-To re-activate the environment, use `source venv/bin/activate`,
-inside the `virtualobserver` directory.
-This makes sure that the code uses the specific versions of the packages
-given by the `requirements.txt` file.
+This project will download a Gaia-based FITS file
+with a list of white dwarfs,
+and setup a ZTF observatory with the given credentials.
+The `download()`, `reduce()`, and `analyze()` methods will then
+only backfill data products that are missing from the data folder.
+For example, the project will not download raw data that has already
+been downloaded, it will not reduce data that has already been reduced,
+and will not produce analysis results that have already been produced.
 
-#### Testing
+### Loading a catalog
 
-To make sure the pacakge is working,
-either after installation or after making changes,
-run the unit tests:
+Use the default white dwarf (WD) catalog from
+<https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract>.
 
-```commandline
-pytest
+```python
+from src.catalog import Catalog
+cat = Catalog(default="WD")
+cat.load()
 ```
 
-#### Data folder
+The `load()` method will download the catalog file if it is not already present,
+and read it from memory if it is not already loaded.
 
-Raw data folder should be set up with the environment variable `VO_DATA`.
-This folder should be on a drive with enough space to contain the raw data.
-Internally, the `DATA_ROOT` variable in `src/dataset.py` can be modified
-to temporarily save data to other places (e.g., for testing).
+### Reducing lightcurves
 
-#### Additional folders:
+To reduce lightcurves, first define an observatory
+with optional `reducer` parameters or use the inputs directly.
 
-You may want to generate folders for `catalogs` and `configs` in the root directory.
+```python
+from src.ztf import VirtualZTF
+
+obs = VirtualZTF(
+    name="ZTF",
+    credentials={"username": "guy", "password": "12345"},
+    reducer={"gap": 60},
+)
+```
+
+Load the raw data and split it into lightcurves for different filters:
+
+```python
+from src.dataset import RawData
+data = RawData(filename="my_raw_data.fits")
+data.load()
+lcs = obs.reduce(data, to='lcs')
+```
+
+This should produce a list of `Lightcurve` objects, one for each filter.
+In this case the `gap` parameter is used to split the lightcurve into multiple
+lightcurves if there is a gap of more than 60 days between epochs.
 
 ## Using the data
 

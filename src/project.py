@@ -100,7 +100,7 @@ class Project:
             self.pars.observatories = {"DemoObs"}
 
         if not all([isinstance(obs, str) for obs in self.pars.observatories]):
-            raise TypeError("observatory_names must be a set of strings")
+            raise TypeError("observatories must be a set of strings")
 
         self.pars.verify()  # make sure all parameters are set
 
@@ -211,6 +211,15 @@ class Project:
         with Session() as session:
             session.execute(stmt)
             session.commit()
+
+    def download(self, **kwargs):
+        pass
+
+    def reduce(self, **kwargs):
+        pass
+
+    def analyze(self, **kwargs):
+        pass
 
 
 if __name__ == "__main__":

@@ -63,7 +63,7 @@ class VirtualZTF(VirtualObservatory):
         Reduce the datasets to lightcurves.
         Splits up the raw data that corresponds
         to several object IDs (oid) into separate
-        lightcurves. Also will split observing seasons
+        lightcurves. Will also split observing seasons
         into separate lightcurves, if there's a gap
         of more than X days (given by the "gap" parameter).
 

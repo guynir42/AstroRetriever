@@ -980,6 +980,72 @@ class RawData(DatasetMixin, Base):
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
 
+    def make_random_photometry(
+        self,
+        number=30,
+        mag_min=15,
+        mag_max=20,
+        magerr_min=0.1,
+        magerr_max=0.5,
+        mjd_min=57000,
+        mjd_max=58000,
+        oid_min=0,
+        oid_max=5,
+        filters=["g", "r", "i"],
+        exptime=30,
+    ):
+        """
+        Make a random photometry dataset,
+        with randomly generated mjds, mags, magerrs, filters, and object ids.
+
+        Parameters
+        ----------
+        number: int
+            Number of observations to generate
+        mag_min: float
+            Minimum (brightest) magnitude to generate
+        mag_max: float
+            Maximum (faintest) magnitude to generate
+        magerr_min: float
+            Minimum magnitude error to generate
+        magerr_max: float
+            Maximum magnitude error to generate
+        mjd_min: float
+            Minimum MJD to generate
+        mjd_max: float
+            Maximum MJD to generate
+        oid_min: int
+            Minimum object id to generate
+        oid_max: int
+            Maximum object id to generate
+        filters: list of str
+            List of filters to generate
+        exptime: float, optional
+            Exposure time to generate
+            If not given, the photometry points
+            will not have an exposure time column.
+
+        Returns
+        -------
+
+        """
+
+        if not isinstance(filters, list):
+            raise ValueError("filters must be a list of strings")
+
+        filt = np.random.choice(filters, number)
+        mjd = np.random.uniform(mjd_min, mjd_max, number)
+        mag = np.random.uniform(mag_min, mag_max, number)
+        mag_err = np.random.uniform(magerr_min, magerr_max, number)
+        oid = np.random.randint(oid_min, oid_max, number)
+        test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
+        df = pd.DataFrame(test_data)
+
+        if exptime:
+            df["exptime"] = exptime
+
+        self.data = df
+
 
 class Lightcurve(DatasetMixin, Base):
 
