@@ -21,6 +21,7 @@ import src.dataset
 from src.dataset import RawData, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
+from src.histogram import Histogram
 
 basepath = os.path.abspath(os.path.dirname(__file__))
 src.dataset.DATA_ROOT = basepath
@@ -678,3 +679,63 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  use explicit values and check them online with a magnitude calculator
     #  make sure the statistical errors are correct using a large number of points
     #  make sure the flux_min/max are correct
+
+
+def test_histogram():
+
+    h = Histogram()
+    # make sure the test does not
+    # change if we modify the defaults
+    h.pars.dtype = "uint32"
+    h.pars.score_coords = {
+        "snr": (-10, 10, 0.1),
+        "dmag": (-3, 3, 0.1),
+    }
+    h.pars.source_coords = {
+        "mag": (15, 21, 0.5),
+    }
+    h.pars.obs_coords = {
+        "exptime": (30.0, 1),
+        "filt": (),
+    }
+    h.initialize_data()
+    num_snr = len(np.arange(-10, 10 + 0.1, 0.1))
+    num_dmag = len(np.arange(-3, 3 + 0.1, 0.1))
+    num_mag = len(np.arange(15, 21 + 0.5, 0.5))
+    num_dynamic = 3  # guess the number of values for dynamic axes
+    num_bytes = 4  # uint32
+    assert h.get_size() == 0
+    assert (
+        h.get_size_estimate("bytes")
+        == (num_snr + num_dmag) * num_mag * num_dynamic**2 * num_bytes
+    )
+
+    # add some data with uniform filter
+    num_points = 10
+    df = pd.DataFrame(
+        dict(
+            mjd=np.linspace(57000, 58000, num_points),
+            snr=np.random.normal(0, 3, num_points),
+            dmag=np.random.normal(0, 1, num_points),
+            exptime=30.0,
+            filt="R",
+        )
+    )
+
+    with pytest.raises(ValueError) as err:
+        h.add_data(df)
+
+    assert "Could not find data for axis mag" in str(err.value)
+
+    class FakeSource:
+        pass
+
+    source = FakeSource()
+    source.id = np.random.randint(0, 1000)
+    source.mag = 18
+    h.add_data(df, source)
+
+    print(h.data)
+    assert h.data.coords["filt"] == ["R"]
+    assert h.data.coords["exptime"] == [30]
+    assert h.get_size("bytes") == (num_snr + num_dmag) * num_mag * num_bytes
