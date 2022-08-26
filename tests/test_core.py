@@ -695,10 +695,11 @@ def test_histogram():
         "mag": (15, 21, 0.5),
     }
     h.pars.obs_coords = {
-        "exptime": (30.0, 1),
+        "exptime": (30.0, 0.3),
         "filt": (),
     }
     h.initialize_data()
+
     num_snr = len(np.arange(-10, 10 + 0.1, 0.1))
     num_dmag = len(np.arange(-3, 3 + 0.1, 0.1))
     num_mag = len(np.arange(15, 21 + 0.5, 0.5))
@@ -711,16 +712,19 @@ def test_histogram():
     )
 
     # add some data with uniform filter
-    num_points = 10
+    num_points1 = 10
     df = pd.DataFrame(
         dict(
-            mjd=np.linspace(57000, 58000, num_points),
-            snr=np.random.normal(0, 3, num_points),
-            dmag=np.random.normal(0, 1, num_points),
+            mjd=np.linspace(57000, 58000, num_points1),
+            snr=np.random.normal(0, 3, num_points1),
+            dmag=0,
             exptime=30.0,
             filt="R",
         )
     )
+
+    # add some data with well defined dmag values
+    df["dmag"][0:5] = 1.3
 
     with pytest.raises(ValueError) as err:
         h.add_data(df)
@@ -734,8 +738,104 @@ def test_histogram():
     source.id = np.random.randint(0, 1000)
     source.mag = 18
     h.add_data(df, source)
-
-    print(h.data)
     assert h.data.coords["filt"] == ["R"]
     assert h.data.coords["exptime"] == [30]
     assert h.get_size("bytes") == (num_snr + num_dmag) * num_mag * num_bytes
+
+    assert np.sum(h.data.snr_counts.values) == num_points1
+    assert np.sum(h.data.dmag_counts.values) == num_points1
+
+    # check the dmag values we used get summed correctly
+    assert (
+        h.data.dmag_counts.sel(dmag=0, method="nearest").sum().values == num_points1 - 5
+    )
+    assert h.data.dmag_counts.sel(dmag=1.3, method="nearest").sum().values == 5
+
+    # add some data with varying filter
+    num_points2 = 10
+    df = pd.DataFrame(
+        dict(
+            mjd=np.linspace(57000, 58000, num_points2),
+            snr=np.random.normal(0, 3, num_points2),
+            dmag=0,
+            exptime=30.0,
+            filt=np.random.choice(["V", "I"], num_points2),
+        )
+    )
+
+    h.add_data(df, source)
+
+    assert set(h.data.coords["filt"].values) == {"R", "V", "I"}
+    assert h.data.coords["exptime"] == [30]
+    assert h.get_size("bytes") == (num_snr + num_dmag) * num_mag * 3 * num_bytes
+    assert (
+        h.data.dmag_counts.sel(dmag=0, method="nearest").sum().values == num_points2 + 5
+    )
+    assert (
+        h.data.dmag_counts.sel(dmag=0, method="nearest").sum().values == num_points2 + 5
+    )
+
+    # check the filters have the correct counts
+    assert h.data.dmag_counts.sel(filt="R").sum().values == num_points1
+    assert (
+        h.data.dmag_counts.sel(filt="V").sum().values == df[df["filt"] == "V"].shape[0]
+    )
+    assert (
+        h.data.dmag_counts.sel(filt="I").sum().values == df[df["filt"] == "I"].shape[0]
+    )
+    assert h.data.snr_counts.sel(filt="R").sum().values == num_points1
+    assert (
+        h.data.snr_counts.sel(filt="V").sum().values == df[df["filt"] == "V"].shape[0]
+    )
+    assert (
+        h.data.snr_counts.sel(filt="I").sum().values == df[df["filt"] == "I"].shape[0]
+    )
+
+    num_points3 = 100
+    df = pd.DataFrame(
+        dict(
+            mjd=np.linspace(57000, 58000, num_points3),
+            snr=np.random.normal(0, 3, num_points3),
+            dmag=0,
+            exptime=30.0,
+            filt=np.random.choice(["R", "V", "I"], num_points3),
+        )
+    )
+    df["exptime"][0:5] = 20.3
+    df["exptime"][5:] = 39.8
+
+    h.add_data(df, source)
+    assert len(h.data.coords["exptime"]) == len(np.arange(20, 39.8, 0.3))
+    assert h.data.sel(exptime=20.3, method="nearest").dmag_counts.sum().values == 5
+    assert (
+        h.data.sel(exptime=39.8, method="nearest").dmag_counts.sum().values
+        == num_points3 - 5
+    )
+    assert (
+        h.data.sel(exptime=30.0, method="nearest").dmag_counts.sum().values
+        == num_points1 + num_points2
+    )
+
+    # check most of the S/N values are in the middle of the distribution
+    snr = h.data.snr
+    high_snr = h.data.snr_counts.sel(snr=snr[snr > 5]).sum().values
+    low_snr = h.data.snr_counts.sel(snr=snr[snr < -5]).sum().values
+    mid_snr = h.data.snr_counts.sel(snr=snr[(-5 <= snr) & (snr <= 5)]).sum().values
+    assert mid_snr > low_snr * 5
+    assert mid_snr > high_snr * 5
+
+    # add some very high and very low values:
+    df["snr"][3] = 100
+    df["snr"][4] = -100
+    df["dmag"][10:20] = 100
+
+    h.add_data(df, source)
+    assert h.data.snr.attrs["overflow"] == 1
+    assert h.data.snr.attrs["underflow"] == 1
+    assert h.data.dmag.attrs["overflow"] == 10
+    assert h.data.dmag.attrs["underflow"] == 0
+
+    # a new source with above range magnitude
+    source.mag = 25.3
+    h.add_data(df, source)
+    assert h.data.mag.attrs["overflow"] == num_points3

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from src.parameters import Parameters
@@ -148,6 +149,8 @@ class Histogram:
             )
             ax.attrs["step"] = specs[-1]
             ax.attrs["type"] = "fixed"
+            ax.attrs["overflow"] = 0
+            ax.attrs["underflow"] = 0
         else:
             raise ValueError(
                 f"Coordinate specs must be a tuple of length 0 or 3: {specs}"
@@ -311,7 +314,7 @@ class Histogram:
         # go over args and see if any objects
         # have attributes that match one of the axes.
         input_data = {}
-        for axis in self.data.coords:
+        for axis in self.data.dims:
             input_data[axis] = None
             for obj in args:
                 if hasattr(obj, axis):
@@ -324,9 +327,20 @@ class Histogram:
                             input_data[axis] = np.array(values)
                     else:  # assume it is a scalar value / string
                         input_data[axis] = values
+                    break  # take the first thing that matches
+
+        sample_len = None
+        for obj in args:
+            if isinstance(obj, pd.DataFrame):
+                sample_len = len(obj)
+                break
+        if sample_len is None:
+            sample_len = 1
+
+        num_scores = len(self.data.data_vars)
 
         # check all data axes have a coordinate value
-        for axis in self.data.coords:
+        for axis in self.data.dims:
             if input_data[axis] is None:
                 raise ValueError(f"Could not find data for axis {axis}")
 
@@ -334,9 +348,19 @@ class Histogram:
         # the arrays of values, are outside the
         # range of any of the dynamic axes.
         # If so, expand the axes to include the new values.
-        for axis in self.data.coords:
+        for axis in self.data.dims:
+            if self.data.coords[axis].attrs["type"] == "fixed":
+                continue
+
+            # scalar string
             if isinstance(input_data[axis], str):
                 if input_data[axis] not in self.data.coords[axis].values:
+                    self.expand_axis(axis, input_data[axis])
+            # list of strings
+            elif hasattr(input_data[axis], "__len__") and all(
+                isinstance(x, str) for x in input_data[axis]
+            ):
+                if not set(input_data[axis]).issubset(self.data.coords[axis].values):
                     self.expand_axis(axis, input_data[axis])
             else:
                 mx = max(self.data[axis] + self.data[axis].attrs["step"] / 2)
@@ -350,29 +374,161 @@ class Histogram:
                 if new_mx > mx or new_mn < mn:
                     self.expand_axis(axis, input_data[axis])
 
-        # get a slice of the full array that matches
-        # any scalar values
+        # here is where we actually increase the bin counts
+        for name, da in self.data.data_vars.items():
+            # each da is for a different score
 
-        # bin the remaining dataframe columns into
-        # the appropriate axes
+            # get a slice of the full array that matches
+            # any scalar values
+            indices = {}
+            array_values = {}
+            for ax in da.dims:
+                if isinstance(input_data[ax], str) or not hasattr(
+                    input_data[ax], "__len__"
+                ):
+                    indices[ax] = self.get_index(ax, input_data[ax])
+                else:
+                    array_values[ax] = input_data[ax]
 
-        # for all static axes, keep track of the
-        # overflow/underflow counts
+            # make sure all array values have the same length
+            for v in array_values.values():
+                if len(v) != sample_len:
+                    raise ValueError("Array values must all have the same length!")
 
-        # add the data to the histogram
+            # for all static axes, keep track of the
+            # overflow/underflow counts
+            in_range = True  # if any scalars are out of range, will be false
+            for ax in da.dims:
+                if da.coords[ax].attrs["type"] == "fixed":
+                    if da.coords[ax].attrs["input"] == "score":
+                        num_values_to_add = sample_len
+                    else:
+                        num_values_to_add = sample_len / num_scores
+                    if ax in indices and indices[ax] < 0:
+                        da.coords[ax].attrs["underflow"] += num_values_to_add
+                        in_range = False
+                    elif ax in indices and indices[ax] >= len(da.coords[ax]):
+                        da.coords[ax].attrs["overflow"] += num_values_to_add
+                        in_range = False
 
-    def expand_axis(self, axis, new_value):
-        if isinstance(new_value, str):
-            if new_value not in self.data.coords[axis].values:
-                new_coord = [new_value]
-        elif not hasattr(new_value, "__len__"):
-            # need to check if the new value is outside the range
+            if in_range:
+                # if all the arrays have unique values, just add the number of measurements:
+                if not array_values:
+                    self.data[name][indices] += np.array(sample_len).astype(da.dtype)
+                else:
+                    # bin the remaining dataframe columns into
+                    # the appropriate axes
+                    da_slice = self.data[name].isel(**indices)
+                    if set(da_slice.dims) != set(array_values.keys()):
+                        raise ValueError("Slice into data array has wrong dimensions!")
 
-            # if so, expand the axis to include the new value,
-            # using the right steps
-            new_coord = [new_value]
-        else:  # need to add array option?
-            pass
+                    # setup the bin edges and values
+                    # make sure they're ordered by the da_slice dims
+                    bins = []
+                    values = []
+                    for dim in da_slice.dims:
+                        centers = da_slice.coords[dim].values
+
+                        # convert strings to numbers:
+                        if centers.dtype.kind in ("S", "U"):
+                            # lookup table shows the order of strings in the coordinate
+                            lookup = {val: ind for ind, val in enumerate(centers)}
+
+                            # convert to numbers according
+                            # to alphabetical order
+                            uniq, rev_ind = np.unique(
+                                array_values[dim], return_inverse=True
+                            )
+
+                            # convert alphabetical order to the order
+                            # of values in the lookup table
+                            # ref: https://stackoverflow.com/a/16993364/18256949
+                            ordered_array = np.array([lookup[x] for x in uniq])[rev_ind]
+
+                            values.append(ordered_array)
+                            edges = np.arange(-0.5, len(centers) + 0.5, 1)
+                        else:  # get bin edges from center values
+                            step = da_slice.coords[dim].attrs["step"]
+                            edges = np.concatenate(
+                                [[centers[0] - step / 2], centers + step / 2]
+                            )
+
+                            values.append(array_values[dim])
+                        bins.append(edges)
+
+                    counts, _ = np.histogramdd(values, bins)
+                    da_slice += counts.astype(da.dtype)
+
+                    # add the over/underflow:
+                    for ax in array_values:
+                        if da_slice.coords[ax].attrs["type"] == "fixed":
+                            if da_slice.coords[ax].attrs["input"] == "score":
+                                correction = 1
+                            else:
+                                correction = 1 / num_scores
+                            mx = max(da_slice.coords[ax].values)
+                            mn = min(da_slice.coords[ax].values)
+                            step = da_slice.coords[ax].attrs["step"]
+                            num_values_to_add = np.sum(array_values[ax] > mx + step / 2)
+
+                            self.data[name][ax].attrs["overflow"] += (
+                                num_values_to_add * correction
+                            )
+                            num_values_to_add = np.sum(array_values[ax] < mn - step / 2)
+                            self.data[name][ax].attrs["underflow"] += (
+                                num_values_to_add * correction
+                            )
+
+    def expand_axis(self, axis, new_values):
+        if isinstance(new_values, str):
+            if new_values not in self.data.coords[axis].values:
+                if self.data.coords[axis].size > 0:
+                    new_coord = self.data.coords[axis].values + [new_values]
+                else:
+                    new_coord = [new_values]
+        else:  # scalar or array
+            # str array/list
+            if hasattr(new_values, "__len__") and all(
+                isinstance(v, str) for v in new_values
+            ):
+                new_values = list(set(new_values) - set(self.data.coords[axis].values))
+
+                if self.data.coords[axis].size > 0:
+                    new_coord = np.concatenate(
+                        (self.data.coords[axis].values, new_values)
+                    )
+                else:
+                    new_coord = new_values
+            else:  # scalar or array of numbers
+                if not hasattr(new_values, "__len__"):
+                    new_values = [new_values]
+                step = self.data[axis].attrs["step"]
+                mx = max(max(new_values), max(self.data[axis].values))
+                mx = round(mx / step) * step  # round to nearest step
+                mn = min(min(new_values), min(self.data[axis].values))
+                mn = round(mn / step) * step  # round to nearest step
+
+                # the new values up to the original axis
+                lower = np.arange(mn, min(self.data[axis]), step)
+                if np.isclose(lower[-1], min(self.data[axis])):
+                    lower = lower[:-1]
+
+                new_coord = np.concatenate(
+                    (
+                        lower,
+                        self.data[axis],
+                    )
+                )
+
+                # the new values after the original axis
+                upper = np.arange(max(new_coord) + step, mx + step, step)
+
+                new_coord = np.concatenate(
+                    (
+                        new_coord,
+                        upper,
+                    )
+                )
 
         # make a new array with all the same coords,
         # except replace the one axis with the new coord
@@ -380,7 +536,7 @@ class Histogram:
         for da in self.data.values():
             coords = {}
             sizes = {}
-            for ax in da.coords:
+            for ax in da.dims:
                 if ax == axis:
                     coords[ax] = xr.DataArray(
                         new_coord,
@@ -394,13 +550,67 @@ class Histogram:
                     sizes[ax] = len(da.coords[ax])
 
             sizes = [sizes[ax] for ax in da.dims]
+
             new_data[da.name] = xr.DataArray(
                 data=np.zeros(sizes, dtype=da.dtype), coords=coords, dims=da.dims
             )
 
-        new_data = xr.Dataset(new_data)
+            # if existing data array is not empty, must add it to the new array
+            if self.data[da.name].size > 0:
+                with xr.set_options(arithmetic_join="outer"):
+                    new_data[da.name] = (
+                        (new_data[da.name] + self.data[da.name])
+                        .fillna(0)
+                        .astype(da.dtype)
+                    )
 
-        self.data = xr.concat([self.data, new_data], axis)
+        new_dataset = xr.Dataset(new_data)
+
+        self.data = new_dataset
+
+    def get_index(self, axis, value):
+        """
+        Find the index of the closest value in a coordinate
+        named "axis", to the value given.
+
+        Parameters
+        ----------
+        axis: str
+            Name of coordinate to look up.
+        value: str or float
+            Which value to try to match.
+            If float, will find the closest match.
+            If string, will find an exact match
+            (or raise a ValueError if not found).
+
+        Returns
+        -------
+        int
+            The index of the closest value in the coordinate.
+            If the value coordinate is outside the range
+            (more than 1/2 step away from the min/max
+            of the given coordinate axis) the index will
+            be -1 (underflow) or len(coord) (overflow).
+        """
+        if isinstance(value, str):
+            if value not in self.data.coords[axis].values:
+                raise ValueError(f"Value {value} not in axis {axis}")
+            return np.where(self.data.coords[axis].values == value)[0][0]
+        else:
+            if (
+                value
+                > max(self.data.coords[axis].values)
+                + self.data.coords[axis].attrs["step"] / 2
+            ):
+                return self.data.coords[axis].size
+            elif (
+                value
+                < min(self.data.coords[axis].values)
+                - self.data.coords[axis].attrs["step"] / 2
+            ):
+                return -1
+            else:
+                return np.argmin(np.abs(self.data.coords[axis].values - value))
 
 
 if __name__ == "__main__":
