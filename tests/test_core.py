@@ -698,7 +698,7 @@ def test_histogram():
         "exptime": (30.0, 0.3),
         "filt": (),
     }
-    h.initialize_data()
+    h.initialize()
 
     num_snr = len(np.arange(-10, 10 + 0.1, 0.1))
     num_dmag = len(np.arange(-3, 3 + 0.1, 0.1))

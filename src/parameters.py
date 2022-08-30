@@ -156,6 +156,37 @@ class Parameters:
         else:
             return DATA_ROOT or ""
 
+    def get_class(self, name, **kwargs):
+        """
+        Get a class from a string.
+        To load a class, there must be (at least) two
+        definitions in the parameter file:
+        - <name>_module: the import path to the file containing
+          the class definition. E.g., src.my_simulator
+        - <name>_class: the name of the class. E.g., MySimulator.
+        - <name>_kwargs: a dictionary with initiailization arguments.
+          The kwargs given to this function override those loaded from file.
+
+        Parameters
+        ----------
+        name: str
+            The name of the class.
+        kwargs: dict
+            Additional keyword arguments to pass to the class.
+
+        Returns
+        -------
+        class
+            The class object.
+        """
+        module = getattr(self, f"{name}_module")
+        class_name = getattr(self, f"{name}_class")
+        class_kwargs = getattr(self, f"{name}_kwargs", {})
+        class_kwargs.update(kwargs)
+        return getattr(__import__(module, fromlist=[class_name]), class_name)(
+            **class_kwargs
+        )
+
     def print(self):
         """
         Print the parameters.

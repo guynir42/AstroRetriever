@@ -68,7 +68,7 @@ class Histogram:
             "filt": (),
         }  # other options: airmass, zp, magerr
 
-    def initialize_data(self):
+    def initialize(self):
         self.pars.verify()
         if self.pars.dtype not in ("uint16", "uint32"):
             raise ValueError(
@@ -622,7 +622,7 @@ if __name__ == "__main__":
     from src.dataset import Lightcurve
 
     h = Histogram()
-    h.initialize_data()
+    h.initialize()
 
     # with Session() as session:
     #     source = session.scalars(sa.select(Source).where(Source.project=='WD')).first()
