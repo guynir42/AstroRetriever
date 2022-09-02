@@ -114,7 +114,7 @@ class DetectionInTime(Base, DetectionMixin):
 
     __tablename__ = "detections_in_time"
 
-    time = sa.Column(
+    time_peak = sa.Column(
         sa.Float,
         nullable=False,
         index=True,
