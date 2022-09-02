@@ -4,14 +4,14 @@ import os
 import sqlalchemy as sa
 
 from src.database import Session
-from src.parameters import Parameters
+from src import parameters
 from src.catalog import Catalog
 from src.source import Source
 from src.analysis import Analysis
 
 
 class Project:
-    def __init__(self, name="default", params=None, obs_params=None, config=True):
+    def __init__(self, name="default", **kwargs):
         """
         Create a new Project object.
         The project is used to combine a catalog,
@@ -20,8 +20,8 @@ class Project:
         all under one object.
         Each project should be used for one science case,
         with a set of sources given by the catalog,
-        a set of observations given by the observatories,
-        and the calibration and analysis to be done
+        a set of observations given by the obs_names list,
+        and the reduction and analysis to be done
         on the data from each observatory.
 
         Parameters
@@ -30,99 +30,53 @@ class Project:
             Name of the project.
             Will be used as default config filename,
             as default output filenames, and so on.
-        params: dict
-            Dictionary of parameters for the project.
-            These should override any parameters
-            in the config file.
-            To configure, e.g., the calibration,
-            use params={'calibration': {'cal_parameter1': 'value1', ...}}.
-            To choose a list of observatories,
-            use params={'observatories': ['ZTF', 'TESS', ...]}.
-        obs_params: dict
-            Dictionary of parameters for the observatories.
-            Each key should be the name of an observatory,
-            and any parameters given would override those
-            given in the config file (if any).
-        config: str or bool
-            Name of the file to load.
-            If False or None, no config file will be loaded.
-            If True but not a string, will
-            default to "configs/<project-name>.yaml"
-            If a non-empty string is given,
-            it will be used as the config filename.
+        Additional arguments are passed into the Parameters object.
         """
         self.name = name
-        self.pars = Parameters(
-            required_pars=[
-                "observatories",
-                "reducer",
-                "analysis",
-                "catalog",
-            ]
-        )
+        # this loads parameters from file, then from kwargs:
+        self.pars = parameters.from_dict(kwargs, "project")
+        self.pars.project = self.name  # propagate this to sub-objects
+
         # default values in case no config file is loaded:
-        self.pars.observatories = set()  # set of observatory names
-        self.pars.catalog = {}  # parameters for the catalog
-        self.pars.reducer = {}  # global reducer pars for all observatories
-        self.pars.analysis = {}  # global analysis parameters for all observatories
-
-        # load the parameters from the config file:
-        if config:  # note that empty string is also False!
-            if isinstance(config, str):
-                filepath = config
-            else:
-                basepath = os.path.dirname(__file__)
-                filename = os.path.join("../configs", f"{self.name}.yaml")
-                filepath = os.path.abspath(os.path.join(basepath, filename))
-            self.pars.load(filepath, "project")
-
-        # add any additional user inputs IN ADDITION to the config file:
-        if params is not None:
-            if not isinstance(params, dict):
-                raise TypeError(f"params must be a dictionary, not {type(params)}")
-            self.pars.update(params)
+        self.pars.default_values(
+            obs_names=["demo"],
+            obs_kwargs={},  # parameters for all observatories
+            catalog_kwargs={"default": "test"},
+        )
 
         # if only one observatory is given, make it a set:
-        if isinstance(self.pars.observatories, str):
+        if isinstance(self.pars.obs_names, str):
             self.pars.observatories = {self.pars.observatories}
 
         # verify that the list of observatory names is castable to a set
-        if not isinstance(self.pars.observatories, (set, list, tuple)):
+        if not isinstance(self.pars.obs_names, (set, list, tuple)):
             raise TypeError(
-                f"observatories must be a set, list, or tuple, not {type(self.pars.observatories)}"
+                f"obs_names must be a set, list, or tuple, not {type(self.pars.obs_names)}"
             )
 
         # cast the list into a set
-        self.pars.observatories = set(self.pars.observatories)
+        self.pars.obs_names = set(self.pars.obs_names)
 
-        # if no observatories are given, use the demo
-        if len(self.pars.observatories) == 0:
-            self.pars.observatories = {"DemoObs"}
-
-        if not all([isinstance(obs, str) for obs in self.pars.observatories]):
+        if not all([isinstance(obs, str) for obs in self.pars.obs_names]):
             raise TypeError("observatories must be a set of strings")
 
         self.pars.verify()  # make sure all parameters are set
 
         # make a catalog object based on the parameters:
-        if len(self.pars.catalog) == 0:
-            self.pars.catalog = {"default": "test"}
-        self.catalog = Catalog(**self.pars.catalog, verbose=self.pars.verbose)
+        self.catalog = Catalog(**self.pars.catalog_kwargs, verbose=self.pars.verbose)
         self.catalog.load()
 
-        # make observatories:
-        if obs_params is None:
-            obs_params = {}
-
-        self.observatories = [
-            self.make_observatory(
-                name=obs, params=obs_params.get(obs, {}), config=config
+        self.observatories = []
+        for obs in self.pars.obs_names:
+            self.observatories.append(
+                self.make_observatory(
+                    name=obs,
+                    specific=getattr(self.pars, obs, {}),
+                    general=self.pars.obs_kwargs,
+                )
             )
-            for obs in self.pars.observatories
-        ]
-        self.observatories = {obs.name: obs for obs in self.observatories}
 
-    def make_observatory(self, name, params={}, config=None):
+    def make_observatory(self, name, specific, general):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -146,48 +100,42 @@ class Project:
             In special cases like "DemoObs",
             the class is loaded from the
             "observatory" module.
-        params: dict
-            Dictionary of parameters for the observatory.
-            These would override any parameters
-            loaded from the config file.
-            If none, no parameters will be loaded
-            after the config file (if any).
-        config: str or bool
-            Name of the file to load.
-            If False or None, no config file will be loaded.
-            If True but not a string, will
-            default to "configs/<project-name>.yaml"
-            If a non-empty string is given,
-            it will be used as the config filename.
-
+        specific: dict
+            Parameters that are specific to this observatory.
+            The parameters passed into the constructor override
+            those from file, both of which override the pars
+            in "general".
+        general: dict
+            General parameters that are true for all observatories.
+            Any of these pars are overriden by observatory-specific
+            parameters, either loaded from file or given in "specific".
         """
 
-        if name == "DemoObs":  # this is built in to observatory.py
+        if name in ["demo", "DemoObs"]:  # this is built in to observatory.py
             module_name = "observatory"
         else:
             module_name = name.lower()
 
-        if not isinstance(params, dict):
-            raise TypeError(f"params must be a dictionary, not {type(params)}")
+        if not isinstance(specific, dict):
+            raise TypeError(f'"specific" must be a dictionary, not {type(specific)}')
+
+        if not isinstance(general, dict):
+            raise TypeError(f'"general" must be a dictionary, not {type(general)}')
 
         module = importlib.import_module("." + module_name, package="src")
         obs_class = getattr(module, f"Virtual{name}")
-        new_obs = obs_class(project=self.name, config=config, **params)
+        new_obs = obs_class(**specific)
 
+        # only override any parameters not set
+        # from the config file or the "specific" dict:
+        new_obs.pars.replace_unset(**general)
+
+        # TODO: separate reducer and use pars.get_class to load it
         # parse parameters for reduction methods for this observatory
         reducer_dict = {}
         reducer_dict.update(self.pars.reducer)  # project pars
         reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
         new_obs.pars.reducer = reducer_dict
-
-        # don't think we need analysis inside observatory anymore
-        # # parse parameters for analysis of this observatory
-        # new_obs.analysis.pars.update(self.pars.analysis)  # project pars
-        # new_obs.analysis.pars.update(new_obs.pars.analysis)  # observatory pars
-        # new_obs.analysis.pars.verify()
-        # new_obs.analysis.initialize()
-
-        new_obs.pars.verbose = self.pars.verbose
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog

@@ -6,10 +6,12 @@ import validators
 import numpy as np
 import pandas as pd
 
+
 from src.database import Session
+from src import parameters
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawData, Lightcurve
-from src.parameters import Parameters
+
 from src.catalog import Catalog
 from src.histogram import Histogram
 from src.analysis import Analysis
@@ -24,7 +26,7 @@ class VirtualObservatory:
     save the results for later, and so on.
     """
 
-    def __init__(self, name=None, project=None, config=True, cfg_key=None, **kwargs):
+    def __init__(self, name=None, **kwargs):
         """
         Create a new VirtualObservatory object,
         which is a base class for other observatories,
@@ -55,23 +57,17 @@ class VirtualObservatory:
             (turned to lower case).
         """
         self.name = name
-        self.project = project
-        self.pars = None  # parameters for the analysis
+        self.project = kwargs.get("project", None)
         self.catalog = None  # a Catalog object
         self._credentials = {}  # dictionary with usernames/passwords
-        self._config = config  # True/False or config filename
-        self._cfg_key = cfg_key  # key inside config file
-        self.pars = Parameters(
-            required_pars=[
-                "reducer",
-                "data_folder",
-                "data_glob",
-                "dataset_identifier",
-                "catalog_matching",
-            ]
-        )
-
-        self.load_parameters()  # from YAML file
+        self.pars = parameters.from_dict(kwargs, name)
+        self.pars.required_pars = [
+            "reducer",
+            "data_folder",
+            "data_glob",
+            "dataset_identifier",
+            "catalog_matching",
+        ]
         self.pars.default_values(
             reducer={},
             dataset_attribute="source_name",
@@ -82,7 +78,7 @@ class VirtualObservatory:
         # pass any user arguments into the parameters object
         self.pars.read(kwargs)  # override parameters
 
-    def verify(self):
+    def initialize(self):
         """
         Verifies that all required parameters are set,
         and that the values are the right type, in range, etc.
@@ -92,11 +88,9 @@ class VirtualObservatory:
         if not isinstance(self.name, str):
             raise TypeError("Observatory name was not set")
 
+        # TODO: do we have to have a project name?
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
-
-        if not isinstance(self.pars, Parameters):
-            raise TypeError("No Parameters object has been loaded.")
 
         if hasattr(self.pars, "credentials"):
             # if credentials contains a filename and key:
@@ -534,7 +528,7 @@ class VirtualObservatory:
 
 
 class VirtualDemoObs(VirtualObservatory):
-    def __init__(self, project, config=None, cfg_key=None, **kwargs):
+    def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualDemoObs object.
         This object can be used to test basic operations
@@ -548,24 +542,26 @@ class VirtualDemoObs(VirtualObservatory):
 
         """
 
-        super().__init__(
-            name="demo", project=project, config=config, cfg_key=cfg_key, **kwargs
-        )
-        self.pars.required_pars += ["demo_url", "demo_boolean"]
+        super().__init__(name="demo", **kwargs)
+        if self.project:
+            data_glob = self.pars.project + "_Demo_*.h5"
+        else:
+            data_glob = "Demo_*.h5"
+
         self.pars.default_values(
             demo_boolean=True,
             demo_url="http://example.com",
             data_folder="demo_data",
-            data_glob=project + "_Demo_*.h5",
+            data_glob=data_glob,
         )
 
-        self.verify()  # again check all parameters are set and legal
+        self.initialize()  # check all parameters are set and legal
 
-    def verify(self):
+    def initialize(self):
         """
         Verify inputs to the observatory.
         """
-        super().verify()  # check all required parameters are set
+        super().initialize()  # check all required parameters are set
 
         # verify parameters have the correct type, etc.
         if self.pars.demo_url is None:

@@ -16,7 +16,7 @@ from src.dataset import DatasetMixin, RawData, Lightcurve
 
 
 class VirtualZTF(VirtualObservatory):
-    def __init__(self, project, config=None, cfg_key=None, **kwargs):
+    def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualZTF object.
         This can be used to download ZTF data

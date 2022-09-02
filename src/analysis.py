@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.parameters import Parameters
+from src import parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
 from src.database import Session
@@ -36,50 +36,50 @@ class Analysis:
     """
 
     def __init__(self, **kwargs):
-        self.pars = Parameters()
-        filename = kwargs.pop("cfg_file", None)
-        if filename is not None:
-            self.pars.load(filename=filename, key=kwargs.pop("cfg_key", "analysis"))
-        self.pars.read(kwargs)  # override config file with user inputs
+        self.pars = parameters.from_dict(kwargs, "analysis")
         self.pars.default_values(  # if not set, use these default values
             num_injections=1,  # number of fake events to inject per source (can be fractional)
             autosave_detections=True,  # save any new detections to the database
             quality_module="src.quality",  # module where the Quality class is defined
             quality_class="Quality",  # name of the Quality class
+            quality_kwargs={},  # parameters for the Quality class
             finder_module="src.finder",  # module where the Finder class is defined
             finder_class="Finder",  # name of the Finder class
+            finder_kwargs={},  # parameters for the Finder class
             simulator_module="src.simulator",  # module where the Simulator class is defined
             simulator_class="Simulator",  # name of the Simulator class
-            trigger_threshold_dict={  # threshold for triggering a detection
-                "snr": {
-                    "thresh": 5,
-                    "type": "float",
-                    "abs": True,
-                    "min": -20,
-                    "max": 20,
-                    "step": 0.1,
-                },
-            },
-            cut_threshold_dict={  # dictionary of thresholds to apply to the detections:
-                "flag": {
-                    "thresh": 1,
-                    "type": "bool",
-                    "abs": False,
-                }
-            },
+            simulator_kwargs={},  # parameters for the Simulator class
+            # TODO: define parameters to set the range of scores/cuts in histograms
+            # trigger_threshold_dict={  # threshold for triggering a detection
+            #     "snr": {
+            #         "thresh": 5,
+            #         "type": "float",
+            #         "abs": True,
+            #         "min": -20,
+            #         "max": 20,
+            #         "step": 0.1,
+            #     },
+            # },
+            # cut_threshold_dict={  # dictionary of thresholds to apply to the detections:
+            #     "flag": {
+            #         "thresh": 1,
+            #         "type": "bool",
+            #         "abs": False,
+            #     }
+            # },
             # optional list of threshold dictionaries to check alternative configurations
-            extra_cut_thresholds=[],
+            # extra_cut_thresholds=[],
         )
         self.all_scores = Histogram()
         self.good_scores = Histogram()
-        self.extra_scores = []  # an optional list of extra Histogram objects
+        # self.extra_scores = []  # an optional list of extra Histogram objects
         self.quality_values = Histogram()
-        self.checker = None  # Quality object (or subclass)
-        self.finder = None  # Finder object (or subclass)
-        self.threshold = None  # Threshold object
-        self.extra_thresholds = []  # list of Threshold objects
+        self.finder = self.pars.get_class("finder")
+        self.checker = self.pars.get_class("quality")
+        self.sim = self.pars.get_class("simulator")
+        # self.threshold = None  # Threshold object
+        # self.extra_thresholds = []  # list of Threshold objects
 
-        self.sim = None  # Simulator object (or subclass)
         self.detections = []  # a list of Detection objects
 
     def initialize(self):
@@ -92,17 +92,15 @@ class Analysis:
         from the user.
 
         """
-        self.finder = self.pars.get_class("finder")
-        self.checker = self.pars.get_class("quality")
-        self.sim = self.pars.get_class("simulator")
 
-        self.threshold = Threshold(self.pars.trigger_threshold_dict)
+        # TODO: do we really need a threshold object?
+        # self.threshold = Threshold(self.pars.trigger_threshold_dict)
 
-        for cut_dict in self.pars.extra_cut_thresholds:
-            self.extra_thresholds.append(self.pars.get_class("threshold", cut_dict))
-
-        for cut_dict in self.pars.extra_cut_thresholds:
-            self.extra_scores.append(Histogram())
+        # TODO: do we really need extra thresholds?
+        # for cut_dict in self.pars.extra_cut_thresholds:
+        #     self.extra_thresholds.append(self.pars.get_class("threshold", cut_dict))
+        # for cut_dict in self.pars.extra_cut_thresholds:
+        #     self.extra_scores.append(Histogram())
 
     def run(self, source):
         """

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.parameters import Parameters
+from src import parameters
 from src.source import Source
 from src.dataset import RawData, Lightcurve
 from src.detection import DetectionInTime
@@ -41,8 +41,14 @@ class Finder:
 
     """
 
-    def __init__(self):
-        self.pars = Parameters()
+    def __init__(self, **kwargs):
+        self.pars = parameters.from_dict(kwargs, "finder")
+        self.pars.default_values(
+            snr_threshold=5,  # S/N threshold for detection
+            snr_threshold_sidebands=-2,  # S/N threshold for event region
+            max_det_per_lc=1,  # Maximum number of detections per lightcurve
+            abs_snr=True,  # Use absolute S/N for detection (i.e., include negative)
+        )
 
     def ingest_lightcurves(self, lightcurves, source, sim=None):
         """
@@ -87,12 +93,12 @@ class Finder:
             if "detected" not in lc.df.columns:
                 lc.df["detected"] = False
 
-            # Find the detections
-            # (for now, just look for high S/N times)
+            # Find the detections (just look for high S/N)
             for i in range(self.pars.max_det_per_lc):
-                mx = np.max(
-                    lc.df["snr"], where=lc.df["detections"] == 0, initial=-np.inf
-                )
+                snr = lc.df["snr"]
+                if self.pars.abs_snr:
+                    snr = np.abs(snr)
+                mx = np.max(snr, where=lc.df["detections"] == 0, initial=-np.inf)
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
                     detections.append(self.make_detection(lc, source, sim))
