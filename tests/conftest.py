@@ -42,9 +42,6 @@ def test_project():
 def ztf_project():
     project = Project(
         name="test_ZTF",
-        params={
-            "observatories": "ZTF",  # a single observatory named ZTF
-        },
-        config=False,
+        obs_names="ZTF",  # a single observatory named ZTF
     )
     return project
