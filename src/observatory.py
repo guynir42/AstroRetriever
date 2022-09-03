@@ -11,6 +11,7 @@ from src.database import Session
 from src import parameters
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawData, Lightcurve
+from src.detection import DetectionInTime
 
 from src.catalog import Catalog
 from src.histogram import Histogram
@@ -57,7 +58,7 @@ class VirtualObservatory:
             (turned to lower case).
         """
         self.name = name
-        self.project = kwargs.get("project", None)
+        self.project = None  # name of the project (loaded from pars later)
         self.catalog = None  # a Catalog object
         self._credentials = {}  # dictionary with usernames/passwords
         self.pars = parameters.from_dict(kwargs, name)
@@ -75,9 +76,6 @@ class VirtualObservatory:
             catalog_matching="name",
         )
 
-        # pass any user arguments into the parameters object
-        self.pars.read(kwargs)  # override parameters
-
     def initialize(self):
         """
         Verifies that all required parameters are set,
@@ -85,6 +83,10 @@ class VirtualObservatory:
         This should be called at the end of the __init__ method
         of any SUBCLASS of VirtualObservatory.
         """
+
+        if hasattr(self.pars, "project"):
+            self.project = self.pars.project
+
         if not isinstance(self.name, str):
             raise TypeError("Observatory name was not set")
 
@@ -554,8 +556,6 @@ class VirtualDemoObs(VirtualObservatory):
             data_folder="demo_data",
             data_glob=data_glob,
         )
-
-        self.initialize()  # check all parameters are set and legal
 
     def initialize(self):
         """

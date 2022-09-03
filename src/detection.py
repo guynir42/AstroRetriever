@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base
 from sqlalchemy import orm, func
+from sqlalchemy.ext.declarative import declared_attr
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -46,27 +47,52 @@ class DetectionMixin:
         doc="End of time interval relevant to this event (UTC)",
     )
 
-    source_id = sa.Column(
-        sa.Integer,
-        sa.ForeignKey("sources.id"),
-        nullable=False,
-        index=True,
-        doc="ID of the source this detection is associated with",
-    )
-    source = orm.relationship(
-        "Source", back_populates="detections", cascade="all, delete-orphan"
-    )
+    @classmethod
+    def backref_name(cls):
+        if cls.__name__ == "DetectionInTime":
+            return "detections_in_time"
+        if cls.__name__ == "DetectionInPeriod":
+            return "detections_in_period"
+        if cls.__name__ == "DetectionInImage":
+            return "detections_in_images"
+        if cls.__name__ == "DetectionInSpectrum":
+            return "detections_in_spectra"
 
-    dataset_id = sa.Column(
-        sa.Integer,
-        sa.ForeignKey("raw_data.id"),
-        nullable=True,
-        index=True,
-        doc="ID of the dataset this detection is associated with",
-    )
-    dataset = orm.relationship(
-        "RawData", back_populates="detections", cascade="all, delete-orphan"
-    )
+    @declared_attr
+    def source_id(cls):
+        return sa.Column(
+            sa.ForeignKey("sources.id"),
+            nullable=False,
+            index=True,
+            doc="ID of the source this detection is associated with",
+        )
+
+    @declared_attr
+    def source(cls):
+        return orm.relationship(
+            "Source",
+            back_populates=cls.backref_name(),
+            cascade="all",
+            foreign_keys=f"{cls.__name__}.source_id",
+        )
+
+    @declared_attr
+    def dataset_id(cls):
+        return sa.Column(
+            sa.ForeignKey("raw_data.id"),
+            nullable=True,
+            index=True,
+            doc="ID of the dataset this detection is associated with",
+        )
+
+    @declared_attr
+    def dataset(cls):
+        return orm.relationship(
+            "RawData",
+            back_populates=cls.backref_name(),
+            cascade="all",
+            foreign_keys=f"{cls.__name__}.dataset_id",
+        )
 
     simulated = sa.Column(
         sa.Boolean,
@@ -129,11 +155,11 @@ class DetectionInTime(Base, DetectionMixin):
         doc="ID of the lightcurve this detection is associated with",
     )
     lightcurve = orm.relationship(
-        "LightCurve", back_populates="detections", cascade="all, delete-orphan"
+        "Lightcurve", back_populates="detections_in_time", cascade="all"
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("time", "source_id", name="_detection_in_time_uc"),
+        sa.UniqueConstraint("time_peak", "source_id", name="_detection_in_time_uc"),
     )
 
 

@@ -308,15 +308,15 @@ class Source(Base, conesearch_alchemy.Point):
         doc="Photometric Datasets associated with this source",
     )
 
-    # detections = relationship(
-    #     "Detection",
-    #     backref="sources",
-    #     cascade="save-update, merge, refresh-expire, expunge, delete",
-    #     lazy="selectin",
-    #     single_parent=True,
-    #     passive_deletes=True,
-    #     doc="Detections associated with this source",
-    # )
+    detections_in_time = relationship(
+        "DetectionInTime",
+        back_populates="source",
+        cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
+        lazy="selectin",
+        single_parent=True,
+        passive_deletes=True,
+        doc="Detections associated with lightcurves from this source",
+    )
 
 
 # make sure the table exists

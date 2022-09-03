@@ -34,8 +34,8 @@ class Project:
         """
         self.name = name
         # this loads parameters from file, then from kwargs:
+        kwargs["project"] = name  # propagate this to sub-objects
         self.pars = parameters.from_dict(kwargs, "project")
-        self.pars.project = self.name  # propagate this to sub-objects
 
         # default values in case no config file is loaded:
         self.pars.default_values(
@@ -46,7 +46,7 @@ class Project:
 
         # if only one observatory is given, make it a set:
         if isinstance(self.pars.obs_names, str):
-            self.pars.observatories = {self.pars.observatories}
+            self.pars.obs_names = {self.pars.obs_names}
 
         # verify that the list of observatory names is castable to a set
         if not isinstance(self.pars.obs_names, (set, list, tuple)):
@@ -66,15 +66,23 @@ class Project:
         self.catalog = Catalog(**self.pars.catalog_kwargs, verbose=self.pars.verbose)
         self.catalog.load()
 
-        self.observatories = []
+        general_kwargs = self.pars.obs_kwargs
+        self.pars.add_defaults_to_dict(general_kwargs)
+
+        self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
+            specific_kwargs = getattr(self.pars, obs, {})
+            specific_kwargs.update({"project": self.name})
+
             self.observatories.append(
                 self.make_observatory(
                     name=obs,
-                    specific=getattr(self.pars, obs, {}),
-                    general=self.pars.obs_kwargs,
+                    specific=specific_kwargs,
+                    general=general_kwargs,
                 )
             )
+
+        self.analysis = self.pars.get_class("analysis")
 
     def make_observatory(self, name, specific, general):
         """
@@ -113,8 +121,10 @@ class Project:
 
         if name in ["demo", "DemoObs"]:  # this is built in to observatory.py
             module_name = "observatory"
+            class_name = "VirtualDemoObs"
         else:
             module_name = name.lower()
+            class_name = f"Virtual{name}"
 
         if not isinstance(specific, dict):
             raise TypeError(f'"specific" must be a dictionary, not {type(specific)}')
@@ -123,7 +133,7 @@ class Project:
             raise TypeError(f'"general" must be a dictionary, not {type(general)}')
 
         module = importlib.import_module("." + module_name, package="src")
-        obs_class = getattr(module, f"Virtual{name}")
+        obs_class = getattr(module, class_name)
         new_obs = obs_class(**specific)
 
         # only override any parameters not set
@@ -132,13 +142,15 @@ class Project:
 
         # TODO: separate reducer and use pars.get_class to load it
         # parse parameters for reduction methods for this observatory
-        reducer_dict = {}
-        reducer_dict.update(self.pars.reducer)  # project pars
-        reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
-        new_obs.pars.reducer = reducer_dict
+        # reducer_dict = {}
+        # reducer_dict.update(self.pars.reducer)  # project pars
+        # reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
+        # new_obs.pars.reducer = reducer_dict
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
+
+        new_obs.initialize()
 
         return new_obs
 
@@ -170,31 +182,62 @@ class Project:
         pass
 
 
+class NamedList(list):
+    """
+    A list of objects, each of which has
+    a "name" attribute.
+    This list can be indexed by name,
+    and also using numerical indices.
+    """
+
+    def __init__(self, ignorecase=False):
+        self.ignorecase = ignorecase
+        super().__init__()
+
+    def convert_name(self, name):
+        if self.ignorecase:
+            return name.lower()
+        else:
+            return name
+
+    def __getitem__(self, index):
+        if isinstance(index, str):
+            index_l = self.convert_name(index)
+            num_idx = [self.convert_name(obs.name) for obs in self].index(index_l)
+            return super().__getitem__(num_idx)
+        elif isinstance(index, int):
+            return super().__getitem__(index)
+        else:
+            raise TypeError(f"index must be a string or integer, not {type(index)}")
+
+    def __contains__(self, name):
+        return self.convert_name(name) in [self.convert_name(obs.name) for obs in self]
+
+    def keys(self):
+        return [obs.name for obs in self]
+
+
 if __name__ == "__main__":
     print("Starting a new project")
     proj = Project(
         name="WD",
-        params={
-            "observatories": "ZTF",  # a single observatory named ZTF
-            "catalog": {"default": "WD"},  # load the default WD catalog
-            "verbose": 1,  # print out some info
+        obs_names="ZTF",  # a single observatory named ZTF
+        catalog={"default": "WD"},  # load the default WD catalog
+        verbose=1,  # print out some info
+        obs_kwargs={},  # general parameters to pass to all observatories
+        ZTF={  # instructions for ZTF specifically
+            "data_glob": "lightcurves_WD*.h5",  # filename format
+            "catalog_matching": "number",  # match by catalog row number
+            "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
         },
-        obs_params={
-            "ZTF": {  # instructions for ZTF specifically
-                "data_glob": "lightcurves_WD*.h5",  # filename format
-                "catalog_matching": "number",  # match by catalog row number
-                "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
-            }
-        },
-        config=False,
     )
 
-    proj.delete_all_sources()
-    proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
-    sources = proj.get_all_sources()
-    print(
-        f'Database contains {len(sources)} sources associated with project "{proj.name}"'
-    )
+    # proj.delete_all_sources()
+    # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
+    # sources = proj.get_all_sources()
+    # print(
+    #     f'Database contains {len(sources)} sources associated with project "{proj.name}"'
+    # )
     # for source in sources:
     #     for lc in source.lightcurves:
     #         lc.delete_data_from_disk()

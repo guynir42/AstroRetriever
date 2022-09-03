@@ -1046,6 +1046,12 @@ class RawData(DatasetMixin, Base):
 
         self.data = df
 
+    detections_in_time = orm.relationship(
+        "DetectionInTime",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+    )
+
 
 class Lightcurve(DatasetMixin, Base):
 
@@ -1600,6 +1606,12 @@ class Lightcurve(DatasetMixin, Base):
         nullable=False,
         default=False,
         doc="Is the dataset sampled uniformly in time?",
+    )
+
+    detections_in_time = orm.relationship(
+        "DetectionInTime",
+        back_populates="lightcurve",
+        cascade="all, delete-orphan",
     )
 
 

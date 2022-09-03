@@ -29,23 +29,26 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        super().__init__(
-            name="ztf", project=project, config=config, cfg_key=cfg_key, **kwargs
-        )
+        super().__init__(name="ztf", **kwargs)
+
+        if self.project:
+            data_glob = self.project + "_ZTF_*.h5"
+        else:
+            data_glob = "ZTF_*.h5"
+
         self.pars.required_pars += ["credentials"]
         self.pars.default_values(
             credentials={},
             data_folder="ZTF",
-            data_glob=project + "_ZTF_*.h5",
+            data_glob=data_glob,
         )
 
-        self.verify()
-
-    def verify(self):
+    def initialize(self):
         """
-        Verify inputs to the observatory.
+        Verify inputs to the observatory
+        and run any additional setup.
         """
-        super().verify()
+        super().initialize()
         # verify parameters have the correct type, etc.
 
     def reduce_to_lightcurves(

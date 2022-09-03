@@ -77,6 +77,8 @@ class Parameters:
         If key does not exist on pars, or if it was
         set by default_values() then it will be set
         by the values given in kwargs.
+        This method can only be called after default_values(),
+        and before manually changing any attributes.
         """
         for k, v in kwargs.items():
             if not hasattr(self, k) or k in self._default_keys:
@@ -200,6 +202,11 @@ class Parameters:
         ----------
         name: str
             The name of the class.
+            If one of the default (core) classes is requested,
+            the class can be loaded even without specifying the
+            module and class names.
+            E.g., if name="Analysis", then the Analysis class
+            will be loaded from the "src.analysis" module.
         kwargs: dict
             Additional keyword arguments to pass to the class.
 
@@ -208,14 +215,41 @@ class Parameters:
         class
             The class object.
         """
-        module = getattr(self, f"{name}_module")
-        class_name = getattr(self, f"{name}_class")
+
+        # default module and class_name for core classes:
+        if name.lower() == "analysis":
+            module = "src.analysis"
+            class_name = "Analysis"
+        elif name.lower() == "simulator":
+            module = "src.simulator"
+            class_name = "Simulator"
+        elif name.lower() == "catalog":
+            module = "src.catalog"
+            class_name = "Catalog"
+        elif name.lower() == "finder":
+            module = "src.finder"
+            class_name = "Finder"
+        elif name.lower() == "quality":
+            module = "src.quality"
+            class_name = "Quality"
+        else:
+            module = None
+            class_name = None
+
+        module = getattr(self, f"{name}_module", module)
+        class_name = getattr(self, f"{name}_class", class_name)
         class_kwargs = getattr(self, f"{name}_kwargs", {})
+
+        if module is None or class_name is None:
+            raise ValueError(
+                f"Cannot find module {name}_module "
+                f"or class {name}_class in parameters."
+            )
 
         # if pars of calling class had any of these parameters
         # pass them to the pars of the class being loaded
         # unless they're already defined in the class_kwargs
-        self.add_defaults_to_class(class_kwargs)
+        self.add_defaults_to_dict(class_kwargs)
 
         # any other arguments passed in from caller override
         class_kwargs.update(kwargs)
@@ -224,7 +258,7 @@ class Parameters:
             **class_kwargs
         )
 
-    def add_defaults_to_class(self, inputs):
+    def add_defaults_to_dict(self, inputs):
         """
         Add some default keywords to the inputs dictionary.
         If these keys already exist, don't update them.
@@ -278,6 +312,7 @@ def from_dict(inputs, default_key=None):
 
         if os.path.isfile(filename):
             key = inputs.get("cfg_key", default_key)
+            # print(f'Loading parameters from {filename} key "{key}"')
             pars.load(filename, key=key)
         elif "cfg_file" in inputs:
             # only raise if user explicitly specified a file

@@ -31,7 +31,7 @@ def test_load_save_parameters():
 
     filename = "parameters_test.yaml"
     filename = os.path.abspath(os.path.join(basepath, filename))
-    print(filename)
+
     # write an example parameters file
     with open(filename, "w") as file:
         data = {"username": "guy", "password": "12345"}
@@ -74,6 +74,7 @@ def test_load_save_parameters():
             "password",
             "extra_parameter",
             "required_pars",
+            "_default_keys",
             "verbose",
         } == set(new_data.keys())
         assert new_data["username"] == "guy"
@@ -86,10 +87,10 @@ def test_load_save_parameters():
 
 
 def test_default_project():
-    proj = Project("default_test", config=False)
-    assert proj.pars.observatories == {"DemoObs"}
-    assert "demo" in proj.observatories
-    assert isinstance(proj.observatories["demo"], VirtualDemoObs)
+    proj = Project("default_test")
+    assert proj.pars.obs_names == {"demo"}
+    assert "demo" in [obs.name for obs in proj.observatories]
+    assert isinstance(proj.observatories[0], VirtualDemoObs)
 
 
 def test_project_user_inputs():
@@ -97,29 +98,28 @@ def test_project_user_inputs():
     project_str = str(uuid.uuid4())
     proj = Project(
         name="default_test",
-        params={
-            "project_string": project_str,
-            "observatories": ["ZTF"],
-            "reducer": {"reducer_key": "reducer_value"},
-            "analysis": {"analysis_key": "analysis_value"},
-        },
-        obs_params={
-            "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
-        },
-        config=False,
+        project_string=project_str,
+        obs_names=["ZTF"],
+        reducer={"reducer_key": "reducer_value"},
+        analysis_kwargs={"analysis_key": "analysis_value"},
+        obs_kwargs={},
+        ZTF={"credentials": {"username": "guy", "password": "12345"}},
     )
 
     # check the project parameters are loaded correctly
     assert proj.pars.project_string == project_str
-    assert proj.pars.observatories == {"ZTF"}
+    assert proj.pars.obs_names == {"ZTF"}
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
-    assert "ztf" in proj.observatories
+    assert "ztf" in [obs.name for obs in proj.observatories]
+    assert isinstance(proj.observatories[0], VirtualZTF)
+    # check that observatories can be referenced using (case-insensitive) strings
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
-    assert isinstance(proj.observatories["ztf"]._credentials, dict)
-    assert proj.observatories["ztf"]._credentials["username"] == "guy"
-    assert proj.observatories["ztf"]._credentials["password"] == "12345"
+    assert isinstance(proj.observatories["ZTF"], VirtualZTF)
+    assert isinstance(proj.observatories[0]._credentials, dict)
+    assert proj.observatories[0]._credentials["username"] == "guy"
+    assert proj.observatories[0]._credentials["password"] == "12345"
 
 
 def test_project_config_file():
@@ -129,11 +129,10 @@ def test_project_config_file():
     data = {
         "project": {  # project wide definitions
             "project_string": project_str1,  # random string
-            "reducer": {  # should be overriden by observatory calibration
-                "reducer_key": "project_reducer",
-            },
-            "analysis": {  # should be overriden by observatory analysis
-                "analysis_key": "project_analysis",
+            "obs_kwargs": {  # general instructions to pass to observatories
+                "reducer": {  # should be overriden by observatory reducer
+                    "reducer_key": "project_reduction",
+                },
             },
         },
         "demo": {  # demo observatory specific definitions
@@ -149,9 +148,9 @@ def test_project_config_file():
             "reducer": {
                 "reducer_key": "ztf_reduction",
             },
-            "analysis": {
-                "analysis_key": "ztf_analysis",
-            },
+        },
+        "analysis": {
+            "analysis_key": "project_analysis",
         },
     }
     # TODO: add Catalog configurations
@@ -173,15 +172,17 @@ def test_project_config_file():
 
     try:
         # do not load the config file
-        proj = Project("default_test", config=False)
+        proj = Project("default_test", cfg_file=None)
         assert not hasattr(proj.pars, "project_string")
 
+        # load the default config file at configs/default_test.yaml
         proj = Project(
-            "default_test", params={"observatories": ["DemoObs", "ZTF"]}, config=True
+            "default_test",
+            obs_names=["DemoObs", "ZTF"],
         )
+        assert hasattr(proj.pars, "project_string")
         assert proj.pars.project_string == project_str1
-        assert proj.pars.reducer["reducer_key"] == "project_reducer"
-        assert proj.pars.analysis["analysis_key"] == "project_analysis"
+        assert proj.analysis.pars.analysis_key == "project_analysis"
 
         # check the observatories were loaded correctly
         assert "demo" in proj.observatories
@@ -190,17 +191,29 @@ def test_project_config_file():
         assert proj.observatories["demo"].pars.demo_boolean is False
         # new parameter is successfully added
         assert proj.observatories["demo"].pars.demo_string == "test-string"
+        # general project-wide reducer is used by demo observatory:
+        assert (
+            proj.observatories["demo"].pars.reducer["reducer_key"]
+            == "project_reduction"
+        )
 
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        # assert proj.observatories["ztf"].analysis.pars.an_key == "ztf_analysis"
+        assert proj.observatories["ztf"].pars.reducer == {
+            "reducer_key": "ztf_reduction"
+        }
 
         # check the user inputs override the config file
         proj = Project(
-            "default_test", params={"project_string": project_str2}, config=True
+            "default_test",
+            project_string=project_str2,
+            demo={
+                "demo_string": "new-test-string"
+            },  # directly override demo parameters
         )
         assert proj.pars.project_string == project_str2
+        assert proj.observatories["demo"].pars.demo_string == "new-test-string"
 
     finally:
         os.remove(filename)
