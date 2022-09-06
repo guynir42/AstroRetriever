@@ -737,7 +737,7 @@ def test_histogram():
     )
 
     # add some data with well defined dmag values
-    df["dmag"][0:5] = 1.3
+    df.loc[0:4, "dmag"] = 1.3
 
     with pytest.raises(ValueError) as err:
         h.add_data(df)
@@ -814,8 +814,8 @@ def test_histogram():
             filt=np.random.choice(["R", "V", "I"], num_points3),
         )
     )
-    df["exptime"][0:5] = 20.3
-    df["exptime"][5:] = 39.8
+    df.loc[0:4, "exptime"] = 20.3
+    df.loc[5:, "exptime"] = 39.8
 
     h.add_data(df, source)
     assert len(h.data.coords["exptime"]) == len(np.arange(20, 39.8, 0.3))
@@ -838,9 +838,9 @@ def test_histogram():
     assert mid_snr > high_snr * 5
 
     # add some very high and very low values:
-    df["snr"][3] = 100
-    df["snr"][4] = -100
-    df["dmag"][10:20] = 100
+    df.loc[3, "snr"] = 100
+    df.loc[4, "snr"] = -100
+    df.loc[10:19, "dmag"] = 100
 
     h.add_data(df, source)
     assert h.data.snr.attrs["overflow"] == 1
