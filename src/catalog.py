@@ -44,7 +44,7 @@ class Catalog:
 
         # add any additional updates after that
         self.pars.update(kwargs)
-        if not hasattr(self.pars, "catalog_name") or self.pars.catalog_name is None:
+        if "catalog_name" not in self.pars or self.pars.catalog_name is None:
             self.pars.catalog_name = self.pars.filename.split(".")[0]
 
         self.pars.verify()
@@ -65,7 +65,7 @@ class Catalog:
             Can be one of: "fits", "csv".
         """
 
-        if hasattr(self.pars, "filetype"):
+        if "filetype" in self.pars:
             return self.pars.filetype
 
         ext = os.path.splitext(self.pars.filename)[1]
@@ -167,13 +167,13 @@ class Catalog:
         the parameters must contain a key
         named "url" with the URL of the catalog.
         """
-        if not hasattr(self.pars, "url") and not hasattr(self.pars, "url"):
+        if "url" not in self.pars and "URL" not in self.pars:
             raise ValueError("No URL specified for catalog.")
 
         fullname = self.get_fullpath()
         path = os.path.dirname(os.path.abspath(fullname))
 
-        URL = self.pars.url if hasattr(self.pars, "url") else self.pars.URL
+        URL = self.pars.url if "url" in self.pars else self.pars.URL
         downloaded_filename = os.path.split(URL)[-1]
         downloaded_filename = os.path.join(path, downloaded_filename)
 
@@ -275,12 +275,12 @@ class Catalog:
         ra = float(row[self.pars.ra_column])
         dec = float(row[self.pars.dec_column])
         mag = float(row[self.pars.mag_column])
-        if hasattr(self.pars, "mag_err_column"):
+        if "mag_err_column" in self.pars:
             mag_err = float(row[self.pars.mag_err_column])
         else:
             mag_err = None
         filter_name = self.pars.mag_filter_name
-        if hasattr(self.pars, "alias_column"):
+        if "alias_column" in self.pars:
             alias = self.to_string(row[self.pars.alias_column])
         else:
             alias = None

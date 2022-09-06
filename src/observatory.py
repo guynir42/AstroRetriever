@@ -84,7 +84,7 @@ class VirtualObservatory:
         of any SUBCLASS of VirtualObservatory.
         """
 
-        if hasattr(self.pars, "project"):
+        if "project" in self.pars:
             self.project = self.pars.project
 
         if not isinstance(self.name, str):
@@ -94,7 +94,7 @@ class VirtualObservatory:
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
 
-        if hasattr(self.pars, "credentials"):
+        if "credentials" in self.pars:
             # if credentials contains a filename and key:
             self.load_passwords(**self.pars.credentials)
 
@@ -282,7 +282,7 @@ class VirtualObservatory:
             (the index of the source in the catalog).
         """
         if self.pars.dataset_identifier == "attribute":
-            if not hasattr(self.pars, "dataset_attribute"):
+            if "dataset_attribute" not in self.pars:
                 raise ValueError(
                     "When using dataset_identifier='attribute', "
                     "you must specify the dataset_attribute, "
@@ -456,7 +456,7 @@ class VirtualObservatory:
         # parameters for the reduction
         # are taken from the config first,
         # then from the user inputs
-        if hasattr(self.pars, "reducer") and isinstance(self.pars.reducer, dict):
+        if "reducer" in self.pars and isinstance(self.pars.reducer, dict):
             parameters = {}
             parameters.update(self.pars.reducer)
             parameters.update(kwargs)
@@ -476,6 +476,7 @@ class VirtualObservatory:
         raw_data_ids = list({d.id for d in datasets})
         if len(raw_data_ids) == 1:
             init_kwargs["raw_data_id"] = raw_data_ids[0]
+            init_kwargs["raw_data"] = datasets[0]
         raw_data_filenames = list({d.filename for d in datasets})
         if "raw_data_filename" not in init_kwargs and len(raw_data_filenames) == 1:
             init_kwargs["raw_data_filename"] = raw_data_filenames[0]
@@ -489,7 +490,7 @@ class VirtualObservatory:
             if len(new_dict) > 0:
                 init_kwargs[att] = new_dict
 
-        if hasattr(self.pars, "filtmap"):
+        if "filtmap" in self.pars:
             if not isinstance(self.pars.filtmap, (str, dict)):
                 raise ValueError("filtmap must be a string or a dictionary")
             init_kwargs["filtmap"] = self.pars.filtmap

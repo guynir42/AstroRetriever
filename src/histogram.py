@@ -354,7 +354,10 @@ class Histogram:
 
             # scalar string
             if isinstance(input_data[axis], str):
-                if input_data[axis] not in self.data.coords[axis].values:
+                if (
+                    self.data.coords[axis].size == 0
+                    or input_data[axis] not in self.data.coords[axis].values
+                ):
                     self.expand_axis(axis, input_data[axis])
             # list of strings
             elif hasattr(input_data[axis], "__len__") and all(
@@ -481,7 +484,10 @@ class Histogram:
 
     def expand_axis(self, axis, new_values):
         if isinstance(new_values, str):
-            if new_values not in self.data.coords[axis].values:
+            if (
+                self.data.coords[axis].size == 0
+                or new_values not in self.data.coords[axis].values
+            ):
                 if self.data.coords[axis].size > 0:
                     new_coord = self.data.coords[axis].values + [new_values]
                 else:

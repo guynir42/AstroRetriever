@@ -50,6 +50,12 @@ class Parameters:
     def __contains__(self, key):
         return hasattr(self, key)
 
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
     def verify(self):
         """
         Make sure all required parameters were
@@ -58,7 +64,7 @@ class Parameters:
         If not, raises a ValueError.
         """
         for p in self.required_pars:
-            if not hasattr(self, p):
+            if p not in self:
                 raise ValueError(f"Parameter {p} is not set.")
 
     def default_values(self, **kwargs):
@@ -70,8 +76,8 @@ class Parameters:
         may not have been loaded in a previous call to e.g., load().
         """
         for k, v in kwargs.items():
-            if not hasattr(self, k):
-                setattr(self, k, v)
+            if k not in self:
+                self[k] = v
                 self._default_keys.append(k)
 
     def replace_unset(self, **kwargs):
@@ -84,8 +90,8 @@ class Parameters:
         and before manually changing any attributes.
         """
         for k, v in kwargs.items():
-            if not hasattr(self, k) or k in self._default_keys:
-                setattr(self, k, v)
+            if k not in self or k in self._default_keys:
+                self[k] = v
 
     @staticmethod
     def get_file_from_disk(filename):
@@ -140,7 +146,7 @@ class Parameters:
             A dictionary with the parameters.
         """
         for k, v in dictionary.items():
-            setattr(self, k, v)
+            self[k] = v
 
     def update(self, dictionary):
         """
@@ -156,15 +162,15 @@ class Parameters:
         """
 
         for k, v in dictionary.items():
-            if hasattr(self, k):  # need to update
-                if isinstance(getattr(self, k), set) and isinstance(v, (set, list)):
-                    getattr(self, k).update(v)
-                elif isinstance(getattr(self, k), dict) and isinstance(v, dict):
-                    getattr(self, k).update(v)
+            if k in self:  # need to update
+                if isinstance(self[k], set) and isinstance(v, (set, list)):
+                    self[k].update(v)
+                elif isinstance(self[k], dict) and isinstance(v, dict):
+                    self[k].update(v)
                 else:
-                    setattr(self, k, v)
+                    self[k] = v
             else:  # just add this parameter
-                setattr(self, k, v)
+                self[k] = v
 
     def save(self, filename):
         """
@@ -185,7 +191,7 @@ class Parameters:
         """
         Get the path to the data directory.
         """
-        if hasattr(self, "data_folder"):
+        if "data_folder" in self:
             return os.path.join(DATA_ROOT or "", self.data_folder)
         else:
             return DATA_ROOT or ""
@@ -271,8 +277,8 @@ class Parameters:
         """
         keys = ["project", "cfg_file", "verbose"]
         for k in keys:
-            if hasattr(self, k) and k not in inputs:
-                inputs[k] = getattr(self, k)
+            if k in self and k not in inputs:
+                inputs[k] = self[k]
 
     def print(self):
         """

@@ -173,14 +173,14 @@ def test_project_config_file():
     try:
         # do not load the config file
         proj = Project("default_test", cfg_file=None)
-        assert not hasattr(proj.pars, "project_string")
+        assert "project_string" not in proj.pars
 
         # load the default config file at configs/default_test.yaml
         proj = Project(
             "default_test",
             obs_names=["DemoObs", "ZTF"],
         )
-        assert hasattr(proj.pars, "project_string")
+        assert "project_string" in proj.pars
         assert proj.pars.project_string == project_str1
         assert proj.analysis.pars.analysis_key == "project_analysis"
 
