@@ -852,3 +852,7 @@ def test_histogram():
     source.mag = 25.3
     h.add_data(df, source)
     assert h.data.mag.attrs["overflow"] == num_points3
+
+
+def test_finder():
+    pass

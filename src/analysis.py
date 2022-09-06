@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src import parameters
+from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
 from src.database import Session
@@ -36,7 +36,7 @@ class Analysis:
     """
 
     def __init__(self, **kwargs):
-        self.pars = parameters.from_dict(kwargs, "analysis")
+        self.pars = Parameters.from_dict(kwargs, "analysis")
         self.pars.default_values(  # if not set, use these default values
             num_injections=1,  # number of fake events to inject per source (can be fractional)
             autosave_detections=True,  # save any new detections to the database

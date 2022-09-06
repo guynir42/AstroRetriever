@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src import parameters
+from src.parameters import Parameters
 from src.source import Source
 from src.dataset import RawData, Lightcurve
 from src.detection import DetectionInTime
@@ -42,7 +42,7 @@ class Finder:
     """
 
     def __init__(self, **kwargs):
-        self.pars = parameters.from_dict(kwargs, "finder")
+        self.pars = Parameters.from_dict(kwargs, "finder")
         self.pars.default_values(
             snr_threshold=5,  # S/N threshold for detection
             snr_threshold_sidebands=-2,  # S/N threshold for event region

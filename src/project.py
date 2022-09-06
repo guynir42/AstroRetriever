@@ -4,7 +4,7 @@ import os
 import sqlalchemy as sa
 
 from src.database import Session
-from src import parameters
+from src.parameters import Parameters
 from src.catalog import Catalog
 from src.source import Source
 from src.analysis import Analysis
@@ -35,7 +35,7 @@ class Project:
         self.name = name
         # this loads parameters from file, then from kwargs:
         kwargs["project"] = name  # propagate this to sub-objects
-        self.pars = parameters.from_dict(kwargs, "project")
+        self.pars = Parameters.from_dict(kwargs, "project")
 
         # default values in case no config file is loaded:
         self.pars.default_values(

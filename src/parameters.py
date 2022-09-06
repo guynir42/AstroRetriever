@@ -277,47 +277,49 @@ class Parameters:
         """
         pprint(self.__dict__)
 
+    @staticmethod
+    def from_dict(inputs, default_key=None):
+        """
+        Create a Parameters object from a dictionary.
+        Will try to load a YAML file if given a project name,
+        ("project" key in the dictionary) or if given a "cfg_file" key.
+        If no
 
-def from_dict(inputs, default_key=None):
-    """
-    Create a Parameters object from a dictionary.
-    Will try to load a YAML file if given a project name,
-    ("project" key in the dictionary) or if given a "cfg_file" key.
-    If no
+        Parameters
+        ----------
+        inputs: dict
+            A dictionary with the parameters.
 
-    Parameters
-    ----------
-    inputs: dict
-        A dictionary with the parameters.
+        default_key: str, optional
+            The key to use when searching for a sub-dictionary
+            in the config file. If not given, will load the entire
+            YAML file.
+            Will be overriden if user specifies a different cfg_key.
+        """
+        pars = Parameters()
+        project = inputs.get("project", None)
+        if project is not None:
+            default_filename = os.path.join(
+                os.path.dirname(__file__), "../configs", f"{project}.yaml"
+            )
+        else:
+            default_filename = None
+        filename = inputs.get("cfg_file", default_filename)
+        if filename is not None:
+            if not os.path.isabs(filename):
+                basepath = os.path.dirname(__file__)
+                filename = os.path.abspath(
+                    os.path.join(basepath, "../configs", filename)
+                )
 
-    default_key: str, optional
-        The key to use when searching for a sub-dictionary
-        in the config file. If not given, will load the entire
-        YAML file.
-        Will be overriden if user specifies a different cfg_key.
-    """
-    pars = Parameters()
-    project = inputs.get("project", None)
-    if project is not None:
-        default_filename = os.path.join(
-            os.path.dirname(__file__), "../configs", f"{project}.yaml"
-        )
-    else:
-        default_filename = None
-    filename = inputs.get("cfg_file", default_filename)
-    if filename is not None:
-        if not os.path.isabs(filename):
-            basepath = os.path.dirname(__file__)
-            filename = os.path.abspath(os.path.join(basepath, "../configs", filename))
+            if os.path.isfile(filename):
+                key = inputs.get("cfg_key", default_key)
+                # print(f'Loading parameters from {filename} key "{key}"')
+                pars.load(filename, key=key)
+            elif "cfg_file" in inputs:
+                # only raise if user explicitly specified a file
+                raise FileNotFoundError(f"Could not find config file {filename}")
 
-        if os.path.isfile(filename):
-            key = inputs.get("cfg_key", default_key)
-            # print(f'Loading parameters from {filename} key "{key}"')
-            pars.load(filename, key=key)
-        elif "cfg_file" in inputs:
-            # only raise if user explicitly specified a file
-            raise FileNotFoundError(f"Could not find config file {filename}")
-
-    # the user inputs override the config file
-    pars.read(inputs)
-    return pars
+        # the user inputs override the config file
+        pars.read(inputs)
+        return pars

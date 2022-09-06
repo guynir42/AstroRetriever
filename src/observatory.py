@@ -8,7 +8,7 @@ import pandas as pd
 
 
 from src.database import Session
-from src import parameters
+from src.parameters import Parameters
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawData, Lightcurve
 from src.detection import DetectionInTime
@@ -61,7 +61,7 @@ class VirtualObservatory:
         self.project = None  # name of the project (loaded from pars later)
         self.catalog = None  # a Catalog object
         self._credentials = {}  # dictionary with usernames/passwords
-        self.pars = parameters.from_dict(kwargs, name)
+        self.pars = Parameters.from_dict(kwargs, name)
         self.pars.required_pars = [
             "reducer",
             "data_folder",
