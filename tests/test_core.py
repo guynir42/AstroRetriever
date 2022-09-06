@@ -694,6 +694,7 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
+@pytest.mark.flaky(reruns=2)
 def test_histogram():
 
     h = Histogram()
