@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base
+from src.database import Base, engine
 from sqlalchemy import orm, func
 from sqlalchemy.ext.declarative import declared_attr
 
@@ -162,6 +162,9 @@ class DetectionInTime(Base, DetectionMixin):
         sa.UniqueConstraint("time_peak", "source_id", name="_detection_in_time_uc"),
     )
 
+
+# make sure all the tables exist
+DetectionInTime.metadata.create_all(engine)
 
 # TODO: Add a DetectionInPeriod class
 # TODO: Add a DetectionInImages class
