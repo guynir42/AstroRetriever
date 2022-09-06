@@ -77,21 +77,21 @@ class DetectionMixin:
         )
 
     @declared_attr
-    def dataset_id(cls):
+    def raw_data_id(cls):
         return sa.Column(
             sa.ForeignKey("raw_data.id"),
             nullable=True,
             index=True,
-            doc="ID of the dataset this detection is associated with",
+            doc="ID of the raw dataset this detection is associated with",
         )
 
     @declared_attr
-    def dataset(cls):
+    def raw_data(cls):
         return orm.relationship(
             "RawData",
             back_populates=cls.backref_name(),
             cascade="all",
-            foreign_keys=f"{cls.__name__}.dataset_id",
+            foreign_keys=f"{cls.__name__}.raw_data_id",
         )
 
     simulated = sa.Column(
@@ -155,7 +155,10 @@ class DetectionInTime(Base, DetectionMixin):
         doc="ID of the lightcurve this detection is associated with",
     )
     lightcurve = orm.relationship(
-        "Lightcurve", back_populates="detections_in_time", cascade="all"
+        "Lightcurve",
+        back_populates="detections_in_time",
+        cascade="all",
+        doc="reduced photometric data in which this detection was found",
     )
 
     __table_args__ = (

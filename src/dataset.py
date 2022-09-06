@@ -1048,7 +1048,7 @@ class RawData(DatasetMixin, Base):
 
     detections_in_time = orm.relationship(
         "DetectionInTime",
-        back_populates="dataset",
+        back_populates="raw_data",
         cascade="all, delete-orphan",
     )
 
@@ -1476,6 +1476,13 @@ class Lightcurve(DatasetMixin, Base):
         nullable=True,
         index=True,
         doc="ID of the raw dataset that was used to produce this reduced dataset.",
+    )
+
+    raw_data = orm.relationship(
+        "RawData",
+        backref="lightcurves",
+        cascade="all",
+        doc="The raw dataset that was used to produce this reduced dataset.",
     )
 
     raw_data_filename = sa.Column(

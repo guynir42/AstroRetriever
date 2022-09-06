@@ -50,7 +50,7 @@ class Finder:
             abs_snr=True,  # Use absolute S/N for detection (i.e., include negative)
         )
 
-    def ingest_lightcurves(self, lightcurves, source, sim=None):
+    def ingest_lightcurves(self, lightcurves, source=None, sim=None):
         """
         Ingest a list of lightcurves and produce
         detections for them.
@@ -67,8 +67,10 @@ class Finder:
             The lightcurves to ingest and produce
             detections for.
 
-        source : Source object
+        source : Source object, optional
             The source this lightcurve is associated with.
+            Derived classes may use properties of the source
+            to determine detections.
 
         sim : dict or None
             The truth values for the injected event
@@ -82,23 +84,26 @@ class Finder:
         """
 
         detections = []  # List of detections to return
+        if isinstance(lightcurves, Lightcurve):
+            lightcurves = [lightcurves]
+
         for lc in lightcurves:
             # Add some scores to the lightcurve
-            lc.df["snr"] = (lc.df["flux"] - lc.df["flux"]) / self.estimate_flux_noise(
-                lc, source
-            )
-            lc.df["dmag"] = lc.df["mag"] - lc.df["mag"].median()
+            lc.data["snr"] = (
+                lc.data["flux"] - lc.data["flux"].mean()
+            ) / self.estimate_flux_noise(lc, source)
+            lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
 
             # mark indices in the lightcurve where an event was detected
-            if "detected" not in lc.df.columns:
-                lc.df["detected"] = False
+            if "detected" not in lc.data.columns:
+                lc.data["detected"] = False
 
             # Find the detections (just look for high S/N)
             for i in range(self.pars.max_det_per_lc):
-                snr = lc.df["snr"]
+                snr = lc.data["snr"].values
                 if self.pars.abs_snr:
                     snr = np.abs(snr)
-                mx = np.max(snr, where=lc.df["detections"] == 0, initial=-np.inf)
+                mx = np.max(snr, where=lc.data["detected"] == 0, initial=-np.inf)
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
                     detections.append(self.make_detection(lc, source, sim))
@@ -165,7 +170,7 @@ class Finder:
         else:
             thresh = self.pars.snr_threshold
 
-        return lightcurve.df["snr"] > thresh
+        return lightcurve.data["snr"].values > thresh
 
     def make_detection(self, lightcurve, source, sim=None):
         """
@@ -189,17 +194,18 @@ class Finder:
         """
         det = DetectionInTime()
         det.source = source
-        det.dataset = lightcurve.dataset
+        det.raw_data = lightcurve.raw_data
+        det.lightcurve = lightcurve
         peak = np.argmax(lightcurve.data["snr"])
-        det.time_peak = lightcurve.data[peak, "time"]
+        det.time_peak = lightcurve.times[peak]
 
-        det.snr = lightcurve.data[peak, "snr"]
+        det.snr = lightcurve.data.loc[peak, "snr"]
 
         # mark the location of this detection:
         det.time_indices = self.get_event_indices(lightcurve)
-        lightcurve.data[det.time_indices, "detected"] = True
-        det.time_start = lightcurve.data[det.time_indices[0], "time"]
-        det.time_end = lightcurve.data[det.time_indices[-1], "time"]
+        lightcurve.data.loc[det.time_indices, "detected"] = True
+        det.time_start = lightcurve.times[det.time_indices[0]]
+        det.time_end = lightcurve.times[det.time_indices[-1]]
 
         # save simulation values
         det.simulated = sim is not None

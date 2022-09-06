@@ -855,5 +855,15 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-def test_finder():
-    pass
+def test_finder(simple_finder, lightcurve_factory):
+
+    # this lightcurve has no outliers:
+    lc = lightcurve_factory()
+    det = simple_finder.ingest_lightcurves(lc)
+    assert len(det) == 0
+
+    # this lightcurve has outliers:
+    lc = lightcurve_factory()
+    lc.data.loc[4, "flux"] = lc.data.flux.mean() * 3
+    det = simple_finder.ingest_lightcurves(lc)
+    assert len(det) == 1

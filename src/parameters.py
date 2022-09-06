@@ -47,6 +47,9 @@ class Parameters:
         # these have not been set by file or kwargs input
         self._default_keys = []
 
+    def __contains__(self, key):
+        return hasattr(self, key)
+
     def verify(self):
         """
         Make sure all required parameters were
