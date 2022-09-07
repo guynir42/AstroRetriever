@@ -90,7 +90,7 @@ class Finder:
         for lc in lightcurves:
             # Add some scores to the lightcurve
             lc.data["snr"] = (
-                lc.data["flux"] - lc.data["flux"].mean()
+                lc.data["flux"] - lc.flux_mean_robust
             ) / self.estimate_flux_noise(lc, source)
             lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
 
@@ -103,10 +103,18 @@ class Finder:
                 snr = lc.data["snr"].values
                 if self.pars.abs_snr:
                     snr = np.abs(snr)
-                mx = np.max(snr, where=lc.data["detected"] == 0, initial=-np.inf)
+                mask = (
+                    (lc.data["detected"].values)
+                    | (lc.data["flag"].values)
+                    | (np.isnan(snr))
+                )
+                snr[mask] = 0
+
+                idx = np.argmax(snr)
+                mx = snr[idx]
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
-                    detections.append(self.make_detection(lc, source, sim))
+                    detections.append(self.make_detection(idx, lc, source, sim))
                 else:
                     break
 
@@ -172,12 +180,14 @@ class Finder:
 
         return lightcurve.data["snr"].values > thresh
 
-    def make_detection(self, lightcurve, source, sim=None):
+    def make_detection(self, peak_idx, lightcurve, source, sim=None):
         """
         Make a detection object from a lightcurve.
 
         Parameters
         ----------
+        peak_idx: int
+            The index of the peak of the event in the lightcurve.
         lightcurve: Lightcurve object
             The lightcurve where the event is detected.
         source: Source object
@@ -196,10 +206,9 @@ class Finder:
         det.source = source
         det.raw_data = lightcurve.raw_data
         det.lightcurve = lightcurve
-        peak = np.argmax(lightcurve.data["snr"])
-        det.time_peak = lightcurve.times[peak]
+        det.time_peak = lightcurve.times[peak_idx]
 
-        det.snr = lightcurve.data.loc[peak, "snr"]
+        det.snr = lightcurve.data.loc[peak_idx, "snr"]
 
         # mark the location of this detection:
         det.time_indices = self.get_event_indices(lightcurve)

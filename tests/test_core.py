@@ -855,6 +855,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
+@pytest.mark.flaky(reruns=2)
 def test_finder(simple_finder, lightcurve_factory):
 
     # this lightcurve has no outliers:
@@ -864,6 +865,46 @@ def test_finder(simple_finder, lightcurve_factory):
 
     # this lightcurve has outliers:
     lc = lightcurve_factory()
-    lc.data.loc[4, "flux"] = lc.data.flux.mean() * 3
+    n_sigma = 8
+    mean_flux = lc.data.flux.mean()
+    std_flux = lc.data.flux.std()
+    flare_flux = mean_flux + std_flux * n_sigma
+    lc.data.loc[4, "flux"] = flare_flux
     det = simple_finder.ingest_lightcurves(lc)
+
     assert len(det) == 1
+    assert det[0].source_id == lc.source_id
+    assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
+    assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
+
+    simple_finder.pars.max_det_per_lc = 2
+
+    # check for negative detections:
+    lc.data.loc[96, "flux"] = mean_flux - std_flux * n_sigma
+    det = simple_finder.ingest_lightcurves(lc)
+
+    assert len(det) == 2
+    assert det[1].source_id == lc.source_id
+    assert abs(det[1].snr + n_sigma) < 1.0  # more or less n sigma
+    assert det[1].time_peak == Time(lc.data.mjd.iloc[96], format="mjd").datetime
+
+    # now do not look for negative detections:
+    lc.data["detected"] = False  # clear the previous detections
+    simple_finder.pars.abs_snr = False
+    det = simple_finder.ingest_lightcurves(lc)
+
+    assert len(det) == 1
+
+    # this lightcurve has bad data:
+    lc = lightcurve_factory()
+    lc.data.loc[4, "flux"] = np.nan
+    lc.data.loc[np.arange(10, 20, 1), "flux"] = 5000
+    lc.data.loc[np.arange(10, 20, 1), "flag"] = True
+    lc.data.loc[50, "flux"] = flare_flux
+
+    det = simple_finder.ingest_lightcurves(lc)
+
+    assert len(det) == 1
+    assert det[0].source_id == lc.source_id
+    assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
+    assert det[0].time_peak == Time(lc.data.mjd.iloc[50], format="mjd").datetime

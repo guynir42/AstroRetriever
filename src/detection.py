@@ -35,13 +35,13 @@ class DetectionMixin:
     )
 
     time_start = sa.Column(
-        sa.Float,
+        sa.DateTime,
         nullable=True,
         doc="Beginning of time interval relevant to this event (UTC)",
     )
 
     time_end = sa.Column(
-        sa.Float,
+        sa.DateTime,
         nullable=True,
         index=True,
         doc="End of time interval relevant to this event (UTC)",
@@ -141,7 +141,7 @@ class DetectionInTime(Base, DetectionMixin):
     __tablename__ = "detections_in_time"
 
     time_peak = sa.Column(
-        sa.Float,
+        sa.DateTime,
         nullable=False,
         index=True,
         doc="Time of the detection (UTC)",
