@@ -12,6 +12,10 @@ from src.database import DATA_ROOT
 LOADED_FILES = {}
 
 
+# TODO: use typing module to specify types and Annotatted for descriptions
+# ref: https://stackoverflow.com/a/8820636/18256949
+
+
 class Parameters:
     """
     Keep track of parameters for any of the other classes.

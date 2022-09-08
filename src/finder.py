@@ -213,8 +213,8 @@ class Finder:
         # mark the location of this detection:
         det.time_indices = self.get_event_indices(lightcurve)
         lightcurve.data.loc[det.time_indices, "detected"] = True
-        det.time_start = lightcurve.times[det.time_indices[0]]
-        det.time_end = lightcurve.times[det.time_indices[-1]]
+        det.time_start = lightcurve.times[np.where(det.time_indices)[0][0]]
+        det.time_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
 
         # save simulation values
         det.simulated = sim is not None

@@ -894,6 +894,7 @@ def test_finder(simple_finder, lightcurve_factory):
     det = simple_finder.ingest_lightcurves(lc)
 
     assert len(det) == 1
+    assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
 
     # this lightcurve has bad data:
     lc = lightcurve_factory()
@@ -908,3 +909,15 @@ def test_finder(simple_finder, lightcurve_factory):
     assert det[0].source_id == lc.source_id
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert det[0].time_peak == Time(lc.data.mjd.iloc[50], format="mjd").datetime
+
+    # this lightcurve has an outlier with five epochs
+    lc = lightcurve_factory()
+    lc.data.loc[10:14, "flux"] = flare_flux
+    det = simple_finder.ingest_lightcurves(lc)
+
+    assert len(det) == 1
+    assert det[0].source_id == lc.source_id
+    assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
+    assert lc.data.mjd.iloc[10] < Time(det[0].time_peak).mjd < lc.data.mjd.iloc[15]
+    assert np.isclose(Time(det[0].time_start).mjd, lc.data.mjd.iloc[10])
+    assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
