@@ -11,6 +11,8 @@ from src.catalog import Catalog
 from src.source import Source
 from src.analysis import Analysis
 
+from src.database import DATA_ROOT
+
 
 class Project:
     def __init__(self, name="default", **kwargs):
@@ -57,7 +59,7 @@ class Project:
                 repo = git.Repo(search_parent_directories=True)
                 git_hash = repo.head.object.hexsha
             except git.exc.InvalidGitRepositoryError:
-                # for deployed code (e.g., on github actions)
+                # for deployed code (e.g., on a cloud computer)
                 # might not have a git repo, so make sure to
                 # deploy with current hash in environmental variable
                 if os.getenv("VO_GIT_HASH"):
@@ -222,6 +224,8 @@ class Project:
         # version control is enabled
         if self.pars.version:
             self.output_folder += f"_{self.cfg_hash}"
+
+        self.output_folder = os.path.join(DATA_ROOT, self.output_folder)
 
         # create the output folder
         if not os.path.exists(self.output_folder):
