@@ -220,6 +220,12 @@ def test_project_config_file():
         os.remove(data["ztf"]["credentials"]["filename"])
 
 
+def test_version_control():
+    proj = Project("default_test", version=True)
+    assert isinstance(proj.git_hash, str)
+    print(f"current git hash is: {proj.git_hash}")
+
+
 def test_catalog():
     filename = "test_catalog.csv"
     fullname = os.path.abspath(os.path.join(basepath, "../catalogs", filename))

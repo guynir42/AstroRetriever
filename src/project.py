@@ -1,6 +1,8 @@
 import importlib
 import os
 
+import git
+
 import sqlalchemy as sa
 
 from src.database import Session
@@ -36,6 +38,12 @@ class Project:
         # this loads parameters from file, then from kwargs:
         kwargs["project"] = name  # propagate this to sub-objects
         self.pars = Parameters.from_dict(kwargs, "project")
+
+        # version control
+        self.git_hash = None
+        if self.pars.version:
+            repo = git.Repo(search_parent_directories=True)
+            self.git_hash = repo.head.object.hexsha
 
         # default values in case no config file is loaded:
         self.pars.default_values(
