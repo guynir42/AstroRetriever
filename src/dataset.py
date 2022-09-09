@@ -14,7 +14,7 @@ from astropy.time import Time
 import h5py
 
 import sqlalchemy as sa
-from sqlalchemy import orm, func, event
+from sqlalchemy import orm, event
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -35,8 +35,6 @@ OVERWRITE = False
 
 # 1% difference in time is considered uniform
 UNIFORMITY_THRESHOLD = 0.01
-
-utcnow = func.timezone("UTC", func.current_timestamp())
 
 
 def simplify(key):
@@ -93,12 +91,16 @@ class DatasetMixin:
             self.data = kwargs["data"]
             del kwargs["data"]
 
+        # if no project is given, assume testing
+        # and make DB objects that can be deleted
+        # override this with kwargs['project'] later
+        self.project = "test"
+
         # override any existing attributes
         for k, v in kwargs.items():
             if hasattr(self, k):
                 setattr(self, k, v)
 
-        # verify some inputs are the right type
         if not isinstance(self.filename, (str, type(None))):
             raise ValueError(f"Filename must be a string, not {type(self.filename)}")
 
@@ -802,30 +804,6 @@ class DatasetMixin:
             doc="ID of the source this dataset is associated with",
         )
 
-    id = sa.Column(
-        sa.Integer,
-        primary_key=True,
-        index=True,
-        autoincrement=True,
-        doc="Unique identifier for this dataset",
-    )
-
-    created_at = sa.Column(
-        sa.DateTime,
-        nullable=False,
-        default=utcnow,
-        index=True,
-        doc="UTC time of insertion of object's row into the database.",
-    )
-
-    modified = sa.Column(
-        sa.DateTime,
-        default=utcnow,
-        onupdate=utcnow,
-        nullable=False,
-        doc="UTC time the object's row was last modified in the database.",
-    )
-
     # original series of images used to make this dataset
     series_identifier = sa.Column(
         sa.String,
@@ -906,14 +884,6 @@ class DatasetMixin:
         doc="Size of the dataset in bytes",
     )
 
-    # how this was observed
-    observatory = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Name of the observatory this dataset is associated with",
-    )
-
     public = sa.Column(
         sa.Boolean,
         nullable=False,
@@ -954,6 +924,7 @@ class DatasetMixin:
         "autosave",
         "overwrite",
         "public",
+        "project",
         "observatory",
         "folder",
     ]

@@ -14,6 +14,7 @@
 
 import os
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -23,6 +24,8 @@ if DATA_ROOT is None:
 
 url = "postgresql://postgres:postgres@localhost:5432/virtualobserver"
 
+utcnow = func.timezone("UTC", func.current_timestamp())
+
 engine = sa.create_engine(url, future=True)
 if not database_exists(engine.url):
     create_database(engine.url)
@@ -30,8 +33,6 @@ if not database_exists(engine.url):
 # print(f"Is database found: {database_exists(engine.url)}")
 
 Session = sessionmaker(bind=engine)
-
-Base = declarative_base()
 
 
 def clear_tables():
@@ -50,6 +51,55 @@ def clear_test_sources():
 
     with Session() as session:
         session.query(Source).filter(Source.project == "test_project").delete()
+
+
+class VO_Base:
+    """Base class for all VO classes."""
+
+    id = sa.Column(
+        sa.Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        doc="Unique identifier for this dataset",
+    )
+
+    created_at = sa.Column(
+        sa.DateTime,
+        nullable=False,
+        default=utcnow,
+        index=True,
+        doc="UTC time of insertion of object's row into the database.",
+    )
+
+    modified = sa.Column(
+        sa.DateTime,
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+        doc="UTC time the object's row was last modified in the database.",
+    )
+
+    project = sa.Column(
+        sa.String, nullable=False, index=True, doc="Project this object belongs to."
+    )
+
+    observatory = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Name of the observatory this data is associated with.",
+    )
+
+    cfg_hash = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Hash of the configuration used to generate this object.",
+    )
+
+
+Base = declarative_base(cls=VO_Base)
 
 
 if __name__ == "__main__":

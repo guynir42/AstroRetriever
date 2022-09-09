@@ -39,7 +39,6 @@ class Analysis:
         self.pars = Parameters.from_dict(kwargs, "analysis")
         self.pars.default_values(  # if not set, use these default values
             num_injections=1,  # number of fake events to inject per source (can be fractional)
-            autosave_detections=True,  # save any new detections to the database
             quality_module="src.quality",  # module where the Quality class is defined
             quality_class="Quality",  # name of the Quality class
             quality_kwargs={},  # parameters for the Quality class
@@ -49,6 +48,9 @@ class Analysis:
             simulator_module="src.simulator",  # module where the Simulator class is defined
             simulator_class="Simulator",  # name of the Simulator class
             simulator_kwargs={},  # parameters for the Simulator class
+            update_histograms=True,  # update the histograms on file
+            save_lightcurves=True,  # Save processed lightcurves after finder and quality cuts
+            commit_detections=True,  # Save detections to database
             # TODO: define parameters to set the range of scores/cuts in histograms
             # trigger_threshold_dict={  # threshold for triggering a detection
             #     "snr": {
@@ -113,6 +115,7 @@ class Analysis:
         -------
 
         """
+        # TODO: load histograms from file
 
         if self.pars.data_type == "lightcurves":
             data = source.lightcurves
@@ -123,7 +126,12 @@ class Analysis:
             det = self.run_lightcurves(source)
         # add more options here
 
-        if self.pars.autosave_detections:
+        if self.pars.save_lightcurves:
+            pass  # TODO: save lcs into subfolder
+
+        # TODO: update the histograms
+
+        if self.pars.commit_detections:
             with Session() as session:
                 session.add_all(det)
                 session.commit()
@@ -200,32 +208,6 @@ class Analysis:
         -------
         detections: list of Detection objects
             The detections found in the data.
-
-        """
-        pass
-
-    def apply_thresholds(self, detections, thresholds):
-        """
-        For each detection, check if the quality scores/flags
-        in the associate lightcurves are overlapping with the
-        detection time range.
-        If so, it should be marked as "pass" or "fail" for each
-        threshold.
-
-        Parameters
-        ----------
-        detections: list of Detection objects
-            The detections to check, each with a list of associated
-            lightcurves and the time range inside the lightcurve(s)
-            where it was detected.
-
-        thresholds:
-            A list of Threshold objects with some definitions on
-            if a specific value of a quality score is passing or failing.
-            Each Threshold adds a dictionary item to the list of threshold
-            results on the event object, that keeps track of the pass/fail status,
-            the threshold, the best/worst score, and whether the score is
-            one- or two-sided (positive/negative or just positive).
 
         """
         pass

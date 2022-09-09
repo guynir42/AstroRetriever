@@ -10,30 +10,6 @@ utcnow = func.timezone("UTC", func.current_timestamp())
 
 class DetectionMixin:
 
-    id = sa.Column(
-        sa.Integer,
-        primary_key=True,
-        index=True,
-        autoincrement=True,
-        doc="Unique identifier for this detection",
-    )
-
-    created_at = sa.Column(
-        sa.DateTime,
-        nullable=False,
-        default=utcnow,
-        index=True,
-        doc="UTC time of insertion of object's row into the database.",
-    )
-
-    modified = sa.Column(
-        sa.DateTime,
-        default=utcnow,
-        onupdate=utcnow,
-        nullable=False,
-        doc="UTC time the object's row was last modified in the database.",
-    )
-
     time_start = sa.Column(
         sa.DateTime,
         nullable=True,

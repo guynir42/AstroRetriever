@@ -309,7 +309,9 @@ def test_add_source_and_data():
             df = pd.DataFrame(test_data)
 
             # add the data to a database mapped object
-            new_data = RawData(data=df, folder="data_temp", altdata=dict(foo="bar"))
+            new_data = RawData(
+                data=df, project="test", folder="data_temp", altdata=dict(foo="bar")
+            )
 
             # check the times make sense
             start_time = Time(min(df.mjd), format="mjd").datetime
@@ -694,7 +696,7 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(reruns=3)
 def test_histogram():
 
     h = Histogram()
@@ -855,7 +857,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(reruns=3)
 def test_finder(simple_finder, lightcurve_factory):
 
     # this lightcurve has no outliers:
