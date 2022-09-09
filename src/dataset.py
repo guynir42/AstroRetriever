@@ -926,6 +926,7 @@ class DatasetMixin:
         "public",
         "project",
         "observatory",
+        "cfg_hash",
         "folder",
     ]
 
