@@ -39,18 +39,34 @@ class Project:
         kwargs["project"] = name  # propagate this to sub-objects
         self.pars = Parameters.from_dict(kwargs, "project")
 
-        # version control
-        self.git_hash = None
-        if self.pars.version:
-            repo = git.Repo(search_parent_directories=True)
-            self.git_hash = repo.head.object.hexsha
-
         # default values in case no config file is loaded:
         self.pars.default_values(
             obs_names=["demo"],
             obs_kwargs={},  # parameters for all observatories
             catalog_kwargs={"default": "test"},
+            version=False,
         )
+
+        # filled by setup_output_folder at runtime:
+        self.output_folder = None
+        self.cfg_hash = None
+
+        # version control:
+        if self.pars.version:
+            try:
+                repo = git.Repo(search_parent_directories=True)
+                git_hash = repo.head.object.hexsha
+            except git.exc.InvalidGitRepositoryError:
+                # for deployed code (e.g., on github actions)
+                # might not have a git repo, so make sure to
+                # deploy with current hash in environmental variable
+                if os.getenv("VO_GIT_HASH"):
+                    git_hash = os.getenv("VO_GIT_HASH")
+                else:
+                    print("No git repository found, cannot version control.")
+                    git_hash = None
+
+            self.pars.version = git_hash
 
         # if only one observatory is given, make it a set:
         if isinstance(self.pars.obs_names, str):
@@ -179,6 +195,39 @@ class Project:
         with Session() as session:
             session.execute(stmt)
             session.commit()
+
+    def setup_output_folder(self):
+        """
+        Create a folder for the output of this project.
+        This will include all the reduced and analyzed data,
+        the histograms, and so on.
+
+        It also includes a copy of the configuration file,
+        with the final adjustments made by e.g., the user
+        upon initialization or just before running the pipeline.
+
+        If version control is enabled, the cfg hash is calculated
+        for the full OUTPUT config file, and the hash is used to tag
+        all DB objects and is appended to the output folder name.
+
+        """
+
+        self.output_folder = f"output_{self.name}"
+
+        # TODO: collect all parameter objects from sub-objects
+        # and produce a massive config dictionary
+        # translate that into a yaml file in memory
+        # get that file's hash
+
+        # version control is enabled
+        if self.pars.version:
+            self.output_folder += f"_{self.cfg_hash}"
+
+        # create the output folder
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+
+        # TODO: write the config file to the output folder
 
     def download(self, **kwargs):
         pass

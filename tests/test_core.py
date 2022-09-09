@@ -222,8 +222,8 @@ def test_project_config_file():
 
 def test_version_control():
     proj = Project("default_test", version=True)
-    assert isinstance(proj.git_hash, str)
-    print(f"current git hash is: {proj.git_hash}")
+    assert isinstance(proj.pars.version, str)
+    print(f"current git hash is: {proj.pars.version}")
 
 
 def test_catalog():
