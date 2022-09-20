@@ -292,6 +292,47 @@ def test_catalog_wds():
     assert abs(cat.data[cat.pars.mag_column].mean() - 20) < 0.1
 
 
+def test_observatory_filename_conventions(test_project):
+    obs = test_project.observatories["demo"]
+
+    # load a big catalog with more than a million rows
+    cat = Catalog(default="wds")
+    cat.load()
+
+    obs.catalog = cat
+
+    num = np.random.randint(0, 1000)
+    col = cat.pars.name_column
+    name = cat.name_to_string(cat.data[num][col])
+    assert name.startswith("WDJ")
+
+    # test the filename conventions
+    filename = obs.get_filename_for_source(name, type="lcs", ext="h5")
+    assert filename == "Lightcurves_test_project_demo_0000000-0001000.h5"
+
+    # try it again with higher numbers in the catalog
+    num = np.random.randint(100000, 101000)
+    col = cat.pars.name_column
+    name = cat.name_to_string(cat.data[num][col])
+    assert name.startswith("WDJ")
+
+    # test the filename conventions
+    filename = obs.get_filename_for_source(name, type="lcs", ext="h5")
+    assert filename == "Lightcurves_test_project_demo_0100000-0101000.h5"
+
+    filename = obs.get_filename_for_source(name, type="img", ext=".fits")
+    assert filename == "Images_test_project_demo_0100000-0101000.fits"
+
+    # test the key conventions:
+    obs.pars.catalog_matching = "name"
+    key = obs.get_filekey_for_source(name)
+    assert key == name
+
+    obs.pars.catalog_matching = "number"
+    key = obs.get_filekey_for_source(name)
+    assert key == num
+
+
 def test_add_source_and_data():
     fullname = ""
     try:  # at end, delete the temp file

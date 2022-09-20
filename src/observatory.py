@@ -59,8 +59,8 @@ class VirtualObservatory:
         """
         self.name = name
         self.project = None  # name of the project (loaded from pars later)
-        self.catalog = None  # a Catalog object
         self._credentials = {}  # dictionary with usernames/passwords
+        self._catalog = None
         self.pars = Parameters.from_dict(kwargs, name)
         self.pars.required_pars = [
             "reducer",
@@ -74,6 +74,8 @@ class VirtualObservatory:
             dataset_attribute="source_name",
             dataset_identifier="key",
             catalog_matching="name",
+            filename_digits=7,  # number of digits for source index in filenames
+            filename_batch_size=1000,  # number of sources per batch
         )
 
     def initialize(self):
@@ -104,6 +106,26 @@ class VirtualObservatory:
             self._credentials.update(self.pars.credentials)
 
         self.pars.verify()
+
+    @property
+    def catalog(self):
+        """
+        Return the catalog object.
+        """
+        return self._catalog
+
+    @catalog.setter
+    def catalog(self, catalog):
+        """
+        Set the catalog object.
+        """
+        if catalog == self._catalog:
+            return
+
+        if not isinstance(catalog, Catalog):
+            raise TypeError("catalog must be a Catalog object")
+
+        self._catalog = catalog
 
     def load_passwords(self, filename=None, key=None, **_):
         """
@@ -198,6 +220,74 @@ class VirtualObservatory:
     def download(self):
         raise NotImplementedError("download() must be implemented in subclass")
 
+    def get_filename_for_source(self, source_id, type="lcs", ext=".h5"):
+        """
+        Return the filename for the given source ID.
+        Filename convention is:
+        <type>_<project>_<observatory>_<low number>-<high number>.<ext>
+
+        Parameters
+        ----------
+        source_id: str
+            ID of the source in the catalog.
+        type: str
+            Type of data to save. Use 'lcs' or 'lightcurves' (default)
+            to get a filename that starts with "Lightcurves_".
+        ext: str
+            Extension of the file.
+            This needs to be determined from the data type.
+        """
+        type = type.lower()
+        if type in ["lcs", "lightcurves"]:
+            prefix = "Lightcurves"
+        elif type in ["im", "img", "image", "images"]:
+            prefix = "Images"
+        else:
+            raise ValueError(f'Unknown data type: "{type}". Use "lcs" or "img", etc. ')
+
+        source_index = self.catalog.get_index_from_name(source_id)
+        low = (
+            source_index // self.pars.filename_batch_size
+        ) * self.pars.filename_batch_size
+        high = low + self.pars.filename_batch_size
+
+        if ext.startswith("."):
+            ext = ext[1:]
+        n = self.pars.filename_digits
+        return f"{prefix}_{self.project}_{self.name}_{low:0{n}d}-{high:0{n}d}.{ext}"
+
+    def get_filekey_for_source(self, source_id):
+        """
+        Get the in-file key (e.g., the HDF5 group name)
+        for a source inside a file.
+        This depends on the parameter "catalog_matching".
+        If it is "name" the source key will be the source name (as string).
+        If it is "number" the number of the source in the catalog is used
+        (this is not recommended, since the catalog could change, leaving
+        keys that are not associated with sources).
+
+        Parameters
+        ----------
+        source_id: str or bytes
+            ID of the source in the catalog.
+
+        Returns
+        -------
+        str or int:
+            The key to use for the source in the file.
+            Can be a string (for matching on names) or
+            an integer for matching on numbers (not recommended).
+
+        """
+        if self.pars.catalog_matching == "name":
+            return self.catalog.name_to_string(source_id)
+        elif self.pars.catalog_matching == "number":
+            return self.catalog.get_index_from_name(source_id)
+        else:
+            raise ValueError(
+                f'Unknown catalog_matching: "{self.pars.catalog_matching}"'
+            )
+
     def populate_sources(self, num_files=None, num_sources=None):
         # raise NotImplementedError("populate_sources() must be implemented in subclass")
         """
@@ -215,7 +305,7 @@ class VirtualObservatory:
             found in the directory.
         num_sources: int
             The maximum number of sources to read from
-            each file. If zero or None (default), which means
+            each file. Zero or None (default) means
             all sources found in each file.
 
         """
@@ -296,7 +386,7 @@ class VirtualObservatory:
             elif self.pars.catalog_matching == "name":
                 value = key
         else:
-            raise ValueError("dataset_identifier must be either 'attribute' or 'key'")
+            raise ValueError('dataset_identifier must be "attribute" or "key"')
 
         if self.pars.catalog_matching == "number":
             value = int(value)
@@ -686,3 +776,13 @@ class VirtualDemoObs(VirtualObservatory):
                 new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets
+
+
+if __name__ == "__main__":
+    from src.catalog import Catalog
+
+    obs = VirtualDemoObs()
+    obs.project = "WD"
+    cat = Catalog(default="WD")
+    cat.load()
+    obs.catalog = cat

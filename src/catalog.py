@@ -50,7 +50,7 @@ class Catalog:
         self.pars.verify()
 
         self.data = None
-        self.name_to_row = None
+        self.inverse_name_index = None
 
     def guess_file_type(self):
         """
@@ -124,7 +124,7 @@ class Catalog:
         if self.data is None or force_reload or force_redownload:
             self.load_from_disk(force_redownload)
         if self.data is not None and len(self.data) > 0:
-            self.make_locator()
+            self.make_inverse_index()
 
     def load_from_disk(self, force_redownload=False):
         """
@@ -198,19 +198,51 @@ class Catalog:
     def check_sanitizer(input_str):
         return SANITIZE_RE.sub("", input_str)
 
-    def make_locator(self):
+    def make_inverse_index(self):
         """
         Generate a dictionary that translates
         from object name to row index.
         """
         if self.data is None:
             raise ValueError("Catalog not loaded.")
-        self.name_to_row = {
-            name: index
+        self.inverse_name_index = {
+            self.name_to_string(name): index
             for name, index in zip(
                 self.data[self.pars.name_column], range(len(self.data))
             )
         }
+
+    def get_index_from_name(self, name):
+        """
+        Get the row index of an object in the catalog,
+        given its name.
+
+        Parameters
+        ----------
+        name: str
+            The name of the object.
+
+        Returns
+        -------
+        int
+            The row index of the object in the catalog.
+        """
+        if self.inverse_name_index is None:
+            self.make_inverse_index()
+        return self.inverse_name_index[self.name_to_string(name)]
+
+    @staticmethod
+    def name_to_string(name):
+        """
+        Convert an object name to a string.
+        """
+
+        if isinstance(name, str):
+            return name
+        elif isinstance(name, bytes):
+            return name.decode("utf-8")
+        else:
+            return str(name)
 
     def setup_from_defaults(self, default):
         """
@@ -262,7 +294,7 @@ class Catalog:
         if index_type == "number":
             return self.data[loc]
         elif index_type == "name":
-            return self.data[self.name_to_row[loc]]
+            return self.data[self.get_index_from_name(loc)]
         else:
             raise ValueError('index_type must be "number" or "name"')
 
@@ -270,7 +302,7 @@ class Catalog:
         """
         Extract the relevant information from a row of the catalog.
         """
-        index = self.name_to_row[row[self.pars.name_column]]
+        index = self.get_index_from_name(row[self.pars.name_column])
         name = self.to_string(row[self.pars.name_column])
         ra = float(row[self.pars.ra_column])
         dec = float(row[self.pars.dec_column])
