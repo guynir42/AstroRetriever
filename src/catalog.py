@@ -52,6 +52,9 @@ class Catalog:
         self.data = None
         self.inverse_name_index = None
 
+    def __len__(self):
+        return len(self.data)
+
     def guess_file_type(self):
         """
         Guess the file type of the catalog.
@@ -231,6 +234,23 @@ class Catalog:
             self.make_inverse_index()
         return self.inverse_name_index[self.name_to_string(name)]
 
+    def get_name_from_index(self, number):
+        """
+        Get the source name from its number (index)
+        in the catalog.
+
+        Parameters
+        ----------
+        number: int
+            The index of the source in the catalog.
+
+        Returns
+        -------
+        str
+            The name of the source.
+        """
+        return self.name_to_string(self.data[self.pars.name_column][number])
+
     @staticmethod
     def name_to_string(name):
         """
@@ -298,9 +318,9 @@ class Catalog:
         else:
             raise ValueError('index_type must be "number" or "name"')
 
-    def extract_from_row(self, row):
+    def dict_from_row(self, row):
         """
-        Extract the relevant information from a row of the catalog.
+        Extract the relevant information from a row of the catalog as a dictionary.
         """
         index = self.get_index_from_name(row[self.pars.name_column])
         name = self.to_string(row[self.pars.name_column])
@@ -317,7 +337,32 @@ class Catalog:
         else:
             alias = None
 
-        return index, name, ra, dec, mag, mag_err, filter_name, alias
+        return dict(
+            index=index,
+            name=name,
+            ra=ra,
+            dec=dec,
+            mag=mag,
+            mag_err=mag_err,
+            filter_name=filter_name,
+            alias=alias,
+        )
+
+    def values_from_row(self, row):
+        """
+        Extract the relevant information from a row of the catalog.
+        """
+        d = self.dict_from_row(row)
+        return (
+            d["index"],
+            d["name"],
+            d["ra"],
+            d["dec"],
+            d["mag"],
+            d["mag_err"],
+            d["filter_name"],
+            d["alias"],
+        )
 
     @staticmethod
     def make_test_catalog(filename=None, number=10, fmt=None):

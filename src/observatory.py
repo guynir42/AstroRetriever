@@ -1,3 +1,4 @@
+import time
 import os
 import glob
 import re
@@ -5,8 +6,11 @@ import yaml
 import validators
 import numpy as np
 import pandas as pd
+import threading
+import concurrent.futures
 
-
+import sqlalchemy as sa
+from sqlalchemy.orm import joinedload
 from src.database import Session
 from src.parameters import Parameters
 from src.source import Source, get_source_identifiers
@@ -16,6 +20,8 @@ from src.detection import DetectionInTime
 from src.catalog import Catalog
 from src.histogram import Histogram
 from src.analysis import Analysis
+
+lock = threading.Lock()
 
 
 class VirtualObservatory:
@@ -74,9 +80,18 @@ class VirtualObservatory:
             dataset_attribute="source_name",
             dataset_identifier="key",
             catalog_matching="name",
-            filename_digits=7,  # number of digits for source index in filenames
-            filename_batch_size=1000,  # number of sources per batch
+            overwrite_files=True,
+            save_ra_minutes=False,
+            save_ra_seconds=False,
+            filekey_prefix=None,
+            filekey_suffix=None,
+            download_batch_size=100,  # number of sources downloaded and held in RAM
+            num_threads_download=1,  # number of threads for downloading
         )
+
+        # freshly downloaded data:
+        self.sources = []
+        self.datasets = []
 
     def initialize(self):
         """
@@ -217,76 +232,327 @@ class VirtualObservatory:
         """
         return None  # TODO: implement this
 
-    def download(self):
-        raise NotImplementedError("download() must be implemented in subclass")
-
-    def get_filename_for_source(self, source_id, type="lcs", ext=".h5"):
+    def download_all_sources(
+        self, start=0, stop=None, save=True, fetch_args={}, dataset_args={}
+    ):
         """
-        Return the filename for the given source ID.
-        Filename convention is:
-        <type>_<project>_<observatory>_<low number>-<high number>.<ext>
+        Download data from the observatory.
+        Will go over all sources in the catalog,
+        (unless start/stop are given),
+        and download the data for each source.
+
+        Each source data is placed in a RawData object.
+        If a source does not exist in the database,
+        it will be created. If it already exists,
+        the data will be added to the existing source.
+        If save=False is given, the data is not saved to disk
+        and the Source and RawData objects are not persisted to database.
+
+        The observatory's pars.download_batch_size parameter controls
+        how many sources are stored in memory at a time.
+        This is useful for large catalogs, where the data
+        for all sources exceeds the available RAM.
 
         Parameters
         ----------
-        source_id: str
-            ID of the source in the catalog.
-        type: str
-            Type of data to save. Use 'lcs' or 'lightcurves' (default)
-            to get a filename that starts with "Lightcurves_".
-        ext: str
-            Extension of the file.
-            This needs to be determined from the data type.
-        """
-        type = type.lower()
-        if type in ["lcs", "lightcurves"]:
-            prefix = "Lightcurves"
-        elif type in ["im", "img", "image", "images"]:
-            prefix = "Images"
-        else:
-            raise ValueError(f'Unknown data type: "{type}". Use "lcs" or "img", etc. ')
-
-        source_index = self.catalog.get_index_from_name(source_id)
-        low = (
-            source_index // self.pars.filename_batch_size
-        ) * self.pars.filename_batch_size
-        high = low + self.pars.filename_batch_size
-
-        if ext.startswith("."):
-            ext = ext[1:]
-        n = self.pars.filename_digits
-        return f"{prefix}_{self.project}_{self.name}_{low:0{n}d}-{high:0{n}d}.{ext}"
-
-    def get_filekey_for_source(self, source_id):
-        """
-        Get the in-file key (e.g., the HDF5 group name)
-        for a source inside a file.
-        This depends on the parameter "catalog_matching".
-        If it is "name" the source key will be the source name (as string).
-        If it is "number" the number of the source in the catalog is used
-        (this is not recommended, since the catalog could change, leaving
-        keys that are not associated with sources).
-
-        Parameters
-        ----------
-        source_id: str or bytes
-            ID of the source in the catalog.
+        start: int, optional
+            Catalog index of first source to download.
+            Default is 0.
+        stop: int
+            Catalog index of last source to download.
+            Default is None, which means the last source.
+        save: bool, optional
+            If True, save the data to disk and the RawData
+            objects to the database (default).
+            If False, do not save the data to disk or the
+            RawData objects to the database (debugging only).
+        dataset_args: dict
+            Additional keyword arguments to pass to the
+            download method of the specific observatory.
+        dataset_args: dict
+            Additional keyword arguments to pass to the
+            constructor of RawData objects.
 
         Returns
         -------
-        str or int:
-            The key to use for the source in the file.
-            Can be a string (for matching on names) or
-            an integer for matching on numbers (not recommended).
+        num_loaded: int
+            Number of sources that have been loaded
+            either from memory or by downloading them.
+            This is useful in case an external loop
+            repeatedly calls this in batches (e.g.,
+            to run analysis as in the Project class)
+            and wants to know when to stop.
 
         """
-        if self.pars.catalog_matching == "name":
-            return self.catalog.name_to_string(source_id)
-        elif self.pars.catalog_matching == "number":
-            return self.catalog.get_index_from_name(source_id)
-        else:
-            raise ValueError(
-                f'Unknown catalog_matching: "{self.pars.catalog_matching}"'
+        cat_length = len(self.catalog)
+        start = 0 if start is None else start
+        stop = cat_length if stop is None else stop
+
+        self.sources = []
+        self.datasets = []
+        num_loaded = 0
+
+        download_batch = max(self.pars.num_threads_download, 1)
+
+        for i in range(start, stop, download_batch):
+
+            if i >= cat_length:
+                break
+
+            # if temporary sources/datasets are full,
+            # clear the lists before adding more
+            if len(self.sources) > self.pars.download_batch_size:
+                self.sources = []
+                self.datasets = []
+
+            num_threads = min(self.pars.num_threads_download, stop - i)
+
+            if num_threads > 1:
+                sources = self.fetch_data_asynchronous(
+                    i, i + num_threads, save, fetch_args, dataset_args
+                )
+            else:  # single threaded execution
+                cat_row = self.catalog.dict_from_row(self.catalog.get_row(i, "number"))
+                s = self.check_and_fetch_source(cat_row, save, fetch_args, dataset_args)
+                sources = [s]
+
+            raw_data = []
+            for s in sources:
+                this_data = None
+                for d in s.raw_data:
+                    if d.observatory == self.name:
+                        this_data = d
+                if this_data is not None:
+                    raw_data.append(this_data)
+                else:
+                    raise RuntimeError(
+                        f"Cannot find data from this observatory on source {s.name}"
+                    )
+
+            # keep a subset of sources/datasets in memory
+            self.sources += sources
+            self.datasets += raw_data
+            num_loaded += len(sources)
+
+        return num_loaded
+
+    def fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
+        """
+        Get data for a few sources, either by loading them
+        from disk or by fetching the data online from
+        the observatory.
+
+        Each source will be handled by a separate thread.
+        The following actions occur in each thread:
+        (1) check if source and raw data exist in DB
+        (2) if not, send a request to the observatory
+        (3) if save=True, save the data to disk and the
+            RawData and Source objects to the database.
+
+        Since all these actions are I/O bound,
+        it makes sense to bundle them up into threads.
+
+        Parameters
+        ----------
+        start: int
+            Catalog index of first source to download.
+        stop: int
+            Catalog index of last source to download.
+        save: bool
+            If True, save the data to disk and the
+            RawData / Source objects to database.
+        fetch_args: dict
+            Additional keyword arguments to pass to the
+            fetch_data_from_observatory method.
+        dataset_args: dict
+            Additional keyword arguments to pass to the
+            constructor of RawData objects.
+
+        Returns
+        -------
+        sources: list
+            List of Source objects.
+        """
+
+        num_threads = stop - start
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = []
+            for i in range(start, stop):
+                cat_row = self.catalog.dict_from_row(self.catalog.get_row(i, "number"))
+                futures.append(
+                    executor.submit(
+                        self.check_and_fetch_source,
+                        cat_row,
+                        save,
+                        fetch_args,
+                        dataset_args,
+                    )
+                )
+
+            done, _ = concurrent.futures.wait(
+                futures, return_when=concurrent.futures.FIRST_COMPLETED
             )
+
+        sources = []
+        for future in done:
+            source = future.result()
+            if isinstance(source, Exception):
+                raise source
+            if not isinstance(source, Source):
+                raise RuntimeError(
+                    f"Source is not a Source object, but a {type(source)}. "
+                )
+            sources.append(source)
+
+        return sources
+
+    def check_and_fetch_source(self, cat_row, save, fetch_args, dataset_args):
+        """
+        Check if a source exists in the database,
+        and if not, fetch the data from the observatory.
+
+        Parameters
+        ----------
+        cat_row: dict
+            A row in the catalog.
+            Must contain at least an object ID
+            or RA/Dec coordinates.
+        save: bool
+            If True, save the data to disk and the
+            RawData / Source objects to database.
+        fetch_args: dict
+            Additional keyword arguments to pass to the
+            fetch_data_from_observatory method.
+        dataset_args: dict
+            Additional keyword arguments to pass to the
+            constructor of RawData objects.
+
+        Returns
+        -------
+        source: Source
+            A Source object. It should have at least
+            one RawData object attached, from this
+            observatory (it may have more data from
+            other observatories).
+
+        """
+        with Session() as session:
+            source = session.scalars(
+                sa.select(Source)
+                .filter(Source.name == cat_row["name"])
+                .options(joinedload(Source.raw_data))
+            ).first()
+
+            if source is None:
+                source = Source(**cat_row, project=self.project)
+
+            raw_data = session.scalars(
+                sa.select(RawData).filter(
+                    RawData.source_name == source.name, RawData.observatory == self.name
+                )
+            ).first()
+
+            # no data on DB, must re-fetch from observatory website:
+            if raw_data is None:
+                data, altdata = self.fetch_data_from_observatory(
+                    cat_row, **fetch_args
+                )  # <-- magic happens here!
+                raw_data = RawData(
+                    data=data,
+                    altdata=altdata,
+                    project=self.project,
+                    observatory=self.name,
+                    **dataset_args,
+                )
+
+            if not any([r.observatory == self.name for r in source.raw_data]):
+                source.raw_data.append(raw_data)
+
+            # unless debugging, you'd want to save this data
+            if save:
+
+                if source.ra is not None:
+                    ra = source.ra
+                    ra_deg = np.floor(ra)
+                    if self.pars.save_ra_minutes:
+                        ra_minute = np.floor((ra - ra_deg) * 60)
+                    else:
+                        ra_minute = None
+                    if self.pars.save_ra_seconds:
+                        ra_second = np.floor((ra - ra_deg - ra_minute / 60) * 3600)
+                    else:
+                        ra_second = None
+                else:
+                    ra_deg = None
+                    ra_minute = None
+                    ra_second = None
+
+                try:
+                    session.add(source)
+                    # try to save the data to disk
+                    lock.acquire()  # thread blocks at this line until it can obtain lock
+                    raw_data.save(
+                        overwrite=self.pars.overwrite_files,
+                        source_name=source.name,
+                        ra_deg=ra_deg,
+                        ra_minute=ra_minute,
+                        ra_second=ra_second,
+                        key_prefix=self.pars.filekey_prefix,
+                        key_suffix=self.pars.filekey_suffix,
+                    )
+                    lock.release()
+
+                    # try to save the source+data to the database
+                    session.commit()
+                except:
+                    # if saving to disk or database fails,
+                    # make sure we do not leave orphans
+                    session.rollback()
+
+                    # did this RawData object already exist?
+                    # if so, do not remove the file that goes with it...
+                    raw_data_check = session.scalars(
+                        sa.select(RawData).filter(
+                            RawData.source_id == source.id,
+                            RawData.observatory == self.name,
+                        )
+                    ).first()
+                    if raw_data_check is None:
+                        # the raw data is not in the database,
+                        # so delete from disk the data matching this
+                        # new RawData object
+                        raw_data.delete_data_from_disk()
+                    raise
+
+        return source
+
+    def fetch_data_from_observatory(self, cat_row, **kwargs):
+        """
+        Fetch data from the observatory for a given source.
+        Must return a dataframe (or equivalent), even if it is an empty one.
+        This must be implemented by each observatory subclass.
+
+        Parameters
+        ----------
+        cat_row: dict like
+            A row in the catalog for a specific source.
+            In general, this row should contain the following keys:
+            name, ra, dec, mag, filter_name (saying which band the mag is in).
+        kwargs: dict
+            Additional keyword arguments to pass to the fetcher.
+
+        Returns
+        -------
+        data : pandas.DataFrame or other data structure
+            Raw data from the observatory, to be put into a RawData object.
+        altdata: dict
+            Additional data to be stored in the RawData object.
+
+        """
+        raise NotImplementedError(
+            "fetch_data_from_observatory() must be implemented in subclass"
+        )
 
     def populate_sources(self, num_files=None, num_sources=None):
         # raise NotImplementedError("populate_sources() must be implemented in subclass")
@@ -451,7 +717,7 @@ class VirtualObservatory:
             mag_err,
             filter_name,
             alias,
-        ) = self.catalog.extract_from_row(row)
+        ) = self.catalog.values_from_row(row)
 
         new_source = Source(
             name=name,
@@ -668,12 +934,78 @@ class VirtualDemoObs(VirtualObservatory):
         if not isinstance(self.pars.data_glob, str):
             raise ValueError("data_glob must be set to a string.")
 
-    def download(self):
+    def fetch_data_from_observatory(
+        self, cat_row, wait_time=0, verbose=False, sim_args={}
+    ):
         """
-        Generates a fake download of data.
+        Fetch data from the observatory for a given source.
+        Since this is a demo observatory it would not actually
+        fetch anything. Instead, it will generate random data
+        and return it after a short pause.
+
+        Parameters
+        ----------
+        cat_row: dict like
+            A row in the catalog for a specific source.
+            In general, this row should contain the following keys:
+            name, ra, dec, mag, filter_name (saying which band the mag is in).
+        wait_time: int or float, optional
+            If given, will make the simulator pause for a short time.
+            The length of the pause is a Poisson distributed number of seconds,
+            with an average given by the wait_time value.
+        sim_args: dict
+            A dictionary passed into the simulate_lightcuve function.
+
+        Returns
+        -------
+        data : pandas.DataFrame or other data structure
+            Raw data from the observatory, to be put into a RawData object.
+        altdata: dict
+            Additional data to be stored in the RawData object.
+
         """
-        pass
-        # TODO: make a simple lightcurve simulator
+
+        if verbose:
+            print(f'Fetching data from demo observatory for source {cat_row["index"]}')
+        wait_time_seconds = np.random.poisson(wait_time)
+        data = self.simulate_lightcurve(**sim_args)
+        altdata = {
+            "demo_boolean": self.pars.demo_boolean,
+            "wait_time": wait_time_seconds,
+        }
+
+        time.sleep(wait_time_seconds)
+
+        if verbose:
+            print(
+                f'Finished fetch data for source {cat_row["index"]} after {wait_time_seconds} seconds'
+            )
+
+        return data, altdata
+
+    @staticmethod
+    def simulate_lightcurve(
+        num_points=100,
+        mjd_range=(57000, 58000),
+        shuffle_time=False,
+        mag_err_range=(0.09, 0.11),
+        mean_mag=18,
+        exptime=30,
+        filter="R",
+    ):
+        if shuffle_time:
+            mjd = np.random.uniform(mjd_range[0], mjd_range[1], num_points)
+        else:
+            mjd = np.linspace(mjd_range[0], mjd_range[1], num_points)
+
+        mag_err = np.random.uniform(mag_err_range[0], mag_err_range[1], num_points)
+        mag = np.random.normal(mean_mag, mag_err, num_points)
+        flag = np.zeros(num_points, dtype=bool)
+        test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
+        df = pd.DataFrame(test_data)
+        df["exptime"] = exptime
+
+        return df
 
     def reduce_to_lightcurves(
         self, datasets, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
@@ -780,8 +1112,12 @@ class VirtualDemoObs(VirtualObservatory):
 
 if __name__ == "__main__":
     from src.catalog import Catalog
+    from src import dataset
 
-    obs = VirtualDemoObs()
+    dataset.DATA_ROOT = "/home/guyn/data"
+
+    obs = VirtualDemoObs(num_threads_download=5)
+    # obs = VirtualObservatory()
     obs.project = "WD"
     cat = Catalog(default="WD")
     cat.load()

@@ -98,41 +98,25 @@ class Source(Base, conesearch_alchemy.Point):
 
     __tablename__ = "sources"
 
-    def __init__(
-        self,
-        name,
-        ra,
-        dec,
-        project=None,
-        alias=None,
-        mag=None,
-        mag_err=None,
-        mag_filter=None,
-    ):
+    def __init__(self, **kwargs):
 
-        self.name = name
-        self.ra = ra
-        self.dec = dec
+        self.name = kwargs.get("name", None)
+        if self.name is None:
+            raise ValueError("Source must have a name.")
 
-        if project is not None:
-            self.project = project
-        else:
-            self.project = DEFAULT_PROJECT
-
-        if alias is not None:
-            self.alias = alias
-
-        if mag is not None:
-            self.mag = mag
-
-        if mag_err is not None:
-            self.mag_err = mag_err
-
-        if mag_filter is not None:
-            self.mag_filter = mag_filter
+        self.ra = kwargs.get("ra", None)
+        self.dec = kwargs.get("dec", None)
+        self.project = kwargs.get("project", DEFAULT_PROJECT)
+        self.mag = kwargs.get("mag", None)
+        self.mag_err = kwargs.get("mag_err", None)
+        self.filter_name = kwargs.get("mag_band", None)
+        self.alias = kwargs.get("alias", None)
 
         # assign this coordinate a healpix ID
-        self.healpix = ha.constants.HPX.lonlat_to_healpix(ra * u.deg, dec * u.deg)
+        if self.ra is not None and self.dec is not None:
+            self.healpix = ha.constants.HPX.lonlat_to_healpix(
+                self.ra * u.deg, self.dec * u.deg
+            )
 
     def __repr__(self):
         string = (
@@ -290,7 +274,7 @@ class Source(Base, conesearch_alchemy.Point):
 
     raw_data = relationship(
         "RawData",
-        backref="sources",
+        back_populates="source",
         cascade="save-update, merge, refresh-expire, expunge, delete",
         lazy="selectin",
         single_parent=True,
@@ -300,7 +284,7 @@ class Source(Base, conesearch_alchemy.Point):
 
     lightcurves = relationship(
         "Lightcurve",
-        backref="sources",
+        back_populates="source",
         cascade="save-update, merge, refresh-expire, expunge, delete",
         lazy="selectin",
         single_parent=True,

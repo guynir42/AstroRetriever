@@ -1,6 +1,8 @@
 import os
 import uuid
 import string
+import warnings
+from tables import NaturalNameWarning
 
 import numpy as np
 import pandas as pd
@@ -19,7 +21,7 @@ from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base, Session, engine
-
+from src.catalog import Catalog
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -50,7 +52,7 @@ class DatasetMixin:
         Each Dataset is associated with one source
         (via the source_id foreign key).
         If there are multiple datasets in a file,
-        use the "key" parameter to identify which
+        use the "filekey" parameter to identify which
         one is associated with this Dataset.
 
         Parameters will be applied from kwargs
@@ -104,9 +106,9 @@ class DatasetMixin:
         if not isinstance(self.filename, (str, type(None))):
             raise ValueError(f"Filename must be a string, not {type(self.filename)}")
 
-        if not isinstance(self.key, (str, int, type(None))):
+        if not isinstance(self.filekey, (str, int, type(None))):
             raise ValueError(
-                f"Key must be a string, int, or None, not {type(self.key)}"
+                f"Key must be a string, int, or None, not {type(self.filekey)}"
             )
 
         # guess some attributes that were not given
@@ -126,8 +128,8 @@ class DatasetMixin:
 
         string += f", file: {self.filename}"
 
-        if self.key:
-            string += f" (key: {self.key})"
+        if self.filekey:
+            string += f" (key: {self.filekey})"
 
         string += ")"
 
@@ -217,6 +219,7 @@ class DatasetMixin:
         Calculate the size of the data file.
         """
         # TODO: implement this
+        # ref: https://stackoverflow.com/questions/18089667/how-to-estimate-how-much-memory-a-pandas-dataframe-will-need
         return 0
 
     def get_path(self):
@@ -290,7 +293,7 @@ class DatasetMixin:
         Load the data from a HDF5 file.
         """
         with pd.HDFStore(self.get_fullname()) as store:
-            key = self.key
+            key = self.filekey
             if key is None:
                 if len(store.keys()) == 1:
                     key = store.keys()[0]
@@ -321,37 +324,177 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    def invent_filename(self, batch=1000, digits=7):
+    def invent_filename(self, ra_deg=None, ra_minute=None, ra_second=None):
+
         """
-        Generate a random filename.
-        If the source id is given,
-        will put the data in a file named
-        <type>_<source_id_lower>_<source_id_higher>
-        (with the appropriate extension).
-        The lower and higher would be the previous
-        and next batch of sources (given by batch),
-        and zero padded to the number given by digits.
+        Generate a filename with some pre-defined format
+        that is consistent enough to have multiple sources
+        saved to the same file in a logical way that is
+        easy to figure out even when file data is orphaned
+        from the database objects.
+
+        The default way to decide which source goes into which
+        file is using RA (right ascension).
+        This is a closed interval (0-360) and for most
+        all sky surveys the sources are spread out (mostly)
+        evenly, although the galactic center may be more dense
+        with sources, causing larger files with RA~270.
+
+        If given only ra_deg, will split the sources into
+        360 files, one for each integer degree bin.
+        The filename will be <Observatory>_<data_type>_RA<ra_deg>.ext
+        where .ext is the extension and ra_deg will be a 3-digit integer
+        value (zero padded) containing all sources with RA in the range
+        [ra_deg, ra_deg+1).
+
+        If ra_minute is given, will split the sources into 360x60 files,
+        one for each integer minute bin. That means the filename will be:
+        <Observatory>_<data_type>_RA<ra_deg>_<ra_minute>.ext
+        If adding seconds, this will be:
+        <Observatory>_<data_type>_RA<ra_deg>_<ra_minute>_<ra_second>.ext
+        These modes are useful if the survey you are working with
+        has very dense coverage in a small area, and you want to
+        split the sources into smaller files.
+
+        If not given a source right ascension at all,
+        the ra range will be replaced with a random string.
+        <observatory>_<data_type>_<random 16 char string>.ext
+
+        For subclasses of RawData that are reductions of the data
+        found in another file (and have a "raw_data_filename" attribute),
+        will just use that filename, appending the string "_reduced"
+        before adding the extension.
+
+        Parameters
+        ----------
+        ra_deg : int, optional
+            The integer degree of the right ascension of the source.
+            If given as float, will just use floor(ra_deg).
+            If given as None, filename will have a random string instead.
+            (that means each source will have its own file).
+            The default is None, but it is highly recommended to give
+            the RA of the source when saving.
+        ra_minute : int, optional
+            The integer minute of the right ascension of the source.
+            If given as float, will just use floor(ra_minute).
+            if given as None, will only split sources into integer
+            degree filenames (default).
+        ra_second : int, optional
+            The integer second of the right ascension of the source.
+            If given as float, will just use floor(ra_second).
+            if given as None, will only split sources into integer
+            degree and possibly minute filenames (default).
+
         """
         if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:
             basename = os.path.splitext(self.raw_data_filename)[0]
             self.filename = basename + "_reduced"
         else:
-            if self.source_id is not None:
-                lower = self.source_id // batch * batch
-                higher = (self.source_id // batch + 1) * batch
-                self.filename = f"{lower:0{digits}d}_{higher:0{digits}d}"
+            # if source is not None:
+            #     if isinstance(source, str) and catalog is None:
+            #         source = source.strip().replace(" ", "_")
+            #         self.filename = f'{source}'
+            #     else:
+            #         if isinstance(source, (int, float)):
+            #             source_number = int(source)
+            #         elif catalog is not None and isinstance(source, str):
+            #             if not isinstance(catalog, Catalog):
+            #                 raise TypeError("catalog must be a Catalog object")
+            #             source_number = catalog.get_index_from_name(source)
+            #         else:
+            #             raise TypeError("source must be an int or str")
+            #
+            #         lower = int(source_number // batch) * batch
+            #         upper = lower + batch
+            #         self.filename = f"{lower:0{digits}d}-{upper:0{digits}d}"
+            if ra_second is not None and (ra_deg is None or ra_minute is None):
+                raise ValueError(
+                    "If ra_second is given, ra_deg and ra_minute must also be given"
+                )
+            if ra_minute is not None and ra_deg is None:
+                raise ValueError("If ra_minute is given, ra_deg must also be given")
+
+            if ra_deg is not None:
+                ra = int(ra_deg)
+                binning = f"RA{ra:03d}"
+
+                if ra_minute is not None:
+                    ra = int(ra_minute)
+                    binning += f"_{ra:02d}"
+
+                    if ra_second is not None:
+                        ra = int(ra_second)
+                        binning += f"_{ra:02d}"
+
             else:
-                self.filename = self.random_string(15)
-            # add prefix using the type of data
-            if self.type:
-                self.filename = self.type + "_" + self.filename
-            else:
-                self.filename = "data_" + self.filename
+                binning = self.random_string(15)
+
+            # add prefix using the type of data, project, and observatory
+            data_type = self.type if self.type is not None else "Data_"
+            self.filename = f"{self.observatory.upper()}_{data_type}_{binning}"
 
         # add extension
         self.filename += self.guess_extension()
 
-    def save(self, overwrite=None):
+    def invent_filekey(self, source_name=None, prefix=None, suffix=None):
+        """
+        Make an in-file key string to save the data into.
+        This is used for e.g., HDF5 group names for each
+        individual source's data.
+        If source name is given as string / bytes, will use that
+        as the key. If no source is given,
+        will use a random 8 character string.
+
+        The prefix and suffix can be used to add additional
+        strings to the start or end of the key.
+
+        Parameters
+        ----------
+        source_name: str or int, optional
+            Name or number of the source.
+        prefix: str, optional
+            Add this string before the source name key.
+        suffix: str, optional
+            Add this string after the source name key.
+
+        Returns
+        -------
+        str
+            The key to use for the data in the file.
+        """
+        if source_name is None and self.source is not None:
+            source_name = self.source.name
+
+        if source_name is not None:
+            if isinstance(source_name, bytes):
+                source_name = source_name.decode("utf-8")
+
+            if isinstance(source_name, str):
+                self.filekey = source_name
+            else:
+                raise TypeError("source must be a string")
+        else:
+            self.filekey = self.random_string(8)
+
+        if prefix is not None:
+            if prefix.endswith("_"):  # remove trailing underscore
+                prefix = prefix[:-1]
+            self.filekey = f"{prefix}_{self.filekey}"
+        if suffix is not None:
+            if suffix.startswith("_"):  # remove leading underscore
+                suffix = suffix[1:]
+            self.filekey = f"{self.filekey}_{suffix}"
+
+    def save(
+        self,
+        overwrite=None,
+        source_name=None,
+        ra_deg=None,
+        ra_minute=None,
+        ra_second=None,
+        key_prefix=None,
+        key_suffix=None,
+    ):
         """
         Save the data to disk.
 
@@ -360,15 +503,54 @@ class DatasetMixin:
         overwrite: bool
             If True, overwrite the file if it already exists.
             If False, raise an error if the file already exists.
-            If None, use the "overwrite" attribute of the object
+            If None (default), use the "overwrite" attribute of the object.
+        source_name: str, optional
+            Name of the source to save the data for.
+            If not given, will use the source attached to
+            this object to get the name (if it exists).
+            If not found, will use a random string for
+            the file key.
+        ra_deg: int, optional
+            The integer degree of the right ascension of the source.
+            Used to determine the filename such that multiple sources
+            are grouped into a single file.
+            If given as float, will just use floor(ra_deg).
+            If given as None, filename will have a random string instead.
+            (that means each source will have its own file).
+            The default is None, but it is highly recommended to give
+            the RA of the source when saving.
+        ra_minute: int, optional
+            The integer minute of the right ascension of the source.
+            If given as float, will just use floor(ra_minute).
+            if given as None, will only split sources into integer
+            degree filenames (default).
+        ra_second: int, optional
+            The integer second of the right ascension of the source.
+            If given as float, will just use floor(ra_second).
+            if given as None, will only split sources into integer
+            degree and possibly minute filenames (default).
+        key_prefix: str, optional
+            Add this string before the internal file key
+            (which is the source name or a random string).
+        key_suffix: str, optional
+            Add this string after the internal file key
+            (which is the source name or a random string).
 
         """
+        if ra_deg is None and self.source is not None:
+            ra_deg = self.source.ra
+
         # if no filename/key are given, make them up
         if self.filename is None:
-            self.invent_filename()
+            self.invent_filename(
+                ra_deg=ra_deg, ra_minute=ra_minute, ra_second=ra_second
+            )
 
-        if self.key is None and self.format in ("hdf5"):
-            self.key = self.random_string(8)
+        # for any of the formats where we need an in-file key:
+        if self.filekey is None and self.format in ("hdf5",):
+            self.invent_filekey(
+                source_name=source_name, prefix=key_prefix, suffix=key_suffix
+            )
 
         if overwrite is None:
             overwrite = self.overwrite
@@ -395,31 +577,35 @@ class DatasetMixin:
             raise ValueError(f"Unknown format {self.format}")
 
     def save_hdf5(self, overwrite):
-        if isinstance(self.data, xr.Dataset):
-            # TODO: check if key already exists!
-            self.data.to_hdf(self.get_fullname(), key=self.key)  # this actually works??
-        elif isinstance(self.data, pd.DataFrame):
-            with pd.HDFStore(self.get_fullname()) as store:
-                if self.key in store:
-                    if overwrite:
-                        store.remove(self.key)
-                    else:
-                        raise ValueError(
-                            f"Key {self.key} already exists in file {self.get_fullname()}"
-                        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NaturalNameWarning)
+            if isinstance(self.data, xr.Dataset):
+                # TODO: check if key already exists!
+                self.data.to_hdf(
+                    self.get_fullname(), key=self.filekey
+                )  # this actually works??
+            elif isinstance(self.data, pd.DataFrame):
+                with pd.HDFStore(self.get_fullname()) as store:
+                    if self.filekey in store:
+                        if overwrite:
+                            store.remove(self.filekey)
+                        else:
+                            raise ValueError(
+                                f"Key {self.filekey} already exists in file {self.get_fullname()}"
+                            )
 
-                store.put(self.key, self.data)
-                if self.altdata:
-                    for k, v in self.altdata.items():
-                        setattr(store.get_storer(self.key).attrs, k, v)
-        elif isinstance(self.data, np.ndarray):
-            with h5py.File(self.get_fullname(), "w") as f:
-                f.create_dataset(self.key, data=self.data)
-                if self.altdata:
-                    for k, v in self.altdata.items():
-                        f[self.key].attrs[k] = v
-        else:
-            raise ValueError(f"Unknown data type {type(self.data)}")
+                    store.put(self.filekey, self.data)
+                    if self.altdata:
+                        for k, v in self.altdata.items():
+                            setattr(store.get_storer(self.filekey).attrs, k, v)
+            elif isinstance(self.data, np.ndarray):
+                with h5py.File(self.get_fullname(), "w") as f:
+                    f.create_dataset(self.filekey, data=self.data)
+                    if self.altdata:
+                        for k, v in self.altdata.items():
+                            f[self.filekey].attrs[k] = v
+            else:
+                raise ValueError(f"Unknown data type {type(self.data)}")
 
     def save_fits(self, overwrite):
         pass
@@ -435,15 +621,16 @@ class DatasetMixin:
 
     def delete_data_from_disk(self):
         """
-        Delete the data file from disk,
-        if it exists.
+        Delete the data from disk, if it exists.
+        If the format is hdf5, will delete the key from the file.
+        If there are no more keys in the file, will delete the file.
         """
         if self.check_file_exists():
             need_to_delete = False
             if self.format == "hdf5":
                 with pd.HDFStore(self.get_fullname()) as store:
-                    if self.key in store:
-                        store.remove(self.key)
+                    if self.filekey in store:
+                        store.remove(self.filekey)
                     if len(store.keys()) == 0:
                         need_to_delete = True
 
@@ -794,6 +981,13 @@ class DatasetMixin:
     def mjds(self, value):
         self._mjds = value
 
+    @classmethod
+    def backref_name(cls):
+        if cls.__name__ == "RawData":
+            return "raw_data"
+        elif cls.__name__ == "LightCurve":
+            return "lightcurves"
+
     @declared_attr
     def source_id(cls):
         return sa.Column(
@@ -803,6 +997,34 @@ class DatasetMixin:
             index=True,
             doc="ID of the source this dataset is associated with",
         )
+
+    @declared_attr
+    def source(cls):
+        return orm.relationship(
+            "Source",
+            back_populates=cls.backref_name(),
+            doc="Source this dataset is associated with",
+            uselist=False,
+            foreign_keys=f"{cls.__name__}.source_id",
+        )
+
+    @property
+    def source_name(self):
+        return self.source.name
+
+    project = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Project this dataset is associated with",
+    )
+
+    observatory = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Observatory this dataset is associated with",
+    )
 
     # original series of images used to make this dataset
     series_identifier = sa.Column(
@@ -834,7 +1056,7 @@ class DatasetMixin:
         "If relative path, it is relative to DATA_ROOT. ",
     )
 
-    key = sa.Column(
+    filekey = sa.Column(
         sa.String,
         nullable=True,
         doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
@@ -1116,8 +1338,8 @@ class Lightcurve(DatasetMixin, Base):
         string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
         string += f", file: {self.filename}"
 
-        if self.key:
-            string += f" (key: {self.key})"
+        if self.filekey:
+            string += f" (key: {self.filekey})"
 
         string += ")"
 

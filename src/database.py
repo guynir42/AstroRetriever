@@ -16,7 +16,7 @@ import os
 import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
 
 DATA_ROOT = os.getenv("VO_DATA")
 if DATA_ROOT is None:
@@ -32,7 +32,7 @@ if not database_exists(engine.url):
 
 # print(f"Is database found: {database_exists(engine.url)}")
 
-Session = sessionmaker(bind=engine)
+Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 
 def clear_tables():
