@@ -90,8 +90,7 @@ class DatasetMixin:
         # first input data to allow
         # the object to calculate some attributes
         if "data" in kwargs:
-            self.data = kwargs["data"]
-            del kwargs["data"]
+            self.data = kwargs.pop("data")
 
         # if no project is given, assume testing
         # and make DB objects that can be deleted
@@ -99,9 +98,13 @@ class DatasetMixin:
         self.project = "test"
 
         # override any existing attributes
-        for k, v in kwargs.items():
+        for k, v in list(kwargs.items()):
             if hasattr(self, k):
-                setattr(self, k, v)
+                setattr(self, k, kwargs.pop(k))
+
+        additional_keywords = []
+        if any([k not in additional_keywords for k in kwargs.items()]):
+            raise ValueError(f"Unknown keyword arguments: {kwargs}")
 
         if not isinstance(self.filename, (str, type(None))):
             raise ValueError(f"Filename must be a string, not {type(self.filename)}")
@@ -429,9 +432,10 @@ class DatasetMixin:
             else:
                 binning = self.random_string(15)
 
-            # add prefix using the type of data, project, and observatory
+            # add prefix using the type of data and observatory
+            obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
             data_type = self.type if self.type is not None else "Data_"
-            self.filename = f"{self.observatory.upper()}_{data_type}_{binning}"
+            self.filename = f"{obs}_{data_type}_{binning}"
 
         # add extension
         self.filename += self.guess_extension()
@@ -1012,13 +1016,6 @@ class DatasetMixin:
     def source_name(self):
         return self.source.name
 
-    project = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Project this dataset is associated with",
-    )
-
     observatory = sa.Column(
         sa.String,
         nullable=False,
@@ -1269,6 +1266,8 @@ class Lightcurve(DatasetMixin, Base):
         """
         if "data" not in kwargs:
             raise ValueError("Lightcurve must be initialized with data")
+
+        self.filtmap = None  # get this as possible argument
 
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
@@ -1663,6 +1662,13 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         return ax
+
+    project = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Project this lightcurve is associated with",
+    )
 
     raw_data_id = sa.Column(
         sa.Integer,

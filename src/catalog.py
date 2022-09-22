@@ -304,19 +304,56 @@ class Catalog:
             self.pars.mag_err_column = "phot_g_mean_mag_error"
             self.pars.mag_filter_name = "Gaia_G"
 
-    def get_row(self, loc, index_type="number"):
+    def get_row(self, loc, index_type="number", output="raw"):
+        """
+        Get a row from the catalog.
+        Can get it by index or by name.
+        The output parameter can be "raw" or "dict".
+        If "raw", will give the row in the catalog data
+        (could be a pandas Series or a numpy array).
+        If "dict" will copy only a few columns into a dictionary,
+        using the dict_from_row() method.
 
+        Parameters
+        ----------
+        loc: int or str
+            The index or name of the object.
+        index_type: str
+            Either "number" or "name".
+            If "number" will index the catalog based
+            on the serial number in the data table.
+            If "name" will index the catalog based
+            on the name of the object (using the
+            inverse index).
+        output: str
+            Either "raw" or "dict".
+            If "raw" will return the row in the catalog data.
+            If "dict" will return a dictionary with a few columns.
+
+        Returns
+        -------
+        dict or pandas Series or numpy array
+            The row in the catalog data.
+
+        """
         if self.data is None:
             raise ValueError("Catalog not loaded.")
         if len(self.data) == 0:
             raise ValueError("Catalog is empty.")
 
         if index_type == "number":
-            return self.data[loc]
+            row = self.data[loc]
         elif index_type == "name":
-            return self.data[self.get_index_from_name(loc)]
+            row = self.data[self.get_index_from_name(loc)]
         else:
             raise ValueError('index_type must be "number" or "name"')
+
+        if output == "raw":
+            return row
+        elif output == "dict":
+            return self.dict_from_row(row)
+        else:
+            raise ValueError('Parameter "output" must be "raw" or "dict"')
 
     def dict_from_row(self, row):
         """
@@ -338,13 +375,13 @@ class Catalog:
             alias = None
 
         return dict(
-            index=index,
+            cat_index=index,
             name=name,
             ra=ra,
             dec=dec,
             mag=mag,
             mag_err=mag_err,
-            filter_name=filter_name,
+            mag_filter=filter_name,
             alias=alias,
         )
 

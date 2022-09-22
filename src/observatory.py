@@ -312,7 +312,7 @@ class VirtualObservatory:
                     i, i + num_threads, save, fetch_args, dataset_args
                 )
             else:  # single threaded execution
-                cat_row = self.catalog.dict_from_row(self.catalog.get_row(i, "number"))
+                cat_row = self.catalog.get_row(i, "number", "dict")
                 s = self.check_and_fetch_source(cat_row, save, fetch_args, dataset_args)
                 sources = [s]
 
@@ -379,7 +379,7 @@ class VirtualObservatory:
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = []
             for i in range(start, stop):
-                cat_row = self.catalog.dict_from_row(self.catalog.get_row(i, "number"))
+                cat_row = self.catalog.get_row(i, "number", "dict")
                 futures.append(
                     executor.submit(
                         self.check_and_fetch_source,
@@ -407,7 +407,9 @@ class VirtualObservatory:
 
         return sources
 
-    def check_and_fetch_source(self, cat_row, save, fetch_args, dataset_args):
+    def check_and_fetch_source(
+        self, cat_row, save=True, fetch_args={}, dataset_args={}
+    ):
         """
         Check if a source exists in the database,
         and if not, fetch the data from the observatory.

@@ -100,23 +100,28 @@ class Source(Base, conesearch_alchemy.Point):
 
     def __init__(self, **kwargs):
 
-        self.name = kwargs.get("name", None)
+        self.name = kwargs.pop("name", None)
         if self.name is None:
             raise ValueError("Source must have a name.")
 
-        self.ra = kwargs.get("ra", None)
-        self.dec = kwargs.get("dec", None)
-        self.project = kwargs.get("project", DEFAULT_PROJECT)
-        self.mag = kwargs.get("mag", None)
-        self.mag_err = kwargs.get("mag_err", None)
-        self.filter_name = kwargs.get("mag_band", None)
-        self.alias = kwargs.get("alias", None)
+        self.ra = kwargs.pop("ra", None)
+        self.dec = kwargs.pop("dec", None)
+        self.project = kwargs.pop("project", DEFAULT_PROJECT)
+        self.mag = kwargs.pop("mag", None)
+        self.mag_err = kwargs.pop("mag_err", None)
+        self.mag_filter = kwargs.pop("mag_filter", None)
+        self.alias = kwargs.pop("alias", None)
+        self.cat_index = kwargs.pop("cat_index", None)
 
         # assign this coordinate a healpix ID
         if self.ra is not None and self.dec is not None:
             self.healpix = ha.constants.HPX.lonlat_to_healpix(
                 self.ra * u.deg, self.dec * u.deg
             )
+
+        additional_keywords = []
+        if any([k not in additional_keywords for k in kwargs.items()]):
+            raise ValueError(f"Unknown keyword arguments: {kwargs}")
 
     def __repr__(self):
         string = (

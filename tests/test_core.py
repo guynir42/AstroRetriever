@@ -306,9 +306,15 @@ def test_observatory_filename_conventions(test_project):
     name = cat.name_to_string(cat.data[num][col])
     assert name.startswith("WDJ")
 
+    # get some info on the source
+    cat_row = cat.get_row(num, "number", "dict")
+
     # test the filename conventions
-    filename = obs.get_filename_for_source(name, type="lcs", ext="h5")
-    assert filename == "Lightcurves_test_project_demo_0000000-0001000.h5"
+    source = obs.check_and_fetch_source(cat_row, save=False)
+    data = source.raw_data[0]
+    data.invent_filename(ra_deg=cat_row["ra"])
+
+    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
 
     # try it again with higher numbers in the catalog
     num = np.random.randint(100000, 101000)
@@ -317,20 +323,15 @@ def test_observatory_filename_conventions(test_project):
     assert name.startswith("WDJ")
 
     # test the filename conventions
-    filename = obs.get_filename_for_source(name, type="lcs", ext="h5")
-    assert filename == "Lightcurves_test_project_demo_0100000-0101000.h5"
+    source = obs.check_and_fetch_source(cat_row, save=False)
+    data = source.raw_data[0]
+    data.invent_filename(ra_deg=cat_row["ra"])
 
-    filename = obs.get_filename_for_source(name, type="img", ext=".fits")
-    assert filename == "Images_test_project_demo_0100000-0101000.fits"
+    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
 
     # test the key conventions:
-    obs.pars.catalog_matching = "name"
-    key = obs.get_filekey_for_source(name)
-    assert key == name
-
-    obs.pars.catalog_matching = "number"
-    key = obs.get_filekey_for_source(name)
-    assert key == num
+    data.invent_filekey(source_name=name)
+    assert data.filekey == name
 
 
 def test_add_source_and_data():
@@ -340,6 +341,12 @@ def test_add_source_and_data():
         with Session() as session:
             # create a random source
             source_id = str(uuid.uuid4())
+
+            # make sure source cannot be initialized with bad keyword
+            with pytest.raises(ValueError) as e:
+                _ = Source(name=source_id, foobar="test")
+                assert "Unknown keyword argument" in str(e.value)
+
             new_source = Source(
                 name=source_id,
                 ra=np.random.uniform(0, 360),
@@ -355,9 +362,18 @@ def test_add_source_and_data():
             test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt)
             df = pd.DataFrame(test_data)
 
+            # make sure data cannot be initialized with bad keyword
+            with pytest.raises(ValueError) as e:
+                _ = RawData(data=df, foobar="test")
+                assert "Unknown keyword argument" in str(e.value)
+
             # add the data to a database mapped object
             new_data = RawData(
-                data=df, project="test", folder="data_temp", altdata=dict(foo="bar")
+                data=df,
+                observatory="demo",
+                project="test",
+                folder="data_temp",
+                altdata=dict(foo="bar"),
             )
 
             # check the times make sense
@@ -413,7 +429,7 @@ def test_add_source_and_data():
             assert sources is not None
             assert len(sources.raw_data) == 1
             assert sources.raw_data[0].filename == filename
-            assert sources.raw_data[0].key == new_data.key
+            assert sources.raw_data[0].filekey == new_data.filekey
             assert sources.raw_data[0].source_id == new_source.id
             # this autoloads the data:
             assert sources.raw_data[0].data.equals(df)
@@ -440,7 +456,7 @@ def test_add_source_and_data():
         session.execute(sa.delete(Source).where(Source.name == source_id))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(RawData.key == new_data.key)
+            sa.select(RawData).where(RawData.filekey == new_data.filekey)
         ).first()
         assert data is None
 
@@ -454,13 +470,14 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
             # add the data to a database mapped object
             source_id = new_source.id
             new_source.project = test_project.name
-            raw_photometry_no_exptime.save()
+            raw_photometry_no_exptime.save(overwrite=True)
             new_source.raw_data.append(raw_photometry_no_exptime)
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
             obs_key = list(test_project.observatories.keys())[0]
-            obs = test_project.observatories[obs_key]  # key should be "demo"
+            assert obs_key == "demo"
+            obs = test_project.observatories[obs_key]
             assert isinstance(obs, VirtualDemoObs)
 
             # cannot generate photometric data without an exposure time
@@ -482,7 +499,7 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
             session.rollback()
 
             # must save dataset before adding it to DB
-            [lc.save() for lc in lightcurves]
+            [lc.save(overwrite=True) for lc in lightcurves]
             session.commit()
 
             # check that the data has been reduced as expected
@@ -543,7 +560,9 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
         session.execute(sa.delete(Source).where(Source.name == source_id))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(RawData.key == raw_photometry_no_exptime.key)
+            sa.select(RawData).where(
+                RawData.filekey == raw_photometry_no_exptime.filekey
+            )
         ).first()
         assert data is None
         data = session.scalars(
@@ -589,9 +608,9 @@ def test_filter_mapping(raw_photometry):
     assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
 
 
-def test_data_filenames(raw_photometry):
+def test_data_file_paths(raw_photometry):
     try:  # at end, delete the temp files
-        raw_photometry.save()
+        raw_photometry.save(overwrite=True)
         assert raw_photometry.filename is not None
         assert "photometry" in raw_photometry.filename
         assert raw_photometry.filename.endswith(".h5")
@@ -606,7 +625,7 @@ def test_data_filenames(raw_photometry):
     raw_photometry.filename = "test.h5"
     assert raw_photometry.folder is None
     assert raw_photometry.filename == "test.h5"
-    assert raw_photometry.get_fullname() == os.path.join(basepath, "DATA/test.h5")
+    assert raw_photometry.get_fullname() == os.path.join(basepath, "DEMO/test.h5")
 
     # no folder is given, but has observatory name to use as default
     raw_photometry.observatory = "ztf"
@@ -638,13 +657,13 @@ def test_reduced_data_file_keys(test_project, new_source, raw_photometry):
     lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
 
     try:  # at end, delete the temp file
-        raw_photometry.save()
+        raw_photometry.save(overwrite=True)
         basename = os.path.splitext(raw_photometry.filename)[0]
 
         lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
 
         for lc in lcs:
-            lc.save()
+            lc.save(overwrite=True)
             assert basename in lc.filename
 
         # make sure all filenames are the same
@@ -653,8 +672,8 @@ def test_reduced_data_file_keys(test_project, new_source, raw_photometry):
         # check the all the data exists in the file
         with pd.HDFStore(lcs[0].get_fullname()) as store:
             for lc in lcs:
-                assert os.path.join("/", lc.key) in store.keys()
-                assert len(store[lc.key]) == len(lc.data)
+                assert os.path.join("/", lc.filekey) in store.keys()
+                assert len(store[lc.filekey]) == len(lc.data)
 
     finally:
         raw_photometry.delete_data_from_disk()
@@ -687,7 +706,10 @@ def test_reducer_with_outliers(test_project, new_source):
             source_id = new_source.id
             new_source.project = test_project.name
             new_data = RawData(
-                data=df, folder="data_temp", altdata=dict(exptime="25.0")
+                data=df,
+                observatory="demo",
+                folder="data_temp",
+                altdata=dict(exptime="25.0"),
             )
             new_data.save()
             new_source.raw_data.append(new_data)

@@ -22,14 +22,14 @@ def new_source():
 
 @pytest.fixture
 def raw_photometry():
-    data = RawData(folder="data_temp", altdata=dict(foo="bar"))
+    data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
     data.make_random_photometry(number=30)
     return data
 
 
 @pytest.fixture
 def raw_photometry_no_exptime():
-    data = RawData(folder="data_temp", altdata=dict(foo="bar"))
+    data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
     data.make_random_photometry(number=30, exptime=None)
     return data
 
@@ -80,7 +80,7 @@ def lightcurve_factory():
         test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
-        lc = Lightcurve(data=df)
+        lc = Lightcurve(data=df, observatory="demo")
 
         return lc
 
