@@ -274,12 +274,12 @@ def test_catalog_wds():
     cat = Catalog(default="wds")
     cat.load()
     assert len(cat.data) > 0
-    assert cat.data["ra"].dtype == np.dtype(">f8")
-    assert cat.data["dec"].dtype == np.dtype(">f8")
-    assert cat.pars.name_column in cat.data.dtype.names
+    assert isinstance(cat.data["ra"][0], float)
+    assert isinstance(cat.data["dec"][0], float)
+    assert cat.pars.name_column in cat.get_columns()
 
     # more than a million sources
-    assert len(cat.data) > 1000_000
+    assert len(cat) > 1000_000
 
     # catalog should be ordered by RA, so first objects are close to 360/0
     assert cat.data["ra"][0] > 359 or cat.data["ra"][0] < 1
@@ -303,7 +303,7 @@ def test_observatory_filename_conventions(test_project):
 
     num = np.random.randint(0, 1000)
     col = cat.pars.name_column
-    name = cat.name_to_string(cat.data[num][col])
+    name = cat.name_to_string(cat.data[col][num])
     assert name.startswith("WDJ")
 
     # get some info on the source
@@ -319,7 +319,7 @@ def test_observatory_filename_conventions(test_project):
     # try it again with higher numbers in the catalog
     num = np.random.randint(100000, 101000)
     col = cat.pars.name_column
-    name = cat.name_to_string(cat.data[num][col])
+    name = cat.name_to_string(cat.data[col][num])
     assert name.startswith("WDJ")
 
     # test the filename conventions
@@ -763,6 +763,15 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  use explicit values and check them online with a magnitude calculator
     #  make sure the statistical errors are correct using a large number of points
     #  make sure the flux_min/max are correct
+
+
+def test_demo_observatory_download(test_project):
+    test_project.catalog.make_test_catalog()
+    test_project.catalog.load()
+    obs = test_project.observatories["demo"]
+    obs.download_all_sources(0, 10)
+    assert len(obs.sources) == 10
+    assert len(obs.datasets) == 10
 
 
 @pytest.mark.flaky(reruns=3)

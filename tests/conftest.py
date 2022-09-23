@@ -36,7 +36,13 @@ def raw_photometry_no_exptime():
 
 @pytest.fixture
 def test_project():
-    project = Project(name="test_project", config=False)
+    project = Project(name="test_project")
+    return project
+
+
+@pytest.fixture
+def wd_project():
+    project = Project(name="WD", catalog={"default": "WD"})
     return project
 
 

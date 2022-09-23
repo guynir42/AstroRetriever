@@ -5,6 +5,7 @@ import subprocess
 import shutil
 from datetime import datetime, timezone
 import dateutil.parser
+from astropy.table import Table
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.time import Time
@@ -46,6 +47,13 @@ class Catalog:
         self.pars.update(kwargs)
         if "catalog_name" not in self.pars or self.pars.catalog_name is None:
             self.pars.catalog_name = self.pars.filename.split(".")[0]
+
+        # numpy arrays are faster to read from FITS files
+        # because they are big-endian.
+        # but for uniformity it is better to load pandas dataframes
+        # The WD catalog (~1.3 million rows) takes 1s as array
+        # and 11s as pandas dataframe
+        self.pars.default_values(use_only_pandas=False)
 
         self.pars.verify()
 
@@ -154,8 +162,11 @@ class Catalog:
         # do the actual loading:
         type = self.guess_file_type()
         if type == "fits":
-            with fits.open(self.get_fullpath()) as hdul:
-                self.data = np.array(hdul[1].data)
+            if self.pars.use_only_pandas:
+                self.data = Table.read(self.get_fullpath(), format="fits").to_pandas()
+            else:
+                with fits.open(self.get_fullpath()) as hdul:
+                    self.data = np.array(hdul[1].data)
         elif type == "csv":
             self.data = pd.read_csv(self.get_fullpath())
         elif type == "h5":
@@ -304,6 +315,21 @@ class Catalog:
             self.pars.mag_err_column = "phot_g_mean_mag_error"
             self.pars.mag_filter_name = "Gaia_G"
 
+    def get_columns(self):
+        """
+        Get the columns of the catalog.
+
+        Returns
+        -------
+        list
+            The list of columns in the catalog.
+        """
+
+        if isinstance(self.data, pd.DataFrame):
+            return list(self.data.columns)
+        else:
+            return list(self.data.dtype.names)
+
     def get_row(self, loc, index_type="number", output="raw"):
         """
         Get a row from the catalog.
@@ -342,11 +368,16 @@ class Catalog:
             raise ValueError("Catalog is empty.")
 
         if index_type == "number":
-            row = self.data[loc]
+            index = int(loc)
         elif index_type == "name":
-            row = self.data[self.get_index_from_name(loc)]
+            index = int([self.get_index_from_name(loc)])
         else:
             raise ValueError('index_type must be "number" or "name"')
+
+        if isinstance(self.data, pd.DataFrame):
+            row = self.data.iloc[index]
+        else:
+            row = self.data[index]
 
         if output == "raw":
             return row
