@@ -18,10 +18,13 @@ import h5py
 import sqlalchemy as sa
 from sqlalchemy import orm, event
 from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.ext.associationproxy import association_proxy
+
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base, Session, engine
 from src.catalog import Catalog
+from src.source import Source
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -308,7 +311,8 @@ class DatasetMixin:
             if self.data is None:
                 raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
             # load metadata
-            self.altdata = store.get_storer(key).attrs
+            if store.get_storer(key).attrs:
+                self.altdata = store.get_storer(key).attrs["altdata"]
 
     def load_fits(self):
         pass
@@ -541,6 +545,9 @@ class DatasetMixin:
             (which is the source name or a random string).
 
         """
+        if self._data is None:
+            raise ValueError("No data to save!")
+
         if ra_deg is None and self.source is not None:
             ra_deg = self.source.ra
 
@@ -558,8 +565,6 @@ class DatasetMixin:
 
         if overwrite is None:
             overwrite = self.overwrite
-        # if not overwrite and self.check_file_exists():
-        #     raise ValueError(f"File {self.get_fullname()} already exists")
 
         # make a path if missing
         path = os.path.dirname(self.get_fullname())
@@ -583,12 +588,12 @@ class DatasetMixin:
     def save_hdf5(self, overwrite):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", NaturalNameWarning)
-            if isinstance(self.data, xr.Dataset):
+            if isinstance(self._data, xr.Dataset):
                 # TODO: check if key already exists!
                 self.data.to_hdf(
                     self.get_fullname(), key=self.filekey
                 )  # this actually works??
-            elif isinstance(self.data, pd.DataFrame):
+            elif isinstance(self._data, pd.DataFrame):
                 with pd.HDFStore(self.get_fullname()) as store:
                     if self.filekey in store:
                         if overwrite:
@@ -600,16 +605,15 @@ class DatasetMixin:
 
                     store.put(self.filekey, self.data)
                     if self.altdata:
-                        for k, v in self.altdata.items():
-                            setattr(store.get_storer(self.filekey).attrs, k, v)
-            elif isinstance(self.data, np.ndarray):
+                        store.get_storer(self.filekey).attrs["altdata"] = self.altdata
+            elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:
                     f.create_dataset(self.filekey, data=self.data)
                     if self.altdata:
                         for k, v in self.altdata.items():
                             f[self.filekey].attrs[k] = v
             else:
-                raise ValueError(f"Unknown data type {type(self.data)}")
+                raise ValueError(f"Unknown data type {type(self._data)}")
 
     def save_fits(self, overwrite):
         pass
@@ -1006,15 +1010,13 @@ class DatasetMixin:
     def source(cls):
         return orm.relationship(
             "Source",
-            back_populates=cls.backref_name(),
+            backref=cls.backref_name(),
             doc="Source this dataset is associated with",
             uselist=False,
             foreign_keys=f"{cls.__name__}.source_id",
         )
 
-    @property
-    def source_name(self):
-        return self.source.name
+    source_name = association_proxy("source", "name")
 
     observatory = sa.Column(
         sa.String,

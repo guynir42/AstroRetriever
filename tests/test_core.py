@@ -765,13 +765,57 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
-def test_demo_observatory_download(test_project):
+@pytest.mark.flaky(reruns=3)
+def test_demo_observatory_download_time(test_project):
     test_project.catalog.make_test_catalog()
     test_project.catalog.load()
     obs = test_project.observatories["demo"]
-    obs.download_all_sources(0, 10)
+
+    t0 = time.time()
+    obs.pars.num_threads_download = 0  # no multithreading
+    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 1})
     assert len(obs.sources) == 10
     assert len(obs.datasets) == 10
+    single_tread_time = time.time() - t0
+    assert abs(single_tread_time - 10) < 2  # should take about 10s
+
+    t0 = time.time()
+    obs.sources = []
+    obs.datasets = []
+    obs.pars.num_threads_download = 5  # five multithreading cores
+    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 5})
+    assert len(obs.sources) == 10
+    assert len(obs.datasets) == 10
+    multitread_time = time.time() - t0
+    assert abs(multitread_time - 10) < 2  # should take about 10s
+
+
+def test_demo_observatory_save_downloaded(test_project):
+    # make random sources unique to this test
+    test_project.catalog.make_test_catalog()
+    test_project.catalog.load()
+    obs = test_project.observatories["demo"]
+    try:
+        obs.download_all_sources(0, 10, save=True, fetch_args={"wait_time": 0})
+
+        # reloading these sources should be quick (no call to fetch should be sent)
+        t0 = time.time()
+        obs.download_all_sources(0, 10, fetch_args={"wait_time": 10})
+        reload_time = time.time() - t0
+        assert reload_time < 1  # should take less than 1s
+
+    finally:
+        for d in obs.datasets:
+            d.delete_data_from_disk()
+
+        assert not os.path.isfile(obs.datasets[0].get_fullname())
+        if len(os.listdir(os.path.dirname(obs.datasets[0].get_fullname()))) == 0:
+            os.rmdir(os.path.dirname(obs.datasets[0].get_fullname()))
+
+        with Session() as session:
+            for d in obs.datasets:
+                session.delete(d)
+            session.commit()
 
 
 @pytest.mark.flaky(reruns=3)

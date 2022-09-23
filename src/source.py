@@ -17,6 +17,9 @@ from astropy import units as u
 from src.database import Base, Session, engine
 from src.catalog import Catalog
 
+# from src.dataset import RawData, Lightcurve
+# from src.detection import DetectionInTime
+
 # matplotlib.use("qt5agg")
 
 
@@ -277,35 +280,35 @@ class Source(Base, conesearch_alchemy.Point):
         JSONB, nullable=True, doc="Row from the catalog used to create this source"
     )
 
-    raw_data = relationship(
-        "RawData",
-        back_populates="source",
-        cascade="save-update, merge, refresh-expire, expunge, delete",
-        lazy="selectin",
-        single_parent=True,
-        passive_deletes=True,
-        doc="Raw Datasets associated with this source",
-    )
+    # raw_data = relationship(
+    #     "RawData",
+    #     back_populates="source",
+    #     cascade="save-update, merge, refresh-expire, expunge, delete",
+    #     lazy="selectin",
+    #     single_parent=True,
+    #     passive_deletes=True,
+    #     doc="Raw Datasets associated with this source",
+    # )
+    #
+    # lightcurves = relationship(
+    #     "Lightcurve",
+    #     back_populates="source",
+    #     cascade="save-update, merge, refresh-expire, expunge, delete",
+    #     lazy="selectin",
+    #     single_parent=True,
+    #     passive_deletes=True,
+    #     doc="Photometric Datasets associated with this source",
+    # )
 
-    lightcurves = relationship(
-        "Lightcurve",
-        back_populates="source",
-        cascade="save-update, merge, refresh-expire, expunge, delete",
-        lazy="selectin",
-        single_parent=True,
-        passive_deletes=True,
-        doc="Photometric Datasets associated with this source",
-    )
-
-    detections_in_time = relationship(
-        "DetectionInTime",
-        back_populates="source",
-        cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
-        lazy="selectin",
-        single_parent=True,
-        passive_deletes=True,
-        doc="Detections associated with lightcurves from this source",
-    )
+    # detections_in_time = relationship(
+    #     "DetectionInTime",
+    #     back_populates="source",
+    #     cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
+    #     lazy="selectin",
+    #     single_parent=True,
+    #     passive_deletes=True,
+    #     doc="Detections associated with lightcurves from this source",
+    # )
 
 
 # make sure the table exists

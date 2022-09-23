@@ -47,7 +47,7 @@ class DetectionMixin:
     def source(cls):
         return orm.relationship(
             "Source",
-            back_populates=cls.backref_name(),
+            backref=cls.backref_name(),
             cascade="all",
             foreign_keys=f"{cls.__name__}.source_id",
         )

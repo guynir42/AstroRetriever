@@ -391,7 +391,7 @@ class VirtualObservatory:
                 )
 
             done, _ = concurrent.futures.wait(
-                futures, return_when=concurrent.futures.FIRST_COMPLETED
+                futures, return_when=concurrent.futures.ALL_COMPLETED
             )
 
         sources = []
@@ -441,25 +441,41 @@ class VirtualObservatory:
         """
         with Session() as session:
             source = session.scalars(
-                sa.select(Source)
-                .filter(Source.name == cat_row["name"])
-                .options(joinedload(Source.raw_data))
+                sa.select(Source).where(Source.name == cat_row["name"])
+                # .options(joinedload(Source.raw_data))
             ).first()
-
             if source is None:
                 source = Source(**cat_row, project=self.project)
 
             raw_data = session.scalars(
-                sa.select(RawData).filter(
+                sa.select(RawData).where(
                     RawData.source_name == source.name, RawData.observatory == self.name
                 )
             ).first()
+            # remove RawData objects that have no file
+            if raw_data is not None and not raw_data.check_file_exists():
+                session.delete(raw_data)
+                raw_data = None
 
-            # no data on DB, must re-fetch from observatory website:
+            # file exists, try to load it:
+            if raw_data is not None:
+                lock.acquire()
+                try:
+                    raw_data.load()
+                except KeyError as e:
+                    if "No object named" in str(e):
+                        # This does not exist in the file
+                        session.delete(raw_data)
+                        raw_data = None
+                    else:
+                        raise e
+                finally:
+                    lock.release()
+
+            # no data on DB/file, must re-fetch from observatory website:
             if raw_data is None:
-                data, altdata = self.fetch_data_from_observatory(
-                    cat_row, **fetch_args
-                )  # <-- magic happens here!
+                # <-- magic happens here! -- >
+                data, altdata = self.fetch_data_from_observatory(cat_row, **fetch_args)
                 raw_data = RawData(
                     data=data,
                     altdata=altdata,
@@ -494,16 +510,18 @@ class VirtualObservatory:
                     session.add(source)
                     # try to save the data to disk
                     lock.acquire()  # thread blocks at this line until it can obtain lock
-                    raw_data.save(
-                        overwrite=self.pars.overwrite_files,
-                        source_name=source.name,
-                        ra_deg=ra_deg,
-                        ra_minute=ra_minute,
-                        ra_second=ra_second,
-                        key_prefix=self.pars.filekey_prefix,
-                        key_suffix=self.pars.filekey_suffix,
-                    )
-                    lock.release()
+                    try:
+                        raw_data.save(
+                            overwrite=self.pars.overwrite_files,
+                            source_name=source.name,
+                            ra_deg=ra_deg,
+                            ra_minute=ra_minute,
+                            ra_second=ra_second,
+                            key_prefix=self.pars.filekey_prefix,
+                            key_suffix=self.pars.filekey_suffix,
+                        )
+                    finally:
+                        lock.release()
 
                     # try to save the source+data to the database
                     session.commit()
@@ -741,7 +759,7 @@ class VirtualObservatory:
             filename=filename,
             key=key,
         )
-        print(raw_data.filename)
+
         new_source.raw_data = [raw_data]
         new_source.lightcurves = self.reduce(raw_data, to="lcs", source=new_source)
         for lc in new_source.lightcurves:
@@ -937,7 +955,7 @@ class VirtualDemoObs(VirtualObservatory):
             raise ValueError("data_glob must be set to a string.")
 
     def fetch_data_from_observatory(
-        self, cat_row, wait_time=0, verbose=False, sim_args={}
+        self, cat_row, wait_time=0, wait_time_poisson=0, verbose=False, sim_args={}
     ):
         """
         Fetch data from the observatory for a given source.
@@ -953,8 +971,11 @@ class VirtualDemoObs(VirtualObservatory):
             name, ra, dec, mag, filter_name (saying which band the mag is in).
         wait_time: int or float, optional
             If given, will make the simulator pause for a short time.
-            The length of the pause is a Poisson distributed number of seconds,
-            with an average given by the wait_time value.
+        wait_time_poisson: bool, optional
+            Will add a randomly selected integer number of seconds
+            (from a Poisson distribution) to the wait time.
+            The mean of the distribution is the value given
+            to wait_time_poisson.
         sim_args: dict
             A dictionary passed into the simulate_lightcuve function.
 
@@ -968,8 +989,10 @@ class VirtualDemoObs(VirtualObservatory):
         """
 
         if verbose:
-            print(f'Fetching data from demo observatory for source {cat_row["index"]}')
-        wait_time_seconds = np.random.poisson(wait_time)
+            print(
+                f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
+            )
+        wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
         data = self.simulate_lightcurve(**sim_args)
         altdata = {
             "demo_boolean": self.pars.demo_boolean,
@@ -980,7 +1003,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["index"]} after {wait_time_seconds} seconds'
+                f'Finished fetch data for source {cat_row["cat_index"]} after {wait_time_seconds} seconds'
             )
 
         return data, altdata
