@@ -397,23 +397,7 @@ class DatasetMixin:
             basename = os.path.splitext(self.raw_data_filename)[0]
             self.filename = basename + "_reduced"
         else:
-            # if source is not None:
-            #     if isinstance(source, str) and catalog is None:
-            #         source = source.strip().replace(" ", "_")
-            #         self.filename = f'{source}'
-            #     else:
-            #         if isinstance(source, (int, float)):
-            #             source_number = int(source)
-            #         elif catalog is not None and isinstance(source, str):
-            #             if not isinstance(catalog, Catalog):
-            #                 raise TypeError("catalog must be a Catalog object")
-            #             source_number = catalog.get_index_from_name(source)
-            #         else:
-            #             raise TypeError("source must be an int or str")
-            #
-            #         lower = int(source_number // batch) * batch
-            #         upper = lower + batch
-            #         self.filename = f"{lower:0{digits}d}-{upper:0{digits}d}"
+            # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
                 raise ValueError(
                     "If ra_second is given, ra_deg and ra_minute must also be given"
@@ -1010,7 +994,7 @@ class DatasetMixin:
     def source(cls):
         return orm.relationship(
             "Source",
-            backref=cls.backref_name(),
+            back_populates=cls.backref_name(),
             doc="Source this dataset is associated with",
             uselist=False,
             foreign_keys=f"{cls.__name__}.source_id",
@@ -1680,13 +1664,6 @@ class Lightcurve(DatasetMixin, Base):
         doc="ID of the raw dataset that was used to produce this reduced dataset.",
     )
 
-    raw_data = orm.relationship(
-        "RawData",
-        backref="lightcurves",
-        cascade="all",
-        doc="The raw dataset that was used to produce this reduced dataset.",
-    )
-
     raw_data_filename = sa.Column(
         sa.String,
         nullable=True,
@@ -1827,6 +1804,43 @@ class Lightcurve(DatasetMixin, Base):
 # make sure all the tables exist
 RawData.metadata.create_all(engine)
 Lightcurve.metadata.create_all(engine)
+
+
+RawData.lightcurves = orm.relationship(
+    "Lightcurve",
+    back_populates="raw_data",
+    cascade="all",
+    doc="Lightcurves derived from this raw dataset.",
+)
+
+
+Lightcurve.raw_data = orm.relationship(
+    "RawData",
+    back_populates="lightcurves",
+    cascade="all",
+    doc="The raw dataset that was used to produce this reduced dataset.",
+)
+
+
+Source.raw_data = orm.relationship(
+    "RawData",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Raw Datasets associated with this source",
+)
+
+Source.lightcurves = orm.relationship(
+    "Lightcurve",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Photometric Datasets associated with this source",
+)
 
 
 @event.listens_for(RawData, "before_insert")

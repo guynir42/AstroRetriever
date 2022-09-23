@@ -2,6 +2,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base, engine
+from src.source import Source
 from sqlalchemy import orm, func
 from sqlalchemy.ext.declarative import declared_attr
 
@@ -47,7 +48,7 @@ class DetectionMixin:
     def source(cls):
         return orm.relationship(
             "Source",
-            backref=cls.backref_name(),
+            back_populates=cls.backref_name(),
             cascade="all",
             foreign_keys=f"{cls.__name__}.source_id",
         )
@@ -144,6 +145,17 @@ class DetectionInTime(Base, DetectionMixin):
 
 # make sure all the tables exist
 DetectionInTime.metadata.create_all(engine)
+
+Source.detections_in_time = orm.relationship(
+    "DetectionInTime",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Detections associated with lightcurves from this source",
+)
+
 
 # TODO: Add a DetectionInPeriod class
 # TODO: Add a DetectionInImages class

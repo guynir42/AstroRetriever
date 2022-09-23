@@ -418,8 +418,8 @@ def test_add_source_and_data():
                 key = store.keys()[0]
                 df_from_file = store.get(key)
                 assert df_from_file.equals(df)
-                dict_from_file = store.get_storer(key).attrs
-                assert dict_from_file["foo"] == "bar"
+                altdata = store.get_storer(key).attrs.altdata
+                assert altdata["foo"] == "bar"
 
         # check that the data is in the database
         with Session() as session:
