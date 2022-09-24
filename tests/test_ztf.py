@@ -98,7 +98,7 @@ def test_ztf_reduction(ztf_project, new_source):
     assert new_lc_epochs6 == new_lc_epochs
 
     # not giving the source should also bring back those points
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=None, gap=40)
+    new_lcs = ztf.reduce(raw_data, to="lcs", source=False, gap=40)
     new_lc_epochs7 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs7 == new_lc_epochs

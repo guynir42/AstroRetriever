@@ -865,6 +865,8 @@ class VirtualObservatory:
             source_names = list({d.source_name for d in datasets if d.source_name})
             if len(source_names) == 1:
                 source = datasets[0].source
+        elif source is False:  # excplicitly don't use source
+            source = None
 
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}

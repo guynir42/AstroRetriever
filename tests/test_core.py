@@ -221,9 +221,9 @@ def test_project_config_file():
 
 
 def test_version_control():
-    proj = Project("default_test", version=True)
-    assert isinstance(proj.pars.version, str)
-    print(f"current git hash is: {proj.pars.version}")
+    proj = Project("default_test", version_control=True)
+    assert isinstance(proj.pars.git_hash, str)
+    print(f"current git hash is: {proj.pars.git_hash}")
 
 
 def test_catalog():
@@ -331,7 +331,7 @@ def test_observatory_filename_conventions(test_project):
 
     # test the key conventions:
     data.invent_filekey(source_name=name)
-    assert data.filekey == name
+    assert data.filekey == f"{data.type}_{name}"
 
 
 def test_add_source_and_data():
@@ -371,7 +371,6 @@ def test_add_source_and_data():
             new_data = RawData(
                 data=df,
                 observatory="demo",
-                project="test",
                 folder="data_temp",
                 altdata=dict(foo="bar"),
             )

@@ -51,12 +51,6 @@ class Parameters:
         # these have not been set by file or kwargs input
         self._default_keys = []
 
-        # this should be defined in subclasses
-        # e.g., the Parameters for Analysis should have
-        # this set to "analysis" so it always finds the
-        # right key in the YAML file
-        self._default_cfg_key = None
-
     def __contains__(self, key):
         return hasattr(self, key)
 
@@ -319,7 +313,7 @@ class Parameters:
             Will be overriden if user specifies a different cfg_key.
         """
         if default_key is None:
-            default_key = self._default_cfg_key
+            default_key = get_default_cfg_key()
 
         pars = Parameters()
         project = inputs.get("project", None)
@@ -348,3 +342,13 @@ class Parameters:
         # the user inputs override the config file
         pars.read(inputs)
         return pars
+
+    @staticmethod
+    def get_default_cfg_key():
+        """
+        this should be defined in subclasses
+        e.g., the Parameters for Analysis should have
+        this set to "analysis" so it always finds the
+        right key in the YAML file
+        """
+        return None
