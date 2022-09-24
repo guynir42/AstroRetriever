@@ -95,11 +95,6 @@ class DatasetMixin:
         if "data" in kwargs:
             self.data = kwargs.pop("data")
 
-        # if no project is given, assume testing
-        # and make DB objects that can be deleted
-        # override this with kwargs['project'] later
-        self.project = "test"
-
         # override any existing attributes
         for k, v in list(kwargs.items()):
             if hasattr(self, k):
@@ -236,6 +231,8 @@ class DatasetMixin:
 
         if self.folder is not None:
             f = self.folder
+        elif hasattr(self, "project") and self.project is not None:
+            f = self.project.upper()
         elif self.observatory is not None:
             f = self.observatory.upper()
         else:
@@ -467,6 +464,9 @@ class DatasetMixin:
                 raise TypeError("source must be a string")
         else:
             self.filekey = self.random_string(8)
+
+        # add the type of data
+        self.filekey = f"{self.type}_{self.filekey}"
 
         if prefix is not None:
             if prefix.endswith("_"):  # remove trailing underscore
@@ -1129,7 +1129,6 @@ class DatasetMixin:
         "autosave",
         "overwrite",
         "public",
-        "project",
         "observatory",
         "cfg_hash",
         "folder",
@@ -1329,6 +1328,14 @@ class Lightcurve(DatasetMixin, Base):
         string += ")"
 
         return string
+
+    # overload the DatasetMixin method
+    def invent_filekey(self, source_name=None, prefix=None, suffix=None):
+        DatasetMixin.invent_filekey(self, source_name, prefix, suffix)
+
+        self.filekey += (
+            f"_reduction_{self.reduction_number:02d}_of_{self.reduction_total:02d}"
+        )
 
     # maybe this should happen at the base class?
     def translate_altdata(self):
@@ -1669,6 +1676,22 @@ class Lightcurve(DatasetMixin, Base):
         nullable=True,
         index=True,
         doc="Filename of the raw dataset that was used to produce this reduced dataset.",
+    )
+
+    reduction_number = sa.Column(
+        sa.Integer,
+        nullable=False,
+        index=True,
+        doc="Serial number for this reduced dataset, "
+        "numbering it out of all reduced datasets "
+        "producted from the same raw data.",
+    )
+
+    reduction_total = sa.Column(
+        sa.Integer,
+        nullable=False,
+        index=True,
+        doc="Total number of reduced datasets, " "producted from the same raw data.",
     )
 
     num_good = sa.Column(

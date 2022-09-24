@@ -51,6 +51,12 @@ class Parameters:
         # these have not been set by file or kwargs input
         self._default_keys = []
 
+        # this should be defined in subclasses
+        # e.g., the Parameters for Analysis should have
+        # this set to "analysis" so it always finds the
+        # right key in the YAML file
+        self._default_cfg_key = None
+
     def __contains__(self, key):
         return hasattr(self, key)
 
@@ -137,6 +143,7 @@ class Parameters:
 
         except FileNotFoundError:
             raise
+        # ignore all other loading exceptions?
 
     def read(self, dictionary):
         """
@@ -296,7 +303,9 @@ class Parameters:
         Create a Parameters object from a dictionary.
         Will try to load a YAML file if given a project name,
         ("project" key in the dictionary) or if given a "cfg_file" key.
-        If no
+        If no config file is found, can either silently continue with
+        only the given inputs, or raise an error
+        if cfg_file is given explicitly.
 
         Parameters
         ----------
@@ -309,6 +318,9 @@ class Parameters:
             YAML file.
             Will be overriden if user specifies a different cfg_key.
         """
+        if default_key is None:
+            default_key = self._default_cfg_key
+
         pars = Parameters()
         project = inputs.get("project", None)
         if project is not None:

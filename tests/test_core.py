@@ -752,9 +752,12 @@ def test_reducer_with_outliers(test_project, new_source):
                 assert not os.path.isfile(filename)
 
             if lightcurves:
-                filenames = [lc.filename for lc in lightcurves]
-                [lc.delete_data_from_disk() for lc in lightcurves]
-                assert not any([os.path.isfile(f) for f in filenames])
+                for lc in lightcurves:
+                    filename = lc.filename
+                    lc.delete_data_from_disk()
+                    assert not os.path.isfile(filename)
+                    session.delete(lc)
+                session.commit()
 
 
 def test_reducer_magnitude_conversions(test_project, new_source):

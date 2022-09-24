@@ -80,10 +80,6 @@ class VO_Base:
         doc="UTC time the object's row was last modified in the database.",
     )
 
-    project = sa.Column(
-        sa.String, nullable=False, index=True, doc="Project this object belongs to."
-    )
-
     observatory = sa.Column(
         sa.String,
         nullable=True,

@@ -11,6 +11,10 @@ utcnow = func.timezone("UTC", func.current_timestamp())
 
 class DetectionMixin:
 
+    project = sa.Column(
+        sa.String, nullable=False, index=True, doc="Project this detection belongs to."
+    )
+
     time_start = sa.Column(
         sa.DateTime,
         nullable=True,

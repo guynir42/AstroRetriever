@@ -46,15 +46,15 @@ class Project:
             obs_names=["demo"],
             obs_kwargs={},  # parameters for all observatories
             catalog_kwargs={"default": "test"},
-            version=False,
+            version_control=False,
         )
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
-        self.cfg_hash = None
+        self.cfg_hash = None  # hash of the config file (for version control)
 
         # version control:
-        if self.pars.version:
+        if self.pars.version_control:
             try:
                 repo = git.Repo(search_parent_directories=True)
                 git_hash = repo.head.object.hexsha
@@ -65,12 +65,12 @@ class Project:
                 if os.getenv("VO_GIT_HASH"):
                     git_hash = os.getenv("VO_GIT_HASH")
                 else:
-                    print("No git repository found, cannot version control.")
+                    print("No git repository found, cannot use version control.")
                     git_hash = None
 
-            self.pars.version = git_hash
+            self.pars.git_hash = git_hash
 
-        # if only one observatory is given, make it a set:
+        # if only one observatory name is given, make it a set:
         if isinstance(self.pars.obs_names, str):
             self.pars.obs_names = {self.pars.obs_names}
 
@@ -214,7 +214,7 @@ class Project:
 
         """
 
-        self.output_folder = f"output_{self.name}"
+        self.output_folder = self.name.upper()
 
         # TODO: collect all parameter objects from sub-objects
         # and produce a massive config dictionary
@@ -222,7 +222,7 @@ class Project:
         # get that file's hash
 
         # version control is enabled
-        if self.pars.version:
+        if self.pars.version_control:
             self.output_folder += f"_{self.cfg_hash}"
 
         self.output_folder = os.path.join(DATA_ROOT, self.output_folder)
@@ -233,13 +233,16 @@ class Project:
 
         # TODO: write the config file to the output folder
 
-    def download(self, **kwargs):
-        pass
+    # def download(self, **kwargs):
+    #     pass
+    #
+    # def reduce(self, **kwargs):
+    #     pass
+    #
+    # def analyze(self, **kwargs):
+    #     pass
 
-    def reduce(self, **kwargs):
-        pass
-
-    def analyze(self, **kwargs):
+    def run(self, **kwargs):
         pass
 
 

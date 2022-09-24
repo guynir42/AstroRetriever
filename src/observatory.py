@@ -65,6 +65,7 @@ class VirtualObservatory:
         """
         self.name = name
         self.project = None  # name of the project (loaded from pars later)
+        self.cfg_hash = None  # hash of the config file (for version control)
         self._credentials = {}  # dictionary with usernames/passwords
         self._catalog = None
         self.pars = Parameters.from_dict(kwargs, name)
@@ -479,13 +480,15 @@ class VirtualObservatory:
                 raw_data = RawData(
                     data=data,
                     altdata=altdata,
-                    project=self.project,
                     observatory=self.name,
                     **dataset_args,
                 )
 
             if not any([r.observatory == self.name for r in source.raw_data]):
                 source.raw_data.append(raw_data)
+
+            if raw_data.source is None:
+                raw_data.source = source
 
             # unless debugging, you'd want to save this data
             if save:
@@ -857,6 +860,12 @@ class VirtualObservatory:
         if "raw_data_filename" not in init_kwargs and len(raw_data_filenames) == 1:
             init_kwargs["raw_data_filename"] = raw_data_filenames[0]
 
+        # all datasets come from the same source?
+        if source is None:
+            source_names = list({d.source_name for d in datasets if d.source_name})
+            if len(source_names) == 1:
+                source = datasets[0].source
+
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}
             for d in datasets:
@@ -890,6 +899,21 @@ class VirtualObservatory:
             raise ValueError(f'Unknown value for "to" input: {to}')
 
         new_datasets = sorted(new_datasets, key=lambda d: d.time_start)
+
+        # copy some properties of the observatory into the new datasets
+        copy_attrs = ["project", "cfg_hash"]
+        for d in new_datasets:
+            for attr in copy_attrs:
+                setattr(d, attr, getattr(self, attr))
+
+        # make sure each reduced dataset is associated with a source
+        for d in new_datasets:
+            d.source = source
+
+        # make sure each reduced dataset has a serial number:
+        for i, d in enumerate(new_datasets):
+            d.reduction_number = i + 1
+            d.reduction_total = len(new_datasets)
 
         return new_datasets
 
@@ -1074,6 +1098,8 @@ class VirtualDemoObs(VirtualObservatory):
         """
         allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
+        if isinstance(datasets, RawData):
+            datasets = [datasets]
         for i, d in enumerate(datasets):
             # check the raw input types make sense
             if d.type is None or d.type not in allowed_types:
