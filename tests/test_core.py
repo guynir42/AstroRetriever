@@ -40,25 +40,19 @@ def test_load_save_parameters():
     try:
         # create some parameters object
         # with a couple of required parameters
-        pars = Parameters(["username", "password"])
-        # password value should be overriden from file
+        pars = Parameters()
+        # password value should be overridden from file
         pars.password = None
         # extra parameter should remain untouched
         pars.extra_parameter = "test"
-        pars.load(filename)
-
-        pars.verify()
+        config = pars.load(filename)
+        pars.read(config)
 
         # username was not defined before reading the file
         assert pars.username == "guy"
         assert pars.password == "12345"
         assert pars.extra_parameter == "test"
 
-        # add a new parameter that doesn't exist in the file
-        pars.required_pars.append("not_set")
-
-        with pytest.raises(ValueError):
-            pars.verify()
     finally:
         # cleanup the test file
         os.remove(filename)
@@ -69,13 +63,11 @@ def test_load_save_parameters():
         pars.save(filename)
         with open(filename) as file:
             new_data = yaml.safe_load(file)
+            print(new_data)
         assert {
             "username",
             "password",
             "extra_parameter",
-            "required_pars",
-            "_default_keys",
-            "_enforce_type_checks",
             "verbose",
         } == set(new_data.keys())
         assert new_data["username"] == "guy"

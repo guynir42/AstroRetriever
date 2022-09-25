@@ -11,8 +11,23 @@ from timeit import default_timer as timer
 from ztfquery import lightcurve
 
 from src.source import angle_diff
-from src.observatory import VirtualObservatory
+from src.observatory import VirtualObservatory, ParsObservatory
 from src.dataset import DatasetMixin, RawData, Lightcurve
+
+
+class ParsObsZTF(ParsObservatory):
+    def __init__(self, **kwargs):
+        super().__init__()
+
+        self.add_obs_name("demo")
+
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = True
+
+        config = self.load_then_update(kwargs)
+
+        # apply parameters specific to this class
+        self.apply_specific_pars(config)
 
 
 class VirtualZTF(VirtualObservatory):
@@ -30,26 +45,7 @@ class VirtualZTF(VirtualObservatory):
         """
 
         super().__init__(name="ztf", **kwargs)
-
-        if self.project:
-            data_glob = self.project + "_ZTF_*.h5"
-        else:
-            data_glob = "ZTF_*.h5"
-
-        self.pars.required_pars += ["credentials"]
-        self.pars.default_values(
-            credentials={},
-            data_folder="ZTF",
-            data_glob=data_glob,
-        )
-
-    def initialize(self):
-        """
-        Verify inputs to the observatory
-        and run any additional setup.
-        """
-        super().initialize()
-        # verify parameters have the correct type, etc.
+        self.pars = ParsObsZTF(**kwargs)
 
     def reduce_to_lightcurves(
         self,

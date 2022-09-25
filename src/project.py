@@ -16,7 +16,7 @@ from src.database import DATA_ROOT
 
 class ParsProject(Parameters):
     def __init__(self, **kwargs):
-        super.__init__()  # initialize base Parameters without passing arguments
+        super().__init__()  # initialize base Parameters without passing arguments
         self.project = self.add_par("project", None, str, "Name of the project")
         self.obs_names = self.add_par(
             "obs_names",
@@ -24,12 +24,7 @@ class ParsProject(Parameters):
             (str, list, set, tuple),
             "List/tuple/set of observatory names or one name",
         )
-        self.obs_kwargs = self.add_par(
-            "obs_kwargs", {}, dict, "Keyword arguments to pass to all observatories"
-        )
-        self.catalog_kwargs = self.add_par(
-            "catalog_kwargs", {}, dict, "Keyword arguments to pass to the catalog"
-        )
+
         self.version_control = self.add_par(
             "version_control", False, bool, "Whether to use version control"
         )
@@ -47,13 +42,10 @@ class ParsProject(Parameters):
                 ),
             )
 
-        # check if need to load from disk
-        (cfg_file, cfg_key) = self.extract_cfg_file_and_key(kwargs)
-        self.load(cfg_file, cfg_key)
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = True
 
-        # apply the input kwargs (checking the pars exist!)
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+        self.load_then_update(kwargs)
 
     def verify_observatory_names(self, names):
         """
@@ -87,13 +79,13 @@ class ParsProject(Parameters):
         super().__setattr__("obs_names", tuple(names))
 
     def __setattr__(self, key, value):
-        if key in ("vc"):
+        if key in ("vc", "version_control"):
             key = "version_control"
         if key == "obs_names":
             self.verify_observatory_names(value)
             return
 
-        super.__setattr__(key, value)
+        super().__setattr__(key, value)
 
 
 class Project:
@@ -121,18 +113,15 @@ class Project:
         self.name = name
         kwargs["project"] = name  # propagate this to sub-objects
 
+        # make sure kwargs for contained objects are not passed to Parameters
+        obs_kwargs = kwargs.pop("obs_kwargs", {})
+        obs_kwargs["project"] = name
+
+        catalog_kwargs = kwargs.pop("catalog_kwargs", {})
+        analysis_kwargs = kwargs.pop("analysis_kwargs", {})
+
         # this loads parameters from file, then from kwargs:
         self.pars = ParsProject(**kwargs)
-
-        # self.pars = Parameters.from_dict(kwargs, "project")
-        #
-        # # default values in case no config file is loaded:
-        # self.pars.default_values(
-        #     obs_names=["demo"],
-        #     obs_kwargs={},  # parameters for all observatories
-        #     catalog_kwargs={"default": "test"},
-        #     version_control=False,
-        # )
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
@@ -155,28 +144,9 @@ class Project:
 
             self.pars.git_hash = git_hash
 
-        # # if only one observatory name is given, make it a set:
-        # if isinstance(self.pars.obs_names, str):
-        #     self.pars.obs_names = {self.pars.obs_names}
-        #
-        # # verify that the list of observatory names is castable to a set
-        # if not isinstance(self.pars.obs_names, (set, list, tuple)):
-        #     raise TypeError(
-        #         f"obs_names must be a set, list, or tuple, not {type(self.pars.obs_names)}"
-        #     )
-        #
-        # # cast the list into a set
-        # self.pars.obs_names = set(self.pars.obs_names)
-        #
-        # if not all([isinstance(obs, str) for obs in self.pars.obs_names]):
-        #     raise TypeError("observatories must be a set of strings")
-
         # make a catalog object based on the parameters:
-        self.catalog = Catalog(**self.pars.catalog_kwargs, verbose=self.pars.verbose)
+        self.catalog = Catalog(**catalog_kwargs, verbose=self.pars.verbose)
         self.catalog.load()
-
-        general_kwargs = self.pars.obs_kwargs
-        self.pars.add_defaults_to_dict(general_kwargs)
 
         self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
@@ -186,14 +156,13 @@ class Project:
             self.observatories.append(
                 self.make_observatory(
                     name=obs,
-                    specific=specific_kwargs,
-                    general=general_kwargs,
+                    inputs=obs_kwargs,
                 )
             )
 
         self.analysis = self.pars.get_class("analysis")
 
-    def make_observatory(self, name, specific, general):
+    def make_observatory(self, name, inputs):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -217,37 +186,36 @@ class Project:
             In special cases like "DemoObs",
             the class is loaded from the
             "observatory" module.
-        specific: dict
-            Parameters that are specific to this observatory.
-            The parameters passed into the constructor override
-            those from file, both of which override the pars
-            in "general".
-        general: dict
-            General parameters that are true for all observatories.
-            Any of these pars are overriden by observatory-specific
-            parameters, either loaded from file or given in "specific".
+        inputs: dict
+            Dictionary of keyword arguments
+            to pass to the observatory class.
+            Can contain keys matching the name
+            of the observatory (e.g., "ztf", case insensitive)
+            and these will be passed to the observatory
+            and override any other arguments that
+            are given to all observatories generally.
+
         """
 
-        if name in ["demo", "DemoObs"]:  # this is built in to observatory.py
+        if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
             module_name = "observatory"
             class_name = "VirtualDemoObs"
         else:
             module_name = name.lower()
             class_name = f"Virtual{name}"
 
-        if not isinstance(specific, dict):
-            raise TypeError(f'"specific" must be a dictionary, not {type(specific)}')
+        if not isinstance(inputs, dict):
+            raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
 
-        if not isinstance(general, dict):
-            raise TypeError(f'"general" must be a dictionary, not {type(general)}')
+        # specific_kwargs = {}
+        # for k, v in inputs.items():
+        #     if k.lower() == name.lower():
+        #         specific_kwargs = inputs.pop(k)
+        #         break
 
         module = importlib.import_module("." + module_name, package="src")
         obs_class = getattr(module, class_name)
-        new_obs = obs_class(**specific)
-
-        # only override any parameters not set
-        # from the config file or the "specific" dict:
-        new_obs.pars.replace_unset(**general)
+        new_obs = obs_class(**inputs)
 
         # TODO: separate reducer and use pars.get_class to load it
         # parse parameters for reduction methods for this observatory

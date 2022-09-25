@@ -24,6 +24,142 @@ from src.analysis import Analysis
 lock = threading.Lock()
 
 
+class ParsObservatory(Parameters):
+    """
+    Base class for individual observatories' parameters.
+    When inheriting, make sure to lock the attributes by
+    setting _enforce_no_new_attrs=True and then
+    calling load_then_update().
+    """
+
+    # add more keywords (lower case!) to prevent them from being read as keywords to the general parameters
+    # allowed_obs_names = ['demo', 'ztf', 'tess', 'kepler', 'k2', 'gaia', 'panstarrs', 'lsst', 'des', 'sdss']
+    allowed_obs_names = []
+
+    def __init__(self):
+        super().__init__()
+
+        self.obs_name = self.add_par("obs_name", "", str, "Name of the observatory.")
+        self.project = self.add_par("project", "", str, "Project name")
+        self.reducer = self.add_par(
+            "reducer", {}, dict, "Argumnets to pass to reduction method"
+        )
+
+        self.credentials = self.add_par(
+            "credentials", {}, dict, "Credentials for the observatory"
+        )
+
+        self.dataset_attribute = self.add_par(
+            "dataset_attribute",
+            "source_name",
+            str,
+            "Attribute to use for to identify a dataset",
+        )
+        self.dataset_identifier = self.add_par(
+            "dataset_identifier",
+            "key",
+            str,
+            "Identifier to use for to identify a dataset",
+        )
+        self.catalog_matching = self.add_par(
+            "catalog_matching",
+            "name",
+            str,
+            "What column in the catalog is used to match sources to datasets",
+        )
+        self.overwrite_files = self.add_par(
+            "overwrite_files", True, bool, "Overwrite existing files"
+        )
+        self.save_ra_minutes = (
+            self.add_par(
+                "save_ra_minutes",
+                False,
+                bool,
+                "Save RA in minutes in addition to hours",
+            ),
+        )
+        self.save_ra_seconds = (
+            self.add_par(
+                "save_ra_seconds",
+                False,
+                bool,
+                "Save RA in seconds in addition to hours and minutes",
+            ),
+        )
+        self.filekey_prefix = self.add_par(
+            "filekey_prefix",
+            "",
+            str,
+            "Prefix to add to automatically generated filekeys",
+        )
+        self.filekey_suffix = self.add_par(
+            "filekey_suffix",
+            "",
+            str,
+            "Suffix to add to automatically generated filekeys",
+        )
+        self.download_batch_size = self.add_par(
+            "download_batch_size",
+            100,
+            int,
+            "Number of sources to download and hold in RAM at one time",
+        )
+        self.num_threads_download = self.add_par(
+            "num_threads_download", 0, int, "Number of threads to use for downloading"
+        )
+
+        self._default_cfg_key = "observatories"
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = False  # allow subclasses to expand attributes
+
+        # subclass need to add these lines:
+        # _enforce_no_new_attrs = True  # lock adding wrong attributes
+        # config = load_then_update()  # load config file and update parameters
+        # apply_specific_pars(config)  # apply specific parameters for this observatory
+
+    def add_obs_name(self, name):
+        """
+        Add an observatory name to the list of allowed names.
+        """
+        self.obs_name = name.upper()
+
+        if name.upper() not in self.allowed_obs_names:
+            self.allowed_obs_names.append(name.upper())
+
+    def apply_specific_pars(self, inputs):
+        """
+        Check if parameters were given for a
+        specific observatory. For example if
+        one of the input keywords is "ZTF",
+        that dictionary will be applied after
+        the generic observatories parameters
+        are ingested.
+
+        Parameters
+        ----------
+        inputs : dict
+            Dictionary of input parameters, usually given
+            by the kwargs that are passed when constructing
+            the Parameters object.
+        """
+        for key, value in inputs.items():
+            if key.upper() == self.obs_name:
+                for k, v in value.items():
+                    self[k] = v
+
+    def __setattr__(self, key, value):
+        """
+        Additional input validation is done using specific
+        cases of __setattr__, in this case making sure
+        the demo_url is a valid URL.
+        """
+        # ignore any keywords that match an observatory name
+        if key.upper() in self.allowed_obs_names:
+            return
+
+        super.__setattr__(key, value)
+
+
 class VirtualObservatory:
     """
     Base class for other virtual observatories.
@@ -33,7 +169,7 @@ class VirtualObservatory:
     save the results for later, and so on.
     """
 
-    def __init__(self, name=None, **kwargs):
+    def __init__(self, name=None):
         """
         Create a new VirtualObservatory object,
         which is a base class for other observatories,
@@ -41,76 +177,27 @@ class VirtualObservatory:
 
         Parameters
         ----------
-        obs_name: str
+        name: str
             Name of the observatory.
-            This is used to find the key inside
-            the config files for this observatory.
-            This is also used to name the output files, etc.
-        project_name: str
-            Name of the project working with this observatory.
-            This is used to find the config file,
-            to produce the output files, etc.
-        config: str or bool
-            Name of the file to load.
-            If False or None, no config file will be loaded.
-            If True but not a string, will
-            default to "configs/<project-name>.yaml"
-            If a non-empty string is given,
-            it will be used as the config filename.
-        cfg_key: str
-            Key inside file which is relevant to
-            this observatory.
-            Defaults to the observatory name
-            (turned to lower case).
         """
         self.name = name
         self.project = None  # name of the project (loaded from pars later)
         self.cfg_hash = None  # hash of the config file (for version control)
         self._credentials = {}  # dictionary with usernames/passwords
         self._catalog = None
-        self.pars = Parameters.from_dict(kwargs, name)
-        self.pars.required_pars = [
-            "reducer",
-            "data_folder",
-            "data_glob",
-            "dataset_identifier",
-            "catalog_matching",
-        ]
-        self.pars.default_values(
-            reducer={},
-            dataset_attribute="source_name",
-            dataset_identifier="key",
-            catalog_matching="name",
-            overwrite_files=True,
-            save_ra_minutes=False,
-            save_ra_seconds=False,
-            filekey_prefix=None,
-            filekey_suffix=None,
-            download_batch_size=100,  # number of sources downloaded and held in RAM
-            num_threads_download=1,  # number of threads for downloading
-        )
 
         # freshly downloaded data:
         self.sources = []
         self.datasets = []
 
-    def initialize(self):
-        """
-        Verifies that all required parameters are set,
-        and that the values are the right type, in range, etc.
-        This should be called at the end of the __init__ method
-        of any SUBCLASS of VirtualObservatory.
-        """
-
         if "project" in self.pars:
             self.project = self.pars.project
 
-        if not isinstance(self.name, str):
-            raise TypeError("Observatory name was not set")
-
-        # TODO: do we have to have a project name?
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
+
+        if not isinstance(self.name, str):
+            raise TypeError("Observatory name was not set")
 
         if "credentials" in self.pars:
             # if credentials contains a filename and key:
@@ -120,8 +207,6 @@ class VirtualObservatory:
             # are given by the config/user inputs
             # prefer to use that instead of the file content
             self._credentials.update(self.pars.credentials)
-
-        self.pars.verify()
 
     @property
     def catalog(self):
@@ -174,35 +259,6 @@ class VirtualObservatory:
         if os.path.exists(filepath):
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key)
-
-    def load_parameters(self):
-        """
-        Load a YAML file with parameters for getting/processing
-        data from this observatory.
-        After loading the parameters,
-        additional parameters can be set using other
-        config files, or by input arguments, etc.
-        After finishing loading parameters,
-        use self.pars.verify() to make sure
-        all required parameters are set.
-        """
-
-        if self._cfg_key is None:
-            cfg_key = self.name.lower()
-        else:
-            cfg_key = self._cfg_key
-
-        if self._config:
-            if isinstance(self._config, str):
-                filename = self._config
-            else:
-                filename = os.path.join("configs", self.project + ".yaml")
-
-            self.pars.load(filename, cfg_key)
-
-        # after loading parameters from all files,
-        # must verify that all required parameters are present
-        # by calling self.pars.verify()
 
     def run_analysis(self):
         """
@@ -577,8 +633,7 @@ class VirtualObservatory:
             "fetch_data_from_observatory() must be implemented in subclass"
         )
 
-    def populate_sources(self, num_files=None, num_sources=None):
-        # raise NotImplementedError("populate_sources() must be implemented in subclass")
+    def populate_sources(self, files_glob="*.h5", num_files=None, num_sources=None):
         """
         Read the list of files with data,
         and match them up with the catalog,
@@ -588,6 +643,9 @@ class VirtualObservatory:
 
         Parameters
         ----------
+        files_glob: str
+            A glob pattern to match files with data.
+            Default is '*.h5'.
         num_files: int
             The maximum number of files to read.
             If zero or None (default), all files
@@ -613,9 +671,7 @@ class VirtualObservatory:
             print(f"Reading from data folder: {dir}")
 
         with Session() as session:
-            for i, filename in enumerate(
-                glob.glob(os.path.join(dir, self.pars.data_glob))
-            ):
+            for i, filename in enumerate(glob.glob(os.path.join(dir, files_glob))):
                 if num_files and i >= num_files:
                     break
 
@@ -932,6 +988,39 @@ class VirtualObservatory:
         raise NotImplementedError("Thumbnail reduction not implemented in this class")
 
 
+class ParsDemoObs(ParsObservatory):
+    def __init__(self, **kwargs):
+        super().__init__()
+
+        self.add_obs_name("demo")
+
+        self.demo_boolean = self.add_par(
+            "demo_boolean", True, bool, "A boolean parameter"
+        )
+        self.demo_url = self.add_par(
+            "demo_url", "http://www.example.com", str, "A URL parameter"
+        )
+
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = True
+
+        config = self.load_then_update(kwargs)
+
+        # apply parameters specific to this class
+        self.apply_specific_pars(config)
+
+    def __setattr__(self, key, value):
+        """
+        Additional input validation is done using specific
+        cases of __setattr__, in this case making sure
+        the demo_url is a valid URL.
+        """
+        if key == "demo_url":
+            validators.url(value)
+
+        super.__setattr__(key, value)
+
+
 class VirtualDemoObs(VirtualObservatory):
     def __init__(self, **kwargs):
         """
@@ -946,39 +1035,11 @@ class VirtualDemoObs(VirtualObservatory):
         The only difference is that the obs_name is set to "demo".
 
         """
+        # TODO: separate reducer into its own object
+        # reducer_kwargs = kwargs.pop("reducer_kwargs", {})
 
-        super().__init__(name="demo", **kwargs)
-        if self.project:
-            data_glob = self.pars.project + "_Demo_*.h5"
-        else:
-            data_glob = "Demo_*.h5"
-
-        self.pars.default_values(
-            demo_boolean=True,
-            demo_url="http://example.com",
-            data_folder="demo_data",
-            data_glob=data_glob,
-        )
-
-    def initialize(self):
-        """
-        Verify inputs to the observatory.
-        """
-        super().initialize()  # check all required parameters are set
-
-        # verify parameters have the correct type, etc.
-        if self.pars.demo_url is None:
-            raise ValueError("demo_url must be set to a valid URL")
-        validators.url(self.pars.demo_url)  # check URL is a legal one
-
-        if not isinstance(self.pars.demo_boolean, bool):
-            raise ValueError("demo_boolean must be set to a boolean")
-
-        if not isinstance(self.pars.data_folder, str):
-            raise ValueError("data_folder must be set to a string.")
-
-        if not isinstance(self.pars.data_glob, str):
-            raise ValueError("data_glob must be set to a string.")
+        super().__init__()
+        self.pars = ParsDemoObs(**kwargs)
 
     def fetch_data_from_observatory(
         self, cat_row, wait_time=0, wait_time_poisson=0, verbose=False, sim_args={}

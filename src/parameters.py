@@ -57,8 +57,24 @@ class Parameters:
             "_enforce_type_checks",
             False,
             bool,
-            "Choose if input values should be checked"
+            "Choose if input values should be checked "
             "against the type defined in add_par().",
+        )
+
+        self._enforce_no_new_attrs = self.add_par(
+            "_enforce_no_new_attrs",
+            False,
+            bool,
+            "Choose if new attributes should be allowed "
+            "to be added to the Parameters object. "
+            "Set to True to lock the object from further changes. ",
+        )
+
+        self._default_cfg_key = self.add_par(
+            "_default_cfg_key",
+            None,
+            str,
+            "The default key to use when loading a YAML file.",
         )
 
     def __contains__(self, key):
@@ -81,7 +97,11 @@ class Parameters:
            value must match the types allowed by the add_par() method.
 
         """
-        if not self.allow_adding_new_attributes() and key not in self.__dict__:
+        new_attrs_check = (
+            hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
+        )
+
+        if new_attrs_check and key not in self.__dict__:
             raise AttributeError(f'Attribute "{key}" does not exist.')
 
         type_checks = (
@@ -148,17 +168,6 @@ class Parameters:
         s = f"= {self[name]} [{joined}]"
         return s
 
-    def verify(self):
-        """
-        Make sure all required parameters were
-        set by external code or by reading a
-        file or dictionary.
-        If not, raises a ValueError.
-        """
-        for p in self.required_pars:
-            if p not in self:
-                raise ValueError(f"Parameter {p} is not set.")
-
     def default_values(self, **kwargs):
         """
         Add the input values as attributes of this object,
@@ -184,6 +193,36 @@ class Parameters:
         for k, v in kwargs.items():
             if k not in self or k in self._default_keys:
                 self[k] = v
+
+    def load_then_update(self, inputs):
+        """
+        Check for filename and load it if found.
+        Then update the parameters with the input values.
+
+        Parameters
+        ----------
+        inputs: dict
+            The input values to update the parameters with.
+
+        Returns
+        -------
+        dict
+            The combined config dictionary using the values
+            from file (if loaded) and the input values
+            that override any keys from file.
+        """
+
+        # check if need to load from disk
+        (cfg_file, cfg_key) = self.extract_cfg_file_and_key(inputs)
+        config = self.load(cfg_file, cfg_key, raise_if_missing="cfg_file" in inputs)
+
+        # apply the input kwargs (override config file)
+        config.update(inputs)
+
+        for k, v in config.items():
+            setattr(self, k, v)
+
+        return config
 
     @staticmethod
     def get_file_from_disk(filename):
@@ -223,7 +262,7 @@ class Parameters:
         cfg_key = inputs.get("cfg_key", None)
         return filename, cfg_key
 
-    def load(self, filename, key=None):
+    def load(self, filename, key=None, raise_if_missing=True):
         """
         Read parameters from a YAML file.
         If any parameters were already defined,
@@ -240,9 +279,17 @@ class Parameters:
             the parameters.
             If None, will try to load the default key
             using the subclass get_default_cfg_key() method.
+        raise_if_missing: bool
+            If True, will raise an error if the key is not found (default).
+            If False, will quietly return an empty dictionary.
+
+        Returns
+        -------
+        dict
+            The dictionary that was loaded from the file.
         """
         if filename is False:
-            return  # asked explicitly to not load anything
+            return {}  # asked explicitly to not load anything
         try:
 
             if os.path.isabs(filename):
@@ -257,15 +304,18 @@ class Parameters:
 
             # subclasses may define a default key
             if key is None:
-                key = self.get_default_cfg_key()
+                key = self._default_cfg_key
 
-            if key is None:
-                self.read(config)
-            else:
-                self.read(config.get(key, {}))
+            if key is not None:
+                config = config.get(key, {})
+
+            return config
 
         except FileNotFoundError:
-            raise
+            if raise_if_missing:
+                raise
+            else:
+                return {}
         # ignore all other loading exceptions?
 
     def read(self, dictionary):
@@ -319,7 +369,8 @@ class Parameters:
         """
         # TODO: what about combining parameters from multiple objects?
         with open(filename, "w") as file:
-            yaml.dump(self.__dict__, file, default_flow_style=False)
+            outputs = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+            yaml.dump(outputs, file, default_flow_style=False)
 
     def get_data_path(self):
         """
@@ -482,26 +533,6 @@ class Parameters:
         # the user inputs override the config file
         pars.read(inputs)
         return pars
-
-    @staticmethod
-    def get_default_cfg_key():
-        """
-        this should be defined in subclasses
-        e.g., the Parameters for Analysis should have
-        this set to "analysis" so it always finds the
-        right key in the YAML file
-        """
-        return None
-
-    @staticmethod
-    def allow_adding_new_attributes():
-        """
-        Allow adding new attributes to the Parameters object.
-        If False, will raise a key error if trying to add a new attribute,
-        which is useful in specific subclasses of Parameters
-        where the attributes are hard coded.
-        """
-        return True
 
 
 if __name__ == "__main__":
