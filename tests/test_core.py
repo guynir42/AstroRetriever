@@ -80,7 +80,7 @@ def test_load_save_parameters():
 
 
 def test_default_project():
-    proj = Project("default_test")
+    proj = Project("default_test", catalog_kwargs={"default": "test"})
     assert proj.pars.obs_names == {"demo"}
     assert "demo" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)

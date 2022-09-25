@@ -21,41 +21,72 @@ from src.parameters import Parameters
 SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_\./\\\\]+|\.\.")
 
 
-class Catalog:
-    def __init__(self, filename=None, **kwargs):
-
-        self.pars = Parameters(
-            required_pars=[
-                "catalog_name",
-                "filename",
-                "name_column",
-                "ra_column",
-                "dec_column",
-                "mag_column",
-                "mag_filter_name",
-            ]
+class ParsCatalog(Parameters):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.catalog_name = self.add_par(
+            "catalog_name", None, str, "Name of the catalog"
         )
-        # set default values
-        if filename is not None:
-            kwargs["filename"] = filename
-        # load parameters from user input:
-        if "default" in kwargs:
-            self.setup_from_defaults(kwargs["default"])
-        from pprint import pprint
+        self.filename = self.add_par("filename", None, str, "Name of the catalog file")
+        self.name_column = self.add_par(
+            "name_column", "name", str, "Name of the column with source names"
+        )
+        self.ra_column = self.add_par(
+            "ra_column", "ra", str, "Name of the column with source right ascension"
+        )
+        self.dec_column = self.add_par(
+            "dec_column", "dec", str, "Name of the column with source declination"
+        )
+        self.mag_column = self.add_par(
+            "mag_column", "mag", str, "Name of the column with source magnitude"
+        )
+        self.mag_error_column = self.add_par(
+            "mag_error_column",
+            "magerr",
+            str,
+            "Name of the column with source magnitude error",
+        )
+        self.mag_filter_name = self.add_par(
+            "mag_filter_name", "R", str, "Name of the filter for the magnitude column"
+        )
 
-        # add any additional updates after that
-        self.pars.update(kwargs)
-        if "catalog_name" not in self.pars or self.pars.catalog_name is None:
+        # use default configurations to quickly setup pars
+        self.default = self.add_par(
+            "default", None, (None, str), "Apply a default configuration"
+        )
+
+        # numpy arrays are faster to read from FITS files because they are big-endian.
+        # but for uniformity it may sometimes be better to load into pandas dataframes
+        # The WD catalog (~1.3 million rows) takes 1s as array and 11s as pandas dataframe
+        self.use_only_pandas = self.add_par(
+            "use_only_pandas",
+            False,
+            bool,
+            "Convert any file format to pandas dataframe",
+        )
+
+        self._enforce_no_new_attrs = True
+        self._enforce_type_checks = True
+
+        self.load_then_update(kwargs)
+
+
+class Catalog:
+    def __init__(self, **kwargs):
+        print(kwargs)
+        self.pars = ParsCatalog(**kwargs)
+
+        print(f"default= {self.pars.default}")
+
+        # load parameters from user input:
+        if "default" in self.pars:
+            self.setup_from_defaults(self.pars.default)
+
+        if self.pars.catalog_name is None and self.pars.filename:
             self.pars.catalog_name = self.pars.filename.split(".")[0]
 
-        # numpy arrays are faster to read from FITS files
-        # because they are big-endian.
-        # but for uniformity it is better to load pandas dataframes
-        # The WD catalog (~1.3 million rows) takes 1s as array
-        # and 11s as pandas dataframe
-        self.pars.default_values(use_only_pandas=False)
-
-        self.pars.verify()
+        if self.pars.catalog_name is None:
+            raise ValueError("Catalog name not set.")
 
         self.data = None
         self.inverse_name_index = None
@@ -280,6 +311,9 @@ class Catalog:
         Set up the catalog using a default keyword.
 
         """
+        if default is None:
+            return
+
         default = default.lower().replace("_", " ").replace("-", " ")
 
         if default == "test":

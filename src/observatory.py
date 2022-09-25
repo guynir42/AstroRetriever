@@ -40,13 +40,16 @@ class ParsObservatory(Parameters):
         super().__init__()
 
         self.obs_name = self.add_par("obs_name", "", str, "Name of the observatory.")
-        self.project = self.add_par("project", "", str, "Project name")
         self.reducer = self.add_par(
             "reducer", {}, dict, "Argumnets to pass to reduction method"
         )
 
         self.credentials = self.add_par(
-            "credentials", {}, dict, "Credentials for the observatory"
+            "credentials",
+            {},
+            dict,
+            "Credentials for the observatory or instructions for "
+            "how and where to load them from. ",
         )
 
         self.dataset_attribute = self.add_par(
@@ -157,7 +160,7 @@ class ParsObservatory(Parameters):
         if key.upper() in self.allowed_obs_names:
             return
 
-        super.__setattr__(key, value)
+        super().__setattr__(key, value)
 
 
 class VirtualObservatory:
@@ -181,7 +184,6 @@ class VirtualObservatory:
             Name of the observatory.
         """
         self.name = name
-        self.project = None  # name of the project (loaded from pars later)
         self.cfg_hash = None  # hash of the config file (for version control)
         self._credentials = {}  # dictionary with usernames/passwords
         self._catalog = None
@@ -189,9 +191,6 @@ class VirtualObservatory:
         # freshly downloaded data:
         self.sources = []
         self.datasets = []
-
-        if "project" in self.pars:
-            self.project = self.pars.project
 
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
@@ -207,6 +206,13 @@ class VirtualObservatory:
             # are given by the config/user inputs
             # prefer to use that instead of the file content
             self._credentials.update(self.pars.credentials)
+
+    @property
+    def project(self):
+        if hasattr(self, "pars"):
+            return self.pars.project
+        else:
+            return None
 
     @property
     def catalog(self):
@@ -258,7 +264,7 @@ class VirtualObservatory:
         # if file doesn't exist, just return with an empty dict
         if os.path.exists(filepath):
             with open(filepath) as file:
-                self._credentials = yaml.safe_load(file).get(key)
+                self._credentials = yaml.safe_load(file).get(key, {})
 
     def run_analysis(self):
         """
@@ -1018,7 +1024,7 @@ class ParsDemoObs(ParsObservatory):
         if key == "demo_url":
             validators.url(value)
 
-        super.__setattr__(key, value)
+        super().__setattr__(key, value)
 
 
 class VirtualDemoObs(VirtualObservatory):
@@ -1038,8 +1044,9 @@ class VirtualDemoObs(VirtualObservatory):
         # TODO: separate reducer into its own object
         # reducer_kwargs = kwargs.pop("reducer_kwargs", {})
 
-        super().__init__()
         self.pars = ParsDemoObs(**kwargs)
+        # call this only after a pars object is set up
+        super().__init__(name="demo")
 
     def fetch_data_from_observatory(
         self, cat_row, wait_time=0, wait_time_poisson=0, verbose=False, sim_args={}
@@ -1063,6 +1070,9 @@ class VirtualDemoObs(VirtualObservatory):
             (from a Poisson distribution) to the wait time.
             The mean of the distribution is the value given
             to wait_time_poisson.
+        verbose: bool, optional
+            If True, will print out some information about the
+            data that is being fetched or simulated.
         sim_args: dict
             A dictionary passed into the simulate_lightcuve function.
 

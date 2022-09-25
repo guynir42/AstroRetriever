@@ -17,7 +17,7 @@ from src.database import DATA_ROOT
 class ParsProject(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
-        self.project = self.add_par("project", None, str, "Name of the project")
+
         self.obs_names = self.add_par(
             "obs_names",
             ("demo"),
@@ -115,13 +115,16 @@ class Project:
 
         # make sure kwargs for contained objects are not passed to Parameters
         obs_kwargs = kwargs.pop("obs_kwargs", {})
-        obs_kwargs["project"] = name
-
         catalog_kwargs = kwargs.pop("catalog_kwargs", {})
         analysis_kwargs = kwargs.pop("analysis_kwargs", {})
 
         # this loads parameters from file, then from kwargs:
         self.pars = ParsProject(**kwargs)
+
+        # add some default keys like "project" and "verbose" to kwargs
+        self.pars.add_defaults_to_dict(obs_kwargs)
+        self.pars.add_defaults_to_dict(catalog_kwargs)
+        self.pars.add_defaults_to_dict(analysis_kwargs)
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
@@ -145,7 +148,7 @@ class Project:
             self.pars.git_hash = git_hash
 
         # make a catalog object based on the parameters:
-        self.catalog = Catalog(**catalog_kwargs, verbose=self.pars.verbose)
+        self.catalog = Catalog(**catalog_kwargs)
         self.catalog.load()
 
         self.observatories = NamedList(ignorecase=True)
@@ -226,8 +229,6 @@ class Project:
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
-
-        new_obs.initialize()
 
         return new_obs
 

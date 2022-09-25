@@ -51,6 +51,15 @@ class Parameters:
         self.__typecheck__ = {}
         self.__defaultpars__ = {}
         self.__docstrings__ = {}
+        self.project = self.add_par("project", None, str, "Name of the project")
+        self.cfg_file = self.add_par(
+            "cfg_file",
+            None,
+            (None, str, bool),
+            "Path to the YAML file with the parameters. "
+            "If None, the default file named as the project will be used. "
+            "If False, no file will be loaded.",
+        )
         self.verbose = self.add_par("verbose", 0, int, "Level of verbosity (0=quiet).")
 
         self._enforce_type_checks = self.add_par(
@@ -143,6 +152,9 @@ class Parameters:
         """
         if name in self.__typecheck__:
             raise ValueError(f"Parameter {name} already exists.")
+        if not isinstance(par_types, tuple):
+            par_types = (par_types,)
+        par_types = tuple(type(pt) if pt is None else pt for pt in par_types)
         self.__typecheck__[name] = par_types
         self.__docstrings__[name] = docstring
         self.__defaultpars__[name] = default
@@ -170,6 +182,7 @@ class Parameters:
 
     def default_values(self, **kwargs):
         """
+        TODO: can we remove this?
         Add the input values as attributes of this object,
         but for each attribute only add it if it has not been
         defined already.
@@ -183,6 +196,7 @@ class Parameters:
 
     def replace_unset(self, **kwargs):
         """
+        TODO: can we remove this?
         Replace any unset parameters with the input values.
         If key does not exist on pars, or if it was
         set by default_values() then it will be set
@@ -213,8 +227,9 @@ class Parameters:
         """
 
         # check if need to load from disk
-        (cfg_file, cfg_key) = self.extract_cfg_file_and_key(inputs)
-        config = self.load(cfg_file, cfg_key, raise_if_missing="cfg_file" in inputs)
+        (cfg_file, cfg_key, explicit) = self.extract_cfg_file_and_key(inputs)
+
+        config = self.load(cfg_file, cfg_key, raise_if_missing=explicit)
 
         # apply the input kwargs (override config file)
         config.update(inputs)
@@ -257,10 +272,18 @@ class Parameters:
             The filename to use, or None if no filename was found.
         cfg_key: str
             The key to use inside the config file, or None if no key was found.
+        explicit: bool
+            True if the filename was explicitly given in the inputs
+            as "cfg_file", not inferred from the project name.
         """
-        filename = inputs.get("cfg_file", inputs.get("project", None))
+        filename = inputs.get("cfg_file", None)
+        explicit = filename is not None
+
+        if filename is None:
+            filename = inputs.get("project", None)
         cfg_key = inputs.get("cfg_key", None)
-        return filename, cfg_key
+
+        return filename, cfg_key, explicit
 
     def load(self, filename, key=None, raise_if_missing=True):
         """
@@ -288,7 +311,7 @@ class Parameters:
         dict
             The dictionary that was loaded from the file.
         """
-        if filename is False:
+        if filename is None or filename is False:
             return {}  # asked explicitly to not load anything
         try:
 
