@@ -1,6 +1,5 @@
 import os
 import yaml
-from pprint import pprint
 
 from src.database import DATA_ROOT
 
@@ -30,7 +29,7 @@ class Parameters:
 
     """
 
-    def __init__(self, required_pars=[]):
+    def __init__(self):
         """
         Setup a Parameters object.
         After setting up, the parameters can be set
@@ -38,18 +37,29 @@ class Parameters:
         using the load() method,
         or by a dictionary, using the read() method.
 
-        Parameters
-        ----------
-        required_pars: list of str
-            A list of strings with the names of the required parameters.
-            If any of these parameters are not set after loading,
-            a ValueError is raised.
-        """
-        self.required_pars = required_pars
-        self.verbose = 0  # level of verbosity (0=quiet)
+        When adding parameters, use the add_par() method,
+        that accepts the variable name, the type(s),
+        and a docstring describing the parameter.
+        This allows for type checking and documentation.
 
-        # these have not been set by file or kwargs input
-        self._default_keys = []
+        Subclasses of this class should add their own
+        parameters then override the allow_adding_new_attributes()
+        method to return False, to prevent the user from
+        adding new parameters not defined in the subclass.
+        """
+
+        self.__typecheck__ = {}
+        self.__defaultpars__ = {}
+        self.__docstrings__ = {}
+        self.verbose = self.add_par("verbose", 0, int, "Level of verbosity (0=quiet).")
+
+        self._enforce_type_checks = self.add_par(
+            "_enforce_type_checks",
+            False,
+            bool,
+            "Choose if input values should be checked"
+            "against the type defined in add_par().",
+        )
 
     def __contains__(self, key):
         return hasattr(self, key)
@@ -59,6 +69,84 @@ class Parameters:
 
     def __setitem__(self, key, value):
         setattr(self, key, value)
+
+    def __setattr__(self, key, value):
+        """
+        Set an attribute of this object.
+        There are some limitations on what can be set:
+        1) if this class has allow_adding_new_attributes=False,
+           no new attributes can be added by the user
+           (to prevent setting parameters with typoes, etc).
+        2) if self._enforce_type_checks=True, then the type of the
+           value must match the types allowed by the add_par() method.
+
+        """
+        if not self.allow_adding_new_attributes() and key not in self.__dict__:
+            raise AttributeError(f'Attribute "{key}" does not exist.')
+
+        type_checks = (
+            hasattr(self, "_enforce_type_checks") and self._enforce_type_checks
+        )
+        if (
+            type_checks
+            and key in self.__typecheck__
+            and not isinstance(value, self.__typecheck__[key])
+        ):
+            raise TypeError(
+                f'Parameter "{key}" must be of type {self.__typecheck__[key]}'
+            )
+        super().__setattr__(key, value)
+
+    def add_par(self, name, default, par_types, docstring):
+        """
+        Add a parameter to the list of allowed parameters.
+        To add a value in one line (in the __init__ method):
+        self.new_var = self.add_par('new_var', (bool, NoneType), False, "Description of new_var.")
+
+        Parameters
+        ----------
+        name: str
+            Name of the parameter. Must match the name of the variable
+            that the return value is assigned to, e.g., self.new_var.
+        default: any
+            The default value of the parameter. Must match the given par_types.
+        par_types: type or tuple of types
+            The type(s) of the parameter. Will be enforced using isinstance(),
+            when _enforce_type_checks=True.
+        docstring: str
+            A description of the parameter. Will be used in the docstring of the class,
+            and when using the print() method or get_par_string() method.
+
+        Returns
+        -------
+
+        """
+        if name in self.__typecheck__:
+            raise ValueError(f"Parameter {name} already exists.")
+        self.__typecheck__[name] = par_types
+        self.__docstrings__[name] = docstring
+        self.__defaultpars__[name] = default
+        self[name] = default  # this should fail if wrong type?
+        return default
+
+    def get_par_string(self, name):
+        """
+        Get the value, docstring and default of a parameter.
+        """
+
+        desc = default = types = ""
+
+        if name in self.__docstrings__:
+            desc = self.__docstrings__[name].strip()
+            if desc.endswith("."):
+                desc = desc[:-1]
+        if name in self.__defaultpars__:
+            default = f"default= {self.__defaultpars__[name]}"
+        if name in self.__typecheck__:
+            types = f"type= {self.__typecheck__[name]}"
+        joined = " | ".join([desc, default, types])
+        s = f"= {self[name]} [{joined}]"
+        return s
 
     def verify(self):
         """
@@ -105,6 +193,36 @@ class Parameters:
 
         return LOADED_FILES[filename]
 
+    @staticmethod
+    def extract_cfg_file_and_key(inputs):
+        """
+        Scan a dictionary "inputs" for parameters
+        that may point to a config filename.
+        If "project" key is found, will use that name
+        as the config filename.
+        If "cfg_file" is found, will override "project"
+        and use that instead.
+        To prevent loading a config file, use cfg_file=False.
+
+        Will also look for a "cfg_key" keyword to use to
+        locate the key inside the config file.
+
+        Parameters
+        ----------
+        inputs: dict
+            Keyword arguments to scan for a filename to use.
+
+        Returns
+        -------
+        filename: str
+            The filename to use, or None if no filename was found.
+        cfg_key: str
+            The key to use inside the config file, or None if no key was found.
+        """
+        filename = inputs.get("cfg_file", inputs.get("project", None))
+        cfg_key = inputs.get("cfg_key", None)
+        return filename, cfg_key
+
     def load(self, filename, key=None):
         """
         Read parameters from a YAML file.
@@ -113,22 +231,33 @@ class Parameters:
 
         Parameters
         ----------
-        filename: str
-            Full or relative path and name to the YAML file..
-        key: str
+        filename: str or bool
+            Full or relative path and name to the YAML file.
+            If given as False, will not load anything.
+        key: str or None
             Read only a specific key from the YAML file,
             and use only the keys under that to populate
             the parameters.
+            If None, will try to load the default key
+            using the subclass get_default_cfg_key() method.
         """
+        if filename is False:
+            return  # asked explicitly to not load anything
         try:
 
             if os.path.isabs(filename):
                 filepath = filename
             else:
                 basepath = os.path.dirname(__file__)
-                filepath = os.path.abspath(os.path.join(basepath, "..", filename))
+                filepath = os.path.abspath(
+                    os.path.join(basepath, "../configs", filename)
+                )
 
             config = self.get_file_from_disk(filepath)
+
+            # subclasses may define a default key
+            if key is None:
+                key = self.get_default_cfg_key()
 
             if key is None:
                 self.read(config)
@@ -289,11 +418,22 @@ class Parameters:
         """
         Print the parameters.
         """
-        pprint(self.__dict__)
+        names = []
+        desc = []
+        for name in self.__dict__:
+            if name.startswith("_"):
+                continue
+            desc.append(self.get_par_string(name))
+            names.append(name)
 
-    @staticmethod
-    def from_dict(inputs, default_key=None):
+        max_length = max(len(n) for n in names)
+        for n, d in zip(names, desc):
+            print(f"{n:>{max_length}}{d}")
+
+    @classmethod
+    def from_dict(cls, inputs, default_key=None):
         """
+        TO BE DEPRECATED
         Create a Parameters object from a dictionary.
         Will try to load a YAML file if given a project name,
         ("project" key in the dictionary) or if given a "cfg_file" key.
@@ -313,7 +453,7 @@ class Parameters:
             Will be overriden if user specifies a different cfg_key.
         """
         if default_key is None:
-            default_key = get_default_cfg_key()
+            default_key = cls.get_default_cfg_key()
 
         pars = Parameters()
         project = inputs.get("project", None)
@@ -352,3 +492,17 @@ class Parameters:
         right key in the YAML file
         """
         return None
+
+    @staticmethod
+    def allow_adding_new_attributes():
+        """
+        Allow adding new attributes to the Parameters object.
+        If False, will raise a key error if trying to add a new attribute,
+        which is useful in specific subclasses of Parameters
+        where the attributes are hard coded.
+        """
+        return True
+
+
+if __name__ == "__main__":
+    p = Parameters()

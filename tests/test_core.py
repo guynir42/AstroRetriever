@@ -75,6 +75,7 @@ def test_load_save_parameters():
             "extra_parameter",
             "required_pars",
             "_default_keys",
+            "_enforce_type_checks",
             "verbose",
         } == set(new_data.keys())
         assert new_data["username"] == "guy"

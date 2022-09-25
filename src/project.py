@@ -14,6 +14,88 @@ from src.analysis import Analysis
 from src.database import DATA_ROOT
 
 
+class ParsProject(Parameters):
+    def __init__(self, **kwargs):
+        super.__init__()  # initialize base Parameters without passing arguments
+        self.project = self.add_par("project", None, str, "Name of the project")
+        self.obs_names = self.add_par(
+            "obs_names",
+            ("demo"),
+            (str, list, set, tuple),
+            "List/tuple/set of observatory names or one name",
+        )
+        self.obs_kwargs = self.add_par(
+            "obs_kwargs", {}, dict, "Keyword arguments to pass to all observatories"
+        )
+        self.catalog_kwargs = self.add_par(
+            "catalog_kwargs", {}, dict, "Keyword arguments to pass to the catalog"
+        )
+        self.version_control = self.add_par(
+            "version_control", False, bool, "Whether to use version control"
+        )
+
+        # each observatory name can be given its own, specific keyword arguments
+        for obs_name in self.obs_names:
+            setattr(
+                self,
+                obs_name,
+                self.add_par(
+                    obs_name,
+                    {},
+                    dict,
+                    f"Keyword arguments to pass to the {obs_name.upper()} observatory",
+                ),
+            )
+
+        # check if need to load from disk
+        (cfg_file, cfg_key) = self.extract_cfg_file_and_key(kwargs)
+        self.load(cfg_file, cfg_key)
+
+        # apply the input kwargs (checking the pars exist!)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def verify_observatory_names(self, names):
+        """
+        Check that the observatory names are a unique set of strings.
+
+        Parameters
+        ----------
+        names : list, tuple, set or str
+            List of observatory names.
+            Can be a set, tuple or list.
+            Can also be a single string.
+            All inputs will be converted to upper case
+            and saved as a tuple of unique strings.
+        """
+        # if only one observatory name is given, make it a list:
+        if isinstance(names, str):
+            names = [names]
+
+        names = list(names)
+
+        upper_obs = []
+        for obs in names:
+            if not isinstance(obs, str):
+                raise TypeError("observatories must be a list of strings")
+            upper_obs.append(obs.upper())
+
+        # cast the list into a set to make each name unique
+        names = set(upper_obs)
+
+        # set the obs_names as a tuple to make it immutable
+        super().__setattr__("obs_names", tuple(names))
+
+    def __setattr__(self, key, value):
+        if key in ("vc"):
+            key = "version_control"
+        if key == "obs_names":
+            self.verify_observatory_names(value)
+            return
+
+        super.__setattr__(key, value)
+
+
 class Project:
     def __init__(self, name="default", **kwargs):
         """
@@ -37,17 +119,20 @@ class Project:
         Additional arguments are passed into the Parameters object.
         """
         self.name = name
-        # this loads parameters from file, then from kwargs:
         kwargs["project"] = name  # propagate this to sub-objects
-        self.pars = Parameters.from_dict(kwargs, "project")
 
-        # default values in case no config file is loaded:
-        self.pars.default_values(
-            obs_names=["demo"],
-            obs_kwargs={},  # parameters for all observatories
-            catalog_kwargs={"default": "test"},
-            version_control=False,
-        )
+        # this loads parameters from file, then from kwargs:
+        self.pars = ParsProject(**kwargs)
+
+        # self.pars = Parameters.from_dict(kwargs, "project")
+        #
+        # # default values in case no config file is loaded:
+        # self.pars.default_values(
+        #     obs_names=["demo"],
+        #     obs_kwargs={},  # parameters for all observatories
+        #     catalog_kwargs={"default": "test"},
+        #     version_control=False,
+        # )
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
@@ -70,23 +155,21 @@ class Project:
 
             self.pars.git_hash = git_hash
 
-        # if only one observatory name is given, make it a set:
-        if isinstance(self.pars.obs_names, str):
-            self.pars.obs_names = {self.pars.obs_names}
-
-        # verify that the list of observatory names is castable to a set
-        if not isinstance(self.pars.obs_names, (set, list, tuple)):
-            raise TypeError(
-                f"obs_names must be a set, list, or tuple, not {type(self.pars.obs_names)}"
-            )
-
-        # cast the list into a set
-        self.pars.obs_names = set(self.pars.obs_names)
-
-        if not all([isinstance(obs, str) for obs in self.pars.obs_names]):
-            raise TypeError("observatories must be a set of strings")
-
-        self.pars.verify()  # make sure all parameters are set
+        # # if only one observatory name is given, make it a set:
+        # if isinstance(self.pars.obs_names, str):
+        #     self.pars.obs_names = {self.pars.obs_names}
+        #
+        # # verify that the list of observatory names is castable to a set
+        # if not isinstance(self.pars.obs_names, (set, list, tuple)):
+        #     raise TypeError(
+        #         f"obs_names must be a set, list, or tuple, not {type(self.pars.obs_names)}"
+        #     )
+        #
+        # # cast the list into a set
+        # self.pars.obs_names = set(self.pars.obs_names)
+        #
+        # if not all([isinstance(obs, str) for obs in self.pars.obs_names]):
+        #     raise TypeError("observatories must be a set of strings")
 
         # make a catalog object based on the parameters:
         self.catalog = Catalog(**self.pars.catalog_kwargs, verbose=self.pars.verbose)
