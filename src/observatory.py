@@ -162,6 +162,13 @@ class ParsObservatory(Parameters):
 
         super().__setattr__(key, value)
 
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "observatories"
+
 
 class VirtualObservatory:
     """

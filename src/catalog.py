@@ -70,10 +70,16 @@ class ParsCatalog(Parameters):
 
         self.load_then_update(kwargs)
 
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "catalog"
+
 
 class Catalog:
     def __init__(self, **kwargs):
-        print(kwargs)
         self.pars = ParsCatalog(**kwargs)
 
         print(f"default= {self.pars.default}")

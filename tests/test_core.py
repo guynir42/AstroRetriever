@@ -69,6 +69,8 @@ def test_load_save_parameters():
             "password",
             "extra_parameter",
             "verbose",
+            "project",
+            "cfg_file",
         } == set(new_data.keys())
         assert new_data["username"] == "guy"
         assert new_data["password"] == "12345"
@@ -81,27 +83,26 @@ def test_load_save_parameters():
 
 def test_default_project():
     proj = Project("default_test", catalog_kwargs={"default": "test"})
-    assert proj.pars.obs_names == {"demo"}
+    assert proj.pars.obs_names == ("DEMO",)
     assert "demo" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)
 
 
 def test_project_user_inputs():
 
-    project_str = str(uuid.uuid4())
     proj = Project(
         name="default_test",
-        project_string=project_str,
         obs_names=["ZTF"],
-        reducer={"reducer_key": "reducer_value"},
-        analysis_kwargs={"analysis_key": "analysis_value"},
-        obs_kwargs={},
-        ZTF={"credentials": {"username": "guy", "password": "12345"}},
+        analysis_kwargs={"num_injections": 3},
+        obs_kwargs={
+            "reducer": {"reducer_key": "reducer_value"},
+            "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
+        },
+        catalog_kwargs={"default": "test"},
     )
 
     # check the project parameters are loaded correctly
-    assert proj.pars.project_string == project_str
-    assert proj.pars.obs_names == {"ZTF"}
+    assert proj.pars.obs_names == ("ZTF",)
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
@@ -121,11 +122,13 @@ def test_project_config_file():
 
     data = {
         "project": {  # project wide definitions
-            "project_string": project_str1,  # random string
-            "obs_kwargs": {  # general instructions to pass to observatories
-                "reducer": {  # should be overriden by observatory reducer
-                    "reducer_key": "project_reduction",
-                },
+            "description": project_str1,  # random string
+            "obs_names": ["demo", "ztf"],  # list of observatory names
+        },
+        "catalog": {"default": "test"},  # catalog definitions
+        "observatories": {  # general instructions to pass to observatories
+            "reducer": {  # should be overriden by observatory reducer
+                "reducer_key": "project_reduction",
             },
         },
         "demo": {  # demo observatory specific definitions
@@ -143,13 +146,14 @@ def test_project_config_file():
             },
         },
         "analysis": {
-            "analysis_key": "project_analysis",
+            "num_injections": 2.5,
         },
     }
     # TODO: add Catalog configurations
 
     # make config and passwords file
     configs_folder = os.path.abspath(os.path.join(basepath, "../configs"))
+    print(configs_folder)
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
     filename = os.path.join(configs_folder, "default_test.yaml")

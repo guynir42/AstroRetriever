@@ -79,13 +79,6 @@ class Parameters:
             "Set to True to lock the object from further changes. ",
         )
 
-        self._default_cfg_key = self.add_par(
-            "_default_cfg_key",
-            None,
-            str,
-            "The default key to use when loading a YAML file.",
-        )
-
     def __contains__(self, key):
         return hasattr(self, key)
 
@@ -180,20 +173,6 @@ class Parameters:
         s = f"= {self[name]} [{joined}]"
         return s
 
-    def default_values(self, **kwargs):
-        """
-        TODO: can we remove this?
-        Add the input values as attributes of this object,
-        but for each attribute only add it if it has not been
-        defined already.
-        This is useful for hard-coding default values that may or
-        may not have been loaded in a previous call to e.g., load().
-        """
-        for k, v in kwargs.items():
-            if k not in self:
-                self[k] = v
-                self._default_keys.append(k)
-
     def replace_unset(self, **kwargs):
         """
         TODO: can we remove this?
@@ -228,9 +207,7 @@ class Parameters:
 
         # check if need to load from disk
         (cfg_file, cfg_key, explicit) = self.extract_cfg_file_and_key(inputs)
-
         config = self.load(cfg_file, cfg_key, raise_if_missing=explicit)
-
         # apply the input kwargs (override config file)
         config.update(inputs)
 
@@ -247,8 +224,8 @@ class Parameters:
 
         return LOADED_FILES[filename]
 
-    @staticmethod
-    def extract_cfg_file_and_key(inputs):
+    @classmethod
+    def extract_cfg_file_and_key(cls, inputs):
         """
         Scan a dictionary "inputs" for parameters
         that may point to a config filename.
@@ -272,6 +249,8 @@ class Parameters:
             The filename to use, or None if no filename was found.
         cfg_key: str
             The key to use inside the config file, or None if no key was found.
+            If None, will try to load the default key
+            using the subclass get_default_cfg_key() method.
         explicit: bool
             True if the filename was explicitly given in the inputs
             as "cfg_file", not inferred from the project name.
@@ -281,7 +260,12 @@ class Parameters:
 
         if filename is None:
             filename = inputs.get("project", None)
+
         cfg_key = inputs.get("cfg_key", None)
+
+        # subclasses may define a default key
+        if cfg_key is None:
+            cfg_key = cls.get_default_cfg_key()
 
         return filename, cfg_key, explicit
 
@@ -300,8 +284,6 @@ class Parameters:
             Read only a specific key from the YAML file,
             and use only the keys under that to populate
             the parameters.
-            If None, will try to load the default key
-            using the subclass get_default_cfg_key() method.
         raise_if_missing: bool
             If True, will raise an error if the key is not found (default).
             If False, will quietly return an empty dictionary.
@@ -323,11 +305,10 @@ class Parameters:
                     os.path.join(basepath, "../configs", filename)
                 )
 
-            config = self.get_file_from_disk(filepath)
+            if not filepath.lower().endswith(("yml", "yaml", "cfg")):
+                filepath += ".yaml"
 
-            # subclasses may define a default key
-            if key is None:
-                key = self._default_cfg_key
+            config = self.get_file_from_disk(filepath)
 
             if key is not None:
                 config = config.get(key, {})
@@ -504,58 +485,12 @@ class Parameters:
         for n, d in zip(names, desc):
             print(f"{n:>{max_length}}{d}")
 
-    @classmethod
-    def from_dict(cls, inputs, default_key=None):
+    @staticmethod
+    def get_default_cfg_key(cls):
         """
-        TO BE DEPRECATED
-        Create a Parameters object from a dictionary.
-        Will try to load a YAML file if given a project name,
-        ("project" key in the dictionary) or if given a "cfg_file" key.
-        If no config file is found, can either silently continue with
-        only the given inputs, or raise an error
-        if cfg_file is given explicitly.
-
-        Parameters
-        ----------
-        inputs: dict
-            A dictionary with the parameters.
-
-        default_key: str, optional
-            The key to use when searching for a sub-dictionary
-            in the config file. If not given, will load the entire
-            YAML file.
-            Will be overriden if user specifies a different cfg_key.
+        Get the default key to use when loading a config file.
         """
-        if default_key is None:
-            default_key = cls.get_default_cfg_key()
-
-        pars = Parameters()
-        project = inputs.get("project", None)
-        if project is not None:
-            default_filename = os.path.join(
-                os.path.dirname(__file__), "../configs", f"{project}.yaml"
-            )
-        else:
-            default_filename = None
-        filename = inputs.get("cfg_file", default_filename)
-        if filename is not None:
-            if not os.path.isabs(filename):
-                basepath = os.path.dirname(__file__)
-                filename = os.path.abspath(
-                    os.path.join(basepath, "../configs", filename)
-                )
-
-            if os.path.isfile(filename):
-                key = inputs.get("cfg_key", default_key)
-                # print(f'Loading parameters from {filename} key "{key}"')
-                pars.load(filename, key=key)
-            elif "cfg_file" in inputs:
-                # only raise if user explicitly specified a file
-                raise FileNotFoundError(f"Could not find config file {filename}")
-
-        # the user inputs override the config file
-        pars.read(inputs)
-        return pars
+        return None
 
 
 if __name__ == "__main__":

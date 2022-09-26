@@ -25,6 +25,8 @@ class ParsProject(Parameters):
             "List/tuple/set of observatory names or one name",
         )
 
+        self.description = self.add_par("description", "", str, "Project description")
+
         self.version_control = self.add_par(
             "version_control", False, bool, "Whether to use version control"
         )
@@ -87,6 +89,13 @@ class ParsProject(Parameters):
 
         super().__setattr__(key, value)
 
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "project"
+
 
 class Project:
     def __init__(self, name="default", **kwargs):
@@ -124,7 +133,6 @@ class Project:
         # add some default keys like "project" and "verbose" to kwargs
         self.pars.add_defaults_to_dict(obs_kwargs)
         self.pars.add_defaults_to_dict(catalog_kwargs)
-        self.pars.add_defaults_to_dict(analysis_kwargs)
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
@@ -148,6 +156,7 @@ class Project:
             self.pars.git_hash = git_hash
 
         # make a catalog object based on the parameters:
+        print("loading catalog")
         self.catalog = Catalog(**catalog_kwargs)
         self.catalog.load()
 
@@ -163,7 +172,7 @@ class Project:
                 )
             )
 
-        self.analysis = self.pars.get_class("analysis")
+        self.analysis = self.pars.get_class("analysis", **analysis_kwargs)
 
     def make_observatory(self, name, inputs):
         """

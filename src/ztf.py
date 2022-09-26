@@ -19,7 +19,7 @@ class ParsObsZTF(ParsObservatory):
     def __init__(self, **kwargs):
         super().__init__()
 
-        self.add_obs_name("demo")
+        self.add_obs_name("ZTF")
 
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
@@ -44,8 +44,8 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        super().__init__(name="ztf", **kwargs)
         self.pars = ParsObsZTF(**kwargs)
+        super().__init__(name="ztf")
 
     def reduce_to_lightcurves(
         self,

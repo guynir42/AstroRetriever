@@ -7,6 +7,42 @@ from src.dataset import RawData, Lightcurve
 from src.detection import DetectionInTime
 
 
+class ParsFinder(Parameters):
+    def __init__(self, **kwargs):
+        super().__init__()  # initialize base Parameters without passing arguments
+
+        self.snr_threshold = self.add_par(
+            "snr_threshold", 5, (float, int), "S/N threshold for detection"
+        )
+        self.snr_threshold_sidebands = self.add_par(
+            "snr_threshold_sidebands",
+            -2,
+            (float, int),
+            "S/N threshold for event region",
+        )
+        self.max_det_per_lc = self.add_par(
+            "max_det_per_lc", 1, int, "Maximum number of detections per lightcurve"
+        )
+        self.abs_snr = self.add_par(
+            "abs_snr",
+            True,
+            bool,
+            "Use absolute S/N for detection (i.e., include negative)",
+        )
+
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = True
+
+        self.load_then_update(kwargs)
+
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "finder"
+
+
 class Finder:
     """
     A basic finder implementation, looks for
@@ -43,12 +79,6 @@ class Finder:
 
     def __init__(self, **kwargs):
         self.pars = Parameters.from_dict(kwargs, "finder")
-        self.pars.default_values(
-            snr_threshold=5,  # S/N threshold for detection
-            snr_threshold_sidebands=-2,  # S/N threshold for event region
-            max_det_per_lc=1,  # Maximum number of detections per lightcurve
-            abs_snr=True,  # Use absolute S/N for detection (i.e., include negative)
-        )
 
     def ingest_lightcurves(self, lightcurves, source=None, sim=None):
         """

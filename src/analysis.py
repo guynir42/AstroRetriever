@@ -7,6 +7,71 @@ from src.dataset import Lightcurve
 from src.database import Session
 
 
+class ParsAnalysis(Parameters):
+    def __init__(self, **kwargs):
+        super().__init__()  # initialize base Parameters without passing arguments
+        self.num_injections = self.add_par(
+            "num_injections",
+            1,
+            (int, float),
+            "Number of fake events to inject per source (can be fractional)",
+        )
+        self.quality_module = self.add_par(
+            "quality_module",
+            "src.quality",
+            str,
+            "Module where the Quality class is defined",
+        )
+        self.quality_class = self.add_par(
+            "quality_class", "Quality", str, "Name of the Quality class"
+        )
+        # quality_kwargs = {},  # parameters for the Quality class
+        self.finder_module = self.add_par(
+            "finder_module",
+            "src.finder",
+            str,
+            "Module where the Finder class is defined",
+        )
+        self.finder_class = self.add_par(
+            "finder_class", "Finder", str, "Name of the Finder class"
+        )
+        # finder_kwargs = {},  # parameters for the Finder class
+        self.simulator_module = self.add_par(
+            "simulation_module",
+            "src.simulator",
+            str,
+            "Module where the Simulator class is defined",
+        )
+        self.simulator_class = self.add_par(
+            "simulator_class", "Simulator", str, "Name of the Simulator class"
+        )
+        # simulator_kwargs = {},  # parameters for the Simulator class
+        self.update_histograms = self.add_par(
+            "update_histograms", True, bool, "Update the histograms on file"
+        )
+        self.save_lightcurves = self.add_par(
+            "save_lightcurves",
+            True,
+            bool,
+            "Save processed lightcurves after finder and quality cuts",
+        )
+        self.commit_detections = self.add_par(
+            "commit_detections", True, bool, "Save detections to database"
+        )
+
+        self._enforce_type_checks = True
+        self._enforce_no_new_attrs = True
+
+        self.load_then_update(kwargs)
+
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "analysis"
+
+
 class Analysis:
     """
     This is a pipeline object that accepts some data
@@ -36,49 +101,19 @@ class Analysis:
     """
 
     def __init__(self, **kwargs):
-        self.pars = Parameters.from_dict(kwargs, "analysis")
-        self.pars.default_values(  # if not set, use these default values
-            num_injections=1,  # number of fake events to inject per source (can be fractional)
-            quality_module="src.quality",  # module where the Quality class is defined
-            quality_class="Quality",  # name of the Quality class
-            quality_kwargs={},  # parameters for the Quality class
-            finder_module="src.finder",  # module where the Finder class is defined
-            finder_class="Finder",  # name of the Finder class
-            finder_kwargs={},  # parameters for the Finder class
-            simulator_module="src.simulator",  # module where the Simulator class is defined
-            simulator_class="Simulator",  # name of the Simulator class
-            simulator_kwargs={},  # parameters for the Simulator class
-            update_histograms=True,  # update the histograms on file
-            save_lightcurves=True,  # Save processed lightcurves after finder and quality cuts
-            commit_detections=True,  # Save detections to database
-            # TODO: define parameters to set the range of scores/cuts in histograms
-            # trigger_threshold_dict={  # threshold for triggering a detection
-            #     "snr": {
-            #         "thresh": 5,
-            #         "type": "float",
-            #         "abs": True,
-            #         "min": -20,
-            #         "max": 20,
-            #         "step": 0.1,
-            #     },
-            # },
-            # cut_threshold_dict={  # dictionary of thresholds to apply to the detections:
-            #     "flag": {
-            #         "thresh": 1,
-            #         "type": "bool",
-            #         "abs": False,
-            #     }
-            # },
-            # optional list of threshold dictionaries to check alternative configurations
-            # extra_cut_thresholds=[],
-        )
+        finder_kwargs = kwargs.pop("finder_kwargs", {})
+        quality_kwargs = kwargs.pop("quality_kwargs", {})
+        simulator_kwargs = kwargs.pop("simulator_kwargs", {})
+
+        self.pars = ParsAnalysis(**kwargs)
+
         self.all_scores = Histogram()
         self.good_scores = Histogram()
         # self.extra_scores = []  # an optional list of extra Histogram objects
         self.quality_values = Histogram()
-        self.finder = self.pars.get_class("finder")
-        self.checker = self.pars.get_class("quality")
-        self.sim = self.pars.get_class("simulator")
+        self.finder = self.pars.get_class("finder", **finder_kwargs)
+        self.checker = self.pars.get_class("quality", **quality_kwargs)
+        self.sim = self.pars.get_class("simulator", **simulator_kwargs)
         # self.threshold = None  # Threshold object
         # self.extra_thresholds = []  # list of Threshold objects
 
