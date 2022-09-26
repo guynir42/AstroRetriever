@@ -8,6 +8,54 @@ from src.parameters import Parameters
 # TODO: should this be saved to the database?
 
 
+class ParsHistogram(Parameters):
+    def __init__(self, **kwargs):
+        super().__init__()
+
+        self.dtype = self.add_par(
+            "dtype",
+            "uint32",
+            str,
+            "Data type of underlying array (must be uint16 or uint32)",
+        )
+        default_score_coords = {
+            "snr": (-10, 10, 0.1),
+            "dmag": (-3, 3, 0.1),
+        }  # other options: any of the quality cuts
+        self.score_coords = self.add_par(
+            "score_coords", default_score_coords, dict, "Coordinates for the score axes"
+        )
+
+        default_source_coords = {
+            "mag": (15, 21, 0.5),
+        }  # other options: color, ecl lat, mass, radius
+        self.source_coords = self.add_par(
+            "source_coords",
+            default_source_coords,
+            dict,
+            "Coordinates for the source axes",
+        )
+
+        default_obs_coords = {
+            "exptime": (30, 1),
+            "filt": (),
+        }  # other options: airmass, zp, magerr
+        self.obs_coords = self.add_par(
+            "obs_coords",
+            default_obs_coords,
+            dict,
+            "Coordinates for the observation axes",
+        )
+
+        def __setattr__(self, key, value):
+            if key == "dtype" and value not in ("uint16", "uint32"):
+                raise ValueError(
+                    f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
+                )
+
+            super().__setattr__(key, value)
+
+
 class Histogram:
     """
     A wrapper around an xarray.Dataset to store histograms.
@@ -50,30 +98,17 @@ class Histogram:
 
     """
 
-    def __init__(self):
-        self.pars = Parameters()
+    def __init__(self, **kwargs):
+
+        can_initialize = kwargs.get("initialize", False)
+
+        self.pars = ParsHistogram(**kwargs)
         self.data = None
 
-        # parameter definitions
-        self.pars.dtype = "uint32"
-        self.pars.score_coords = {
-            "snr": (-10, 10, 0.1),
-            "dmag": (-3, 3, 0.1),
-        }  # other options: any of the quality cuts
-        self.pars.source_coords = {
-            "mag": (15, 21, 0.5),
-        }  # other options: color, ecl lat, mass, radius
-        self.pars.obs_coords = {
-            "exptime": (30, 1),
-            "filt": (),
-        }  # other options: airmass, zp, magerr
+        if can_initialize:
+            self.initialize()
 
     def initialize(self):
-        self.pars.verify()
-        if self.pars.dtype not in ("uint16", "uint32"):
-            raise ValueError(
-                f"Unsupported dtype: {self.pars.dtype}, " f"must be uint16 or uint32."
-            )
 
         # create the coordinates
         coords = {}
@@ -292,8 +327,6 @@ class Histogram:
         those scalar values will be used to slice into
         the histogram, and speed up the binning process.
         All the other values will be binned using ...
-
-
 
         Parameters
         ----------

@@ -130,36 +130,35 @@ def test_project_config_file():
             "reducer": {  # should be overriden by observatory reducer
                 "reducer_key": "project_reduction",
             },
-        },
-        "demo": {  # demo observatory specific definitions
-            "demo_boolean": False,
-            "demo_string": "test-string",
-        },
-        "ztf": {
-            "credentials": {
-                "filename": os.path.abspath(
-                    os.path.join(basepath, "passwords_test.yaml")
-                ),
+            "demo": {  # demo observatory specific definitions
+                "demo_boolean": False,
+                "demo_string": "test-string",
             },
-            "reducer": {
-                "reducer_key": "ztf_reduction",
+            "ztf": {
+                "credentials": {
+                    "filename": os.path.abspath(
+                        os.path.join(basepath, "passwords_test.yaml")
+                    ),
+                },
+                "reducer": {
+                    "reducer_key": "ztf_reduction",
+                },
             },
         },
         "analysis": {
             "num_injections": 2.5,
         },
     }
-    # TODO: add Catalog configurations
 
     # make config and passwords file
     configs_folder = os.path.abspath(os.path.join(basepath, "../configs"))
-    print(configs_folder)
+
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
     filename = os.path.join(configs_folder, "default_test.yaml")
     with open(filename, "w") as file:
         yaml.dump(data, file, sort_keys=False)
-    with open(data["ztf"]["credentials"]["filename"], "w") as file:
+    with open(data["observatories"]["ztf"]["credentials"]["filename"], "w") as file:
         password = str(uuid.uuid4())
         yaml.dump(
             {"ztf": {"username": "test-username", "password": password}},
@@ -169,17 +168,16 @@ def test_project_config_file():
 
     try:
         # do not load the config file
-        proj = Project("default_test", cfg_file=None)
-        assert "project_string" not in proj.pars
+        proj = Project(
+            "default_test", catalog_kwargs={"default": "test"}, cfg_file=False
+        )
+        assert proj.pars.description == ""
 
         # load the default config file at configs/default_test.yaml
-        proj = Project(
-            "default_test",
-            obs_names=["DemoObs", "ZTF"],
-        )
-        assert "project_string" in proj.pars
-        assert proj.pars.project_string == project_str1
-        assert proj.analysis.pars.analysis_key == "project_analysis"
+        proj = Project("default_test")
+        assert "description" in proj.pars
+        assert proj.pars.description == project_str1
+        assert proj.analysis.pars.num_injections == 2.5
 
         # check the observatories were loaded correctly
         assert "demo" in proj.observatories
@@ -204,21 +202,25 @@ def test_project_config_file():
         # check the user inputs override the config file
         proj = Project(
             "default_test",
-            project_string=project_str2,
-            demo={
-                "demo_string": "new-test-string"
-            },  # directly override demo parameters
+            description=project_str2,
+            obs_kwargs={
+                "demo": {
+                    "demo_string": "new-test-string"
+                },  # directly override demo parameters
+            },
         )
-        assert proj.pars.project_string == project_str2
+        assert proj.pars.description == project_str2
         assert proj.observatories["demo"].pars.demo_string == "new-test-string"
 
     finally:
         os.remove(filename)
-        os.remove(data["ztf"]["credentials"]["filename"])
+        os.remove(data["observatories"]["ztf"]["credentials"]["filename"])
 
 
 def test_version_control():
-    proj = Project("default_test", version_control=True)
+    proj = Project(
+        "default_test", version_control=True, catalog_kwargs={"default": "test"}
+    )
     assert isinstance(proj.pars.git_hash, str)
     print(f"current git hash is: {proj.pars.git_hash}")
 
@@ -231,7 +233,7 @@ def test_catalog():
         Catalog.make_test_catalog(filename=filename, number=10)
         assert os.path.isfile(fullname)
 
-        # setup a catalog with the default column definitions
+        # set up a catalog with the default column definitions
         cat = Catalog(filename=filename, default="test")
         cat.load()
         assert cat.pars.filename == filename

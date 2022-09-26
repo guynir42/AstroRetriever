@@ -1264,7 +1264,7 @@ class Lightcurve(DatasetMixin, Base):
         fcol = self.colmap["filter"]  # shorthand
 
         # replace the filter name with a more specific one
-        if "filtmap" in kwargs:
+        if "filtmap" in kwargs and kwargs["filtmap"] is not None:
             if isinstance(kwargs["filtmap"], dict):
 
                 def filter_mapping(filt):

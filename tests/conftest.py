@@ -36,13 +36,13 @@ def raw_photometry_no_exptime():
 
 @pytest.fixture
 def test_project():
-    project = Project(name="test_project")
+    project = Project(name="test_project", catalog_kwargs={"default": "WD"})
     return project
 
 
 @pytest.fixture
 def wd_project():
-    project = Project(name="WD", catalog={"default": "WD"})
+    project = Project(name="WD", catalog_kwargs={"default": "WD"})
     return project
 
 
@@ -51,6 +51,7 @@ def ztf_project():
     project = Project(
         name="test_ZTF",
         obs_names="ZTF",  # a single observatory named ZTF
+        catalog_kwargs={"default": "test"},
     )
     return project
 

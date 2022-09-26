@@ -207,10 +207,18 @@ class Parameters:
 
         # check if need to load from disk
         (cfg_file, cfg_key, explicit) = self.extract_cfg_file_and_key(inputs)
+
         config = self.load(cfg_file, cfg_key, raise_if_missing=explicit)
         # apply the input kwargs (override config file)
+        if "demo_boolean" in config:
+            print(f'config["demo_boolean"] = {config["demo_boolean"]}')
         config.update(inputs)
 
+        # if there's a way to set up a default configuration
+        if "default" in config and hasattr(self, "setup_from_defaults"):
+            self.setup_from_defaults(config["default"])
+
+        # only after loading the default configuration, update with data from file/user
         for k, v in config.items():
             setattr(self, k, v)
 
@@ -308,6 +316,7 @@ class Parameters:
             if not filepath.lower().endswith(("yml", "yaml", "cfg")):
                 filepath += ".yaml"
 
+            # print(f'Loading config from "{filepath}" with key "{key}"')
             config = self.get_file_from_disk(filepath)
 
             if key is not None:

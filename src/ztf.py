@@ -16,10 +16,13 @@ from src.dataset import DatasetMixin, RawData, Lightcurve
 
 
 class ParsObsZTF(ParsObservatory):
-    def __init__(self, **kwargs):
-        super().__init__()
 
-        self.add_obs_name("ZTF")
+    # must register this observatory in list of allowed names
+    ParsObservatory.add_to_obs_names("ZTF")
+
+    def __init__(self, **kwargs):
+
+        super().__init__("ztf")
 
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True

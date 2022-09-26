@@ -55,6 +55,11 @@ class ParsCatalog(Parameters):
             "default", None, (None, str), "Apply a default configuration"
         )
 
+        self.url = self.add_par("url", None, str, "URL to download the catalog file")
+        self.reference = self.add_par(
+            "reference", None, str, "Reference for the catalog for citations, etc"
+        )
+
         # numpy arrays are faster to read from FITS files because they are big-endian.
         # but for uniformity it may sometimes be better to load into pandas dataframes
         # The WD catalog (~1.3 million rows) takes 1s as array and 11s as pandas dataframe
@@ -77,16 +82,61 @@ class ParsCatalog(Parameters):
         """
         return "catalog"
 
+    def setup_from_defaults(self, default):
+        """
+        Set up the catalog using a default keyword.
+
+        Currently supported defaults:
+        -"test": make a small catalog with random sources
+        -"WD": load the WD catalog from Fusillo et al 2021
+        """
+        if default is None:
+            return
+
+        default = default.lower().replace("_", " ").replace("-", " ")
+
+        if default == "test":
+            self.catalog_name = "test catalog"
+            self.name_column = "object_id"
+            self.ra_column = "ra"
+            self.dec_column = "dec"
+            self.mag_column = "mag"
+            self.mag_error_column = "magerr"
+            self.mag_filter_name = "R"
+            self.filename = "test.csv"
+        elif default in ("wd", "wds", "white dwarf", "white_dwarfs"):
+            self.catalog_name = "Gaia eDR3 white dwarfs"
+            # file to save inside "catalogs" directory
+            self.filename = "GaiaEDR3_WD_main.fits"
+            # URL to get this file if missing:
+            self.url = (
+                "https://warwick.ac.uk/fac/sci/physics/"
+                "research/astro/research/catalogues/"
+                "gaiaedr3_wd_main.fits.gz"
+            )
+            # paper citation for this catalog:
+            self.reference = (
+                "https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract"
+            )
+
+            self.name_column = "WDJ_name"
+            self.ra_column = "ra"
+            self.dec_column = "dec"
+            self.mag_column = "phot_g_mean_mag"
+            self.mag_error_column = "phot_g_mean_mag_error"
+            self.mag_filter_name = "Gaia_G"
+
 
 class Catalog:
     def __init__(self, **kwargs):
         self.pars = ParsCatalog(**kwargs)
 
-        print(f"default= {self.pars.default}")
-
-        # load parameters from user input:
-        if "default" in self.pars:
-            self.setup_from_defaults(self.pars.default)
+        # if loaded test default catalog,
+        # make sure it exists, and generate
+        # a random one if it doesn't
+        if self.pars.default == "test":
+            if not os.path.isfile(self.get_fullpath()):
+                self.make_test_catalog(self.pars.filename)
 
         if self.pars.catalog_name is None and self.pars.filename:
             self.pars.catalog_name = self.pars.filename.split(".")[0]
@@ -194,7 +244,8 @@ class Catalog:
             if not os.path.isfile(self.get_fullpath()):
                 raise FileNotFoundError(f"File {self.get_fullpath()} not found.")
 
-        print(f"Loading catalog from {self.get_fullpath()}")
+        if self.pars.verbose:
+            print(f"Loading catalog from {self.get_fullpath()}")
 
         # do the actual loading:
         type = self.guess_file_type()
@@ -311,49 +362,6 @@ class Catalog:
             return name.decode("utf-8")
         else:
             return str(name)
-
-    def setup_from_defaults(self, default):
-        """
-        Set up the catalog using a default keyword.
-
-        """
-        if default is None:
-            return
-
-        default = default.lower().replace("_", " ").replace("-", " ")
-
-        if default == "test":
-            self.pars.catalog_name = "test catalog"
-            self.pars.name_column = "object_id"
-            self.pars.ra_column = "ra"
-            self.pars.dec_column = "dec"
-            self.pars.mag_column = "mag"
-            self.pars.mag_error_column = "magerr"
-            self.pars.mag_filter_name = "R"
-            self.pars.filename = "test.csv"
-            if not os.path.isfile(self.get_fullpath()):
-                self.make_test_catalog(self.pars.filename)
-        elif default in ("wd", "wds", "white dwarf", "white_dwarfs"):
-            self.pars.catalog_name = "Gaia eDR3 white dwarfs"
-            # file to save inside "catalogs" directory
-            self.pars.filename = "GaiaEDR3_WD_main.fits"
-            # URL to get this file if missing:
-            self.pars.url = (
-                "https://warwick.ac.uk/fac/sci/physics/"
-                "research/astro/research/catalogues/"
-                "gaiaedr3_wd_main.fits.gz"
-            )
-            # paper citation for this catalog:
-            self.pars.reference = (
-                "https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract"
-            )
-
-            self.pars.name_column = "WDJ_name"
-            self.pars.ra_column = "ra"
-            self.pars.dec_column = "dec"
-            self.pars.mag_column = "phot_g_mean_mag"
-            self.pars.mag_err_column = "phot_g_mean_mag_error"
-            self.pars.mag_filter_name = "Gaia_G"
 
     def get_columns(self):
         """

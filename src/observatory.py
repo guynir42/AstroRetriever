@@ -36,10 +36,24 @@ class ParsObservatory(Parameters):
     # allowed_obs_names = ['demo', 'ztf', 'tess', 'kepler', 'k2', 'gaia', 'panstarrs', 'lsst', 'des', 'sdss']
     allowed_obs_names = []
 
-    def __init__(self):
+    @classmethod
+    def add_to_obs_names(cls, obs_name):
+        """
+        Add an observatory name to the list of allowed observatory names.
+        """
+        if obs_name.upper() not in cls.allowed_obs_names:
+            cls.allowed_obs_names.append(obs_name.upper())
+
+    def __init__(self, obs_name):
         super().__init__()
 
-        self.obs_name = self.add_par("obs_name", "", str, "Name of the observatory.")
+        self.obs_name = self.add_par(
+            "obs_name", obs_name.upper(), str, "Name of the observatory."
+        )
+
+        if obs_name.upper() not in self.__class__.allowed_obs_names:
+            self.__class__.allowed_obs_names.append(obs_name.upper())
+
         self.reducer = self.add_par(
             "reducer", {}, dict, "Argumnets to pass to reduction method"
         )
@@ -115,19 +129,17 @@ class ParsObservatory(Parameters):
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = False  # allow subclasses to expand attributes
 
-        # subclass need to add these lines:
+        self.filtmap = self.add_par(
+            "filtmap",
+            None,
+            (None, str, dict),
+            "Mapping between observatory filter names and standard filter names",
+        )
+
+        # subclasses need to add these lines:
         # _enforce_no_new_attrs = True  # lock adding wrong attributes
         # config = load_then_update()  # load config file and update parameters
         # apply_specific_pars(config)  # apply specific parameters for this observatory
-
-    def add_obs_name(self, name):
-        """
-        Add an observatory name to the list of allowed names.
-        """
-        self.obs_name = name.upper()
-
-        if name.upper() not in self.allowed_obs_names:
-            self.allowed_obs_names.append(name.upper())
 
     def apply_specific_pars(self, inputs):
         """
@@ -157,7 +169,7 @@ class ParsObservatory(Parameters):
         the demo_url is a valid URL.
         """
         # ignore any keywords that match an observatory name
-        if key.upper() in self.allowed_obs_names:
+        if key.upper() in self.__class__.allowed_obs_names:
             return
 
         super().__setattr__(key, value)
@@ -946,10 +958,7 @@ class VirtualObservatory:
             if len(new_dict) > 0:
                 init_kwargs[att] = new_dict
 
-        if "filtmap" in self.pars:
-            if not isinstance(self.pars.filtmap, (str, dict)):
-                raise ValueError("filtmap must be a string or a dictionary")
-            init_kwargs["filtmap"] = self.pars.filtmap
+        init_kwargs["filtmap"] = self.pars.filtmap
 
         # choose which kind of reduction to do
         if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
@@ -1002,14 +1011,18 @@ class VirtualObservatory:
 
 
 class ParsDemoObs(ParsObservatory):
-    def __init__(self, **kwargs):
-        super().__init__()
 
-        self.add_obs_name("demo")
+    # must register this observatory in list of allowed names
+    ParsObservatory.add_to_obs_names("DEMO")
+
+    def __init__(self, **kwargs):
+
+        super().__init__("demo")
 
         self.demo_boolean = self.add_par(
             "demo_boolean", True, bool, "A boolean parameter"
         )
+        self.demo_string = self.add_par("demo_string", "foo", str, "A string parameter")
         self.demo_url = self.add_par(
             "demo_url", "http://www.example.com", str, "A URL parameter"
         )

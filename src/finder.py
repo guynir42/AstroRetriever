@@ -78,7 +78,7 @@ class Finder:
     """
 
     def __init__(self, **kwargs):
-        self.pars = Parameters.from_dict(kwargs, "finder")
+        self.pars = ParsFinder(**kwargs)
 
     def ingest_lightcurves(self, lightcurves, source=None, sim=None):
         """

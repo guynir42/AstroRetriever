@@ -31,6 +31,13 @@ class ParsProject(Parameters):
             "version_control", False, bool, "Whether to use version control"
         )
 
+        self.git_hash = self.add_par(
+            "git_hash",
+            None,
+            (None, str),
+            "Git hash of the current commit, if using version control",
+        )
+
         # each observatory name can be given its own, specific keyword arguments
         for obs_name in self.obs_names:
             setattr(
@@ -156,7 +163,7 @@ class Project:
             self.pars.git_hash = git_hash
 
         # make a catalog object based on the parameters:
-        print("loading catalog")
+
         self.catalog = Catalog(**catalog_kwargs)
         self.catalog.load()
 
