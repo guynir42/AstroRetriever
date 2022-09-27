@@ -303,7 +303,8 @@ def test_observatory_filename_conventions(test_project):
     num = np.random.randint(0, 1000)
     col = cat.pars.name_column
     name = cat.name_to_string(cat.data[col][num])
-    assert name.startswith("WDJ")
+    name_int = int(name)  # make sure conversion to int works
+    # assert name.startswith("WDJ")
 
     # get some info on the source
     cat_row = cat.get_row(num, "number", "dict")
@@ -319,7 +320,7 @@ def test_observatory_filename_conventions(test_project):
     num = np.random.randint(100000, 101000)
     col = cat.pars.name_column
     name = cat.name_to_string(cat.data[col][num])
-    assert name.startswith("WDJ")
+    name_int = int(name)  # make sure conversion to int works
 
     # test the filename conventions
     source = obs.check_and_fetch_source(cat_row, save=False)
