@@ -1260,9 +1260,8 @@ if __name__ == "__main__":
 
     dataset.DATA_ROOT = "/home/guyn/data"
 
-    obs = VirtualDemoObs(num_threads_download=5)
+    obs = VirtualDemoObs(num_threads_download=5, project="test")
     # obs = VirtualObservatory()
-    obs.project = "WD"
     cat = Catalog(default="WD")
     cat.load()
     obs.catalog = cat

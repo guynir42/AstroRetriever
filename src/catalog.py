@@ -50,6 +50,10 @@ class ParsCatalog(Parameters):
             "mag_filter_name", "R", str, "Name of the filter for the magnitude column"
         )
 
+        self.alias_column = self.add_par(
+            "alias_column", None, str, "Name of the column with source aliases"
+        )
+
         # use default configurations to quickly setup pars
         self.default = self.add_par(
             "default", None, (None, str), "Apply a default configuration"
@@ -119,7 +123,8 @@ class ParsCatalog(Parameters):
                 "https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract"
             )
 
-            self.name_column = "WDJ_name"
+            # self.name_column = "WDJ_name"
+            self.name_column = "source_id"
             self.ra_column = "ra"
             self.dec_column = "dec"
             self.mag_column = "phot_g_mean_mag"
@@ -439,7 +444,7 @@ class Catalog:
         Extract the relevant information from a row of the catalog as a dictionary.
         """
         index = self.get_index_from_name(row[self.pars.name_column])
-        name = self.to_string(row[self.pars.name_column])
+        name = self.name_to_string(row[self.pars.name_column])
         ra = float(row[self.pars.ra_column])
         dec = float(row[self.pars.dec_column])
         mag = float(row[self.pars.mag_column])
@@ -448,8 +453,8 @@ class Catalog:
         else:
             mag_err = None
         filter_name = self.pars.mag_filter_name
-        if "alias_column" in self.pars:
-            alias = self.to_string(row[self.pars.alias_column])
+        if self.pars.alias_column:
+            alias = self.name_to_string(row[self.pars.alias_column])
         else:
             alias = None
 
@@ -544,17 +549,6 @@ class Catalog:
             pass  # TODO: need to finish this
         elif fmt == "h5":
             df.to_hdf(filename, key="catalog", mode="w")
-
-    @staticmethod
-    def to_string(string):
-        """
-        Convert a string or a bytes object to a string
-        """
-        if isinstance(string, bytes):
-            # can later parametrize the encoding
-            return string.decode("utf-8")
-        else:
-            return string
 
     @staticmethod
     def ra2sex(ra):
