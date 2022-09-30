@@ -118,24 +118,6 @@ class DatasetMixin:
 
         # TODO: figure out the series identifier and object
 
-    def __repr__(self):
-        string = (
-            f"{self.__class__.__name__}(type={self.type}, "
-            f"source={self.source_id}, "
-            f"epochs={self.number}"
-        )
-        if self.observatory:
-            string += f" ({self.observatory.upper()})"
-
-        string += f", file: {self.filename}"
-
-        if self.filekey:
-            string += f" (key: {self.filekey})"
-
-        string += ")"
-
-        return string
-
     @orm.reconstructor
     def init_on_load(self):
         """
@@ -257,9 +239,45 @@ class DatasetMixin:
         Check if the file exists on disk.
         """
         if self.filename:
-            return os.path.exists(self.get_fullname())
+            if os.path.exists(self.get_fullname()):
+                return True
+
+        return False
+
+    def check_data_exists(self):
+        """
+        Check if the data is loaded into memory,
+        and if it is not, check that it can be loaded
+        from disk.
+        If the data is missing, returns a False but
+        does not raise an exception (which is what
+        would happen if trying to access "data" attribute
+        when a file is missing).
+
+        """
+        if self._data is not None:
+            return True
         else:
-            return False
+            if self.filename:
+                if os.path.exists(self.get_fullname()):
+                    if self.filekey is None:
+                        return True  # has file, no key, good enough
+                    else:
+                        # has file, has key, check if it's in the file
+                        return self.filekey in self.get_file_keys()
+
+        return False
+
+    def get_file_keys(self):
+        if self.format == "hdf5":
+            with h5py.File(self.get_fullname(), "r") as f:
+                return list(f.keys())
+        else:
+            raise ValueError(f"Cannot get keys for format {self.format}")
+
+    def is_empty(self):
+        if self.number == 0:
+            return True
 
     def load(self):
         """
@@ -392,7 +410,10 @@ class DatasetMixin:
         """
         if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:
             basename = os.path.splitext(self.raw_data_filename)[0]
-            self.filename = basename + "_reduced"
+            if hasattr(self, "was_processed") and self.was_processed:
+                self.filename = basename + "_processed"
+            else:
+                self.filename = basename + "_reduced"
         else:
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
@@ -451,8 +472,11 @@ class DatasetMixin:
         str
             The key to use for the data in the file.
         """
-        if source_name is None and self.source is not None:
-            source_name = self.source.name
+        if source_name is None:
+            if hasattr(self, "source"):
+                source_name = self.source.name
+            elif hasattr(self, "sources") and len(self.sources) > 0:
+                source_name = self.sources[0].name
 
         if source_name is not None:
             if isinstance(source_name, bytes):
@@ -532,8 +556,11 @@ class DatasetMixin:
         if self._data is None:
             raise ValueError("No data to save!")
 
-        if ra_deg is None and self.source is not None:
-            ra_deg = self.source.ra
+        if ra_deg is None:
+            if hasattr(self, "source"):
+                ra_deg = self.source.ra
+            elif hasattr(self, "sources") and len(self.sources) > 0:
+                ra_deg = self.sources[0].ra
 
         # if no filename/key are given, make them up
         if self.filename is None:
@@ -980,28 +1007,6 @@ class DatasetMixin:
         elif cls.__name__ == "LightCurve":
             return "lightcurves"
 
-    @declared_attr
-    def source_id(cls):
-        return sa.Column(
-            sa.Integer,
-            sa.ForeignKey("sources.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-            doc="ID of the source this dataset is associated with",
-        )
-
-    @declared_attr
-    def source(cls):
-        return orm.relationship(
-            "Source",
-            back_populates=cls.backref_name(),
-            doc="Source this dataset is associated with",
-            uselist=False,
-            foreign_keys=f"{cls.__name__}.source_id",
-        )
-
-    source_name = association_proxy("source", "name")
-
     observatory = sa.Column(
         sa.String,
         nullable=False,
@@ -1155,6 +1160,36 @@ class RawData(DatasetMixin, Base):
         """
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
+
+    def __repr__(self):
+        string = f"{self.__class__.__name__}(type={self.type}"
+
+        if len(self.sources) > 0:
+            f", source={self.sources[0].name}"
+
+        if self.observatory:
+            string += f" ({self.observatory.upper()})"
+
+        string += f", epochs={self.number}"
+        string += f", file: {self.filename}"
+
+        if self.filekey:
+            string += f" (key: {self.filekey})"
+
+        string += ")"
+
+        return string
+
+    # @hybrid_property
+    # def source_name(self):
+    #     if len(self.sources) > 0:
+    #         return self.sources[0].name
+    #     else:
+    #         return None
+    #
+    # @source_name.expression
+    # def source_name(cls):
+    #     return sa.select([Source.name]).where(cls.source_id == Source.id).as_scalar()
 
     def make_random_photometry(
         self,
@@ -1656,6 +1691,16 @@ class Lightcurve(DatasetMixin, Base):
 
         return ax
 
+    source_id = sa.Column(
+        sa.Integer,
+        sa.ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="ID of the source this dataset is associated with",
+    )
+
+    source_name = association_proxy("source", "name")
+
     project = sa.Column(
         sa.String,
         nullable=False,
@@ -1817,6 +1862,14 @@ class Lightcurve(DatasetMixin, Base):
         doc="Is the dataset sampled uniformly in time?",
     )
 
+    was_processed = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        doc="True when lightcurve has been processed/analyzed "
+        "and has quality cuts and S/N applied.",
+    )
+
     detections_in_time = orm.relationship(
         "DetectionInTime",
         back_populates="lightcurve",
@@ -1827,6 +1880,82 @@ class Lightcurve(DatasetMixin, Base):
 # make sure all the tables exist
 RawData.metadata.create_all(engine)
 Lightcurve.metadata.create_all(engine)
+
+# add relationships between sources and data
+
+# this maintains a many-to-many relationship between
+# raw data and sources, because multiple sources
+# from different projects/git hashes can access
+# the same raw data
+# ref: https://docs.sqlalchemy.org/en/14/orm/basic_relationships.html#many-to-many
+source_raw_data_association = sa.Table(
+    "source_raw_data_association",
+    Base.metadata,
+    sa.Column(
+        "source_id",
+        sa.Integer,
+        sa.ForeignKey("sources.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    sa.Column(
+        "raw_data_id",
+        sa.Integer,
+        sa.ForeignKey("raw_data.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
+Source.raw_data = orm.relationship(
+    "RawData",
+    secondary=source_raw_data_association,
+    back_populates="sources",
+    lazy="selectin",
+    cascade="all, delete",
+    doc="Raw Datasets associated with this source",
+)
+
+
+RawData.sources = orm.relationship(
+    "Source",
+    secondary=source_raw_data_association,
+    back_populates="raw_data",
+    lazy="selectin",
+    cascade="all, delete",
+    doc="Sources associated with this raw dataset",
+)
+
+
+Source.lightcurves = orm.relationship(
+    "Lightcurve",
+    primaryjoin="and_(Lightcurve.source_id==Source.id, Lightcurve.was_processed==False)",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Photometric Datasets associated with this source",
+)
+
+
+Source.processed_lightcurves = orm.relationship(
+    "Lightcurve",
+    primaryjoin="and_(Lightcurve.source_id==Source.id, Lightcurve.was_processed==True)",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Photometric Datasets associated with this source",
+)
+
+
+Lightcurve.source = orm.relationship(
+    "Source",
+    back_populates="lightcurves",
+    doc="Source associated with this lightcurve dataset",
+    foreign_keys="Lightcurve.source_id",
+)
 
 
 RawData.lightcurves = orm.relationship(
@@ -1842,27 +1971,6 @@ Lightcurve.raw_data = orm.relationship(
     back_populates="lightcurves",
     cascade="all",
     doc="The raw dataset that was used to produce this reduced dataset.",
-)
-
-
-Source.raw_data = orm.relationship(
-    "RawData",
-    back_populates="source",
-    cascade="save-update, merge, refresh-expire, expunge, delete",
-    lazy="selectin",
-    single_parent=True,
-    passive_deletes=True,
-    doc="Raw Datasets associated with this source",
-)
-
-Source.lightcurves = orm.relationship(
-    "Lightcurve",
-    back_populates="source",
-    cascade="save-update, merge, refresh-expire, expunge, delete",
-    lazy="selectin",
-    single_parent=True,
-    passive_deletes=True,
-    doc="Photometric Datasets associated with this source",
 )
 
 

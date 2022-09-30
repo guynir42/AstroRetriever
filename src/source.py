@@ -34,7 +34,7 @@ utcnow = func.timezone("UTC", func.current_timestamp())
 def get_source_identifiers(project_name, column="id"):
     """
     Get all source identifiers from a given project.
-
+    # TODO: add option to filter on cfg_hash too
     Parameters
     ----------
     project_name: str
@@ -111,6 +111,7 @@ class Source(Base, conesearch_alchemy.Point):
         self.mag_filter = kwargs.pop("mag_filter", None)
         self.alias = kwargs.pop("alias", None)
         self.cat_index = kwargs.pop("cat_index", None)
+        self.cfg_hash = ""
 
         # assign this coordinate a healpix ID
         if self.ra is not None and self.dec is not None:
@@ -160,6 +161,7 @@ class Source(Base, conesearch_alchemy.Point):
         """
         Check if this source is a duplicate of another source,
         by using a cone search on other sources from the same project.
+        # TODO: should also be able to limit to sources with the same cfg_hash
 
         Parameters
         ----------
@@ -191,7 +193,9 @@ class Source(Base, conesearch_alchemy.Point):
         return sources is not None
 
     __table_args__ = (
-        UniqueConstraint("name", "project", name="_source_name_in_project_uc"),
+        UniqueConstraint(
+            "name", "project", "cfg_hash", name="_source_name_in_project_uc"
+        ),
     )
 
     id = sa.Column(
@@ -228,6 +232,15 @@ class Source(Base, conesearch_alchemy.Point):
         default=DEFAULT_PROJECT,
         index=True,
         doc="Project name to which this source is associated with",
+    )
+
+    cfg_hash = sa.Column(
+        sa.String,
+        nullable=False,
+        default="",
+        index=True,
+        doc="Hash of the configuration used to create this source "
+        "(leave empty if not using version control)",
     )
 
     origin = sa.Column(
@@ -275,6 +288,8 @@ class Source(Base, conesearch_alchemy.Point):
     cat_row = sa.Column(
         JSONB, nullable=True, doc="Row from the catalog used to create this source"
     )
+    # NOTE: all the source relationships are defined
+    # where the data is defined, e.g., dataset.py and detection.py
 
 
 # make sure the table exists

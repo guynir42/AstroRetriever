@@ -9,6 +9,7 @@ import pandas as pd
 from astropy.time import Time
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 from src.parameters import Parameters
 from src.project import Project
@@ -16,7 +17,7 @@ from src.observatory import VirtualDemoObs
 from src.ztf import VirtualZTF
 
 from src.database import Session
-from src.source import Source
+from src.source import Source, DEFAULT_PROJECT
 import src.dataset
 from src.dataset import RawData, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
@@ -340,15 +341,15 @@ def test_add_source_and_data():
 
         with Session() as session:
             # create a random source
-            source_id = str(uuid.uuid4())
+            source_name = str(uuid.uuid4())
 
             # make sure source cannot be initialized with bad keyword
             with pytest.raises(ValueError) as e:
-                _ = Source(name=source_id, foobar="test")
+                _ = Source(name=source_name, foobar="test")
                 assert "Unknown keyword argument" in str(e.value)
 
             new_source = Source(
-                name=source_id,
+                name=source_name,
                 ra=np.random.uniform(0, 360),
                 dec=np.random.uniform(-90, 90),
             )
@@ -407,7 +408,7 @@ def test_add_source_and_data():
             new_data.save()  # must save to allow RawData to be added to DB
             session.commit()  # this should now work fine
             assert new_source.id is not None
-            assert new_source.id == new_data.source_id
+            assert new_source.id == new_data.sources[0].id
 
             # try to recover the data
             filename = new_data.filename
@@ -423,13 +424,13 @@ def test_add_source_and_data():
         # check that the data is in the database
         with Session() as session:
             sources = session.scalars(
-                sa.select(Source).where(Source.name == source_id)
+                sa.select(Source).where(Source.name == source_name)
             ).first()
             assert sources is not None
             assert len(sources.raw_data) == 1
             assert sources.raw_data[0].filename == filename
             assert sources.raw_data[0].filekey == new_data.filekey
-            assert sources.raw_data[0].source_id == new_source.id
+            assert sources.raw_data[0].sources[0].id == new_source.id
             # this autoloads the data:
             assert sources.raw_data[0].data.equals(df)
 
@@ -443,7 +444,7 @@ def test_add_source_and_data():
     # make sure loading this data does not work without file
     with Session() as session:
         sources = session.scalars(
-            sa.select(Source).where(Source.name == source_id)
+            sa.select(Source).where(Source.name == source_name)
         ).first()
         assert sources is not None
         assert len(sources.raw_data) == 1
@@ -452,12 +453,78 @@ def test_add_source_and_data():
 
     # make sure deleting the source also cleans up the data
     with Session() as session:
-        session.execute(sa.delete(Source).where(Source.name == source_id))
+        session.execute(sa.delete(Source).where(Source.name == source_name))
         session.commit()
         data = session.scalars(
             sa.select(RawData).where(RawData.filekey == new_data.filekey)
         ).first()
-        assert data is None
+        assert not any([s.name == source_name for s in data.sources])
+
+
+def test_source_unique_constraint():
+
+    with Session() as session:
+        name1 = str(uuid.uuid4())
+        source1 = Source(name=name1, ra=0, dec=0)
+        assert source1.cfg_hash == ""  # the default has is an empty string
+        session.add(source1)
+
+        source2 = Source(name=name1, ra=0, dec=0)
+        assert source1.cfg_hash == ""  # the default has is an empty string
+        session.add(source2)
+
+        # should fail as both sources have the same name
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        name2 = str(uuid.uuid4())
+        source2 = Source(name=name2, ra=0, dec=0)
+        session.add(source1)
+        session.add(source2)
+        session.commit()
+
+        # try to add source2 with the same name but different project
+        assert source1.project == DEFAULT_PROJECT
+        source2.project = "another test"
+        source2.name = name1
+        session.add(source2)
+        session.commit()
+
+        # try to add source2 with the same name but different cfg_hash
+        source2.project = DEFAULT_PROJECT
+        assert source2.project == source1.project
+        assert source2.name == source1.name
+
+        source2.cfg_hash = "another hash"
+        session.add(source2)
+        session.commit()
+
+
+def test_raw_data_relationships(new_source, new_source2, raw_photometry):
+
+    with Session() as session:
+        try:  # save to disk and cleanup
+            new_source.raw_data = [raw_photometry]
+            new_source2.raw_data = [raw_photometry]
+            session.add(raw_photometry)
+            raw_photometry.save()
+            session.commit()
+
+            ids = [new_source.id, new_source2.id]
+            names = [new_source.name, new_source2.name]
+
+            # check the linking is ok
+            assert new_source.id is not None
+            assert new_source2.id is not None
+
+            assert all([s.id in ids for s in raw_photometry.sources])
+            assert all([s.name in names for s in raw_photometry.sources])
+
+        finally:
+            # make sure not to leave orphan files
+            pass
+            # raw_photometry.delete_data_from_disk()
 
 
 def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
@@ -546,9 +613,9 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
                 assert lc.raw_data_id == raw_photometry_no_exptime.id
 
         finally:
-            filename = raw_photometry_no_exptime.filename
-            raw_photometry_no_exptime.delete_data_from_disk()
-            assert not os.path.isfile(filename)
+            # filename = raw_photometry_no_exptime.filename
+            # raw_photometry_no_exptime.delete_data_from_disk()
+            # assert not os.path.isfile(filename)
 
             if lightcurves:
                 filenames = [lc.filename for lc in lightcurves]

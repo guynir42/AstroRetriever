@@ -5,11 +5,20 @@ from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
 from src.database import Session
+from src.source import Source
 
 
 class ParsAnalysis(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
+
+        self.data_type = self.add_par(
+            "data_type",
+            "lightcurves",
+            str,
+            "Type of data to use for analysis (lightcurves, images, etc.)",
+        )
+
         self.num_injections = self.add_par(
             "num_injections",
             1,
@@ -49,11 +58,17 @@ class ParsAnalysis(Parameters):
         self.update_histograms = self.add_par(
             "update_histograms", True, bool, "Update the histograms on file"
         )
-        self.save_lightcurves = self.add_par(
-            "save_lightcurves",
+        self.save_reduced_lightcurves = self.add_par(
+            "save_reduced_lightcurves",
             True,
             bool,
-            "Save processed lightcurves after finder and quality cuts",
+            "Save reduced lightcurves to file and database",
+        )
+        self.save_processed_lightcurves = self.add_par(
+            "save_processed_lightcurves",
+            True,
+            bool,
+            "Save processed lightcurves after finder and quality cuts with a new filename",
         )
         self.commit_detections = self.add_par(
             "commit_detections", True, bool, "Save detections to database"
@@ -70,6 +85,20 @@ class ParsAnalysis(Parameters):
         Get the default key to use when loading a config file.
         """
         return "analysis"
+
+    def need_to_commit(self):
+        """
+        Check if any of the parameters require
+        that we save to disk and/or commit anything to database.
+        """
+
+        ret = False
+        ret |= self.commit_detections
+        ret |= self.save_reduced_lightcurves
+        ret |= self.save_processed_lightcurves
+        ret |= self.update_histograms
+
+        return ret
 
 
 class Analysis:
@@ -106,7 +135,7 @@ class Analysis:
         simulator_kwargs = kwargs.pop("simulator_kwargs", {})
 
         self.pars = ParsAnalysis(**kwargs)
-
+        self.observatories = None
         self.all_scores = Histogram()
         self.good_scores = Histogram()
         # self.extra_scores = []  # an optional list of extra Histogram objects
@@ -139,53 +168,114 @@ class Analysis:
         # for cut_dict in self.pars.extra_cut_thresholds:
         #     self.extra_scores.append(Histogram())
 
-    def run(self, source):
+    def analyze_sources_batch(self, sources):
         """
 
         Parameters
         ----------
-        source
-
-        Returns
-        -------
+        sources: list of Source objects
+            A list of sources to run the analysis on.
+            After this batch is done, will commit the
+            detections to the database and update
+            the histogram file.
 
         """
+        if isinstance(sources, Source):
+            sources = [sources]
+
         # TODO: load histograms from file
+        batch_detections = []
+        for source in sources:
+            if self.pars.data_type == "lightcurves":
+                # for each raw data, need to make sure lightcurves exist
+                for data in source.raw_data:
+                    if not data.is_empty():
+                        pass
+                if len(source.lightcurves) == 0 or all(
+                    [lc.check_data_exists for lc in source.lightcurves]
+                ):
+                    self.reduce_lightcurves(source)
+                if len(source.processed_lightcurves) == 0 or all(
+                    [lc.check_data_exists for lc in source.processed_lightcurves]
+                ):
+                    self.process_lightcurves(source)
 
-        if self.pars.data_type == "lightcurves":
-            data = source.lightcurves
-            if not isinstance(data, list) or not all(
-                isinstance(x, Lightcurve) for x in data
-            ):
-                raise ValueError("The data should be a list of Lightcurve objects.")
-            det = self.run_lightcurves(source)
-        # add more options here
+                det = self.analyze_lightcurves(source)
 
-        if self.pars.save_lightcurves:
-            pass  # TODO: save lcs into subfolder
+            # add more options here besides lightcurves
+            else:
+                raise ValueError(f'Unknown data type: "{self.pars.data_type}"')
 
-        # TODO: update the histograms
+            batch_detections += det
 
+        if self.pars.save_processed_lightcurves:
+            pass  # TODO: save lcs after adding S/N and quality flags
+
+            # TODO: update the histogram with this source's data
+
+        # TODO: update the histograms file
+
+        # save the detections to the database
         if self.pars.commit_detections:
             with Session() as session:
-                session.add_all(det)
+                session.add_all(batch_detections)
                 session.commit()
 
-        self.detections += det
+        self.detections += batch_detections
 
-    def run_lightcurves(self, source):
+    def reduce_lightcurves(self, source):
         """
-        Run the analysis on a list of Lightcurve objects
-        associated with the given source.
+        Reduce the lightcurves for this source.
+        Each raw_data on the source will call
+        the relevant observatory to do this.
+        """
+
+        if self.observatories is None:
+            raise ValueError("The observatories are not set.")
+
+        for raw_data in source.raw_data:
+            obs = self.observatories[raw_data.observatory]
+            source.lightcurves += obs.reduce(raw_data, to="lc", source=source)
+
+        # TODO: move this to the end of each batch?
+        if self.pars.save_reduced_lightcurves:
+            with Session() as session:
+                for lc in source.lightcurves:
+                    # the filename should be the same as the raw_data + "_reduced"
+                    lc.save()
+                session.add(source)
+                session.commit()
+
+    def process_lightcurves(self, source):
+        """
+        Run quality checks and calculate S/N etc.
+        on the source's lightcurves.
+        The processed lightcurves are appended to the
+        source object (These are saved to disk and database
+        if using save_processed_lightcurves=True)
 
         Parameters
         ----------
         source: Source object
-            The source to run the analysis on.
-            The main data taken from the source
-            is the lightcurves list.
-            Additional info can be taken from the source
-            metadata (e.g., the catalog row).
+            The source to process the lightcurves for.
+        """
+
+        pass
+
+    def analyze_lightcurves(self, source):
+        """
+        Run the analysis on a list of processed Lightcurve
+        objects associated with the given source.
+
+        Then detection code is used to find detection
+        objects and return those.
+
+        Parameters
+        ----------
+        source: Source object
+            The lightcurves for this source are scanned
+            for detections. Additional info can be taken
+            from the source metadata (e.g., the catalog row).
 
         Returns
         -------
@@ -193,7 +283,7 @@ class Analysis:
             The detections found in the data.
         """
 
-        self.check_lightcurves(source.lightcurves)
+        new_lcs = self.process_lightcurves(source.lightcurves)
         new_det = self.detect_in_lightcurves(source.lightcurves)
         self.update_histograms(source.lightcurves)
 
@@ -202,7 +292,9 @@ class Analysis:
             sim_lcs, sim_pars = self.inject_to_lightcurves(source.lightcurves)
             sim_det += self.detect_in_lightcurves(sim_lcs, sim_pars)
 
-        return new_det + sim_det
+        det = new_det + sim_det
+
+        return
 
     def check_lightcurves(self, lightcurves):
         """
@@ -326,7 +418,7 @@ class Analysis:
         """
         pass
 
-    def save_detections(self):
+    def commit_detections(self):
         """
         Save the detections to the database.
         """

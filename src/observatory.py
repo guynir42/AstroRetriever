@@ -202,6 +202,9 @@ class VirtualObservatory:
         name: str
             Name of the observatory.
         """
+
+        if not hasattr(self, "pars"):
+            self.pars = None
         self.name = name
         self.cfg_hash = None  # hash of the config file (for version control)
         self._credentials = {}  # dictionary with usernames/passwords
@@ -228,10 +231,9 @@ class VirtualObservatory:
 
     @property
     def project(self):
-        if hasattr(self, "pars"):
-            return self.pars.project
-        else:
+        if self.pars is None:
             return None
+        return getattr(self.pars, "project", None)
 
     @property
     def catalog(self):
@@ -527,13 +529,27 @@ class VirtualObservatory:
                 # .options(joinedload(Source.raw_data))
             ).first()
             if source is None:
-                source = Source(**cat_row, project=self.project)
+                source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
 
-            raw_data = session.scalars(
-                sa.select(RawData).where(
-                    RawData.source_name == source.name, RawData.observatory == self.name
+            # if source existed in DB it should have raw data objects
+            # if it doesn't that means the data needs to be downloaded
+            raw_data = [
+                data for data in source.raw_data if data.observatory == self.name
+            ]
+            if len(raw_data) == 0:
+                raw_data = None
+            elif len(raw_data) == 1:
+                raw_data = raw_data[0]
+            else:
+                raise RuntimeError(
+                    f"Source {source.name} has more than one RawData object from this observatory."
                 )
-            ).first()
+            # raw_data = session.scalars(
+            #     sa.select(RawData).where(
+            #         RawData.source_name == source.name, RawData.observatory == self.name
+            #     )
+            # ).first()
+
             # remove RawData objects that have no file
             if raw_data is not None and not raw_data.check_file_exists():
                 session.delete(raw_data)
@@ -568,8 +584,8 @@ class VirtualObservatory:
             if not any([r.observatory == self.name for r in source.raw_data]):
                 source.raw_data.append(raw_data)
 
-            if raw_data.source is None:
-                raw_data.source = source
+            if raw_data.sources is None:
+                raw_data.sources.append(source)
 
             # unless debugging, you'd want to save this data
             if save:
@@ -710,7 +726,9 @@ class VirtualObservatory:
                             break
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
-                        self.save_source(data, cat_id, source_ids, filename, k, session)
+                        self.commit_source(
+                            data, cat_id, source_ids, filename, k, session
+                        )
 
         if self.pars.verbose:
             print("Done populating sources.")
@@ -763,7 +781,7 @@ class VirtualObservatory:
 
         return value
 
-    def save_source(self, data, cat_id, source_ids, filename, key, session):
+    def commit_source(self, data, cat_id, source_ids, filename, key, session):
         """
         Save a source to the database,
         using the dataset loaded from file,
@@ -943,10 +961,15 @@ class VirtualObservatory:
 
         # all datasets come from the same source?
         if source is None:
-            source_names = list({d.source_name for d in datasets if d.source_name})
+            source_names = set()
+            for d in datasets:
+                for s in d.sources:
+                    source_names.add(s.name)
+            source_names = list(source_names)
+
             if len(source_names) == 1:
-                source = datasets[0].source
-        elif source is False:  # excplicitly don't use source
+                source = datasets[0].sources[0]
+        elif source is False:  # explicitly don't use source
             source = None
 
         for att in DatasetMixin.default_update_attributes:

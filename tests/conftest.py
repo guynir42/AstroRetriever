@@ -4,6 +4,9 @@ import pandas as pd
 
 import pytest
 
+import sqlalchemy as sa
+
+from src.database import Session
 from src.source import Source
 from src.project import Project
 from src.dataset import RawData, Lightcurve
@@ -17,21 +20,51 @@ def new_source():
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
     )
-    return source
+    yield source
+    with Session() as session:
+        if source.id:
+            session.execute(sa.delete(RawData).where(RawData.id == source.id))
+        session.commit()
+
+
+@pytest.fixture
+def new_source2():
+    source = Source(
+        name=str(uuid.uuid4()),
+        ra=np.random.uniform(0, 360),
+        dec=np.random.uniform(-90, 90),
+    )
+    yield source
+    with Session() as session:
+        if source.id:
+            session.execute(sa.delete(RawData).where(RawData.id == source.id))
+        session.commit()
 
 
 @pytest.fixture
 def raw_photometry():
     data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
     data.make_random_photometry(number=30)
-    return data
+    yield data
+
+    data.delete_data_from_disk()
+    with Session() as session:
+        if data.id:
+            session.execute(sa.delete(RawData).where(RawData.id == data.id))
+        session.commit()
 
 
 @pytest.fixture
 def raw_photometry_no_exptime():
     data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
     data.make_random_photometry(number=30, exptime=None)
-    return data
+    yield data
+
+    data.delete_data_from_disk()
+    with Session() as session:
+        if data.id:
+            session.execute(sa.delete(RawData).where(RawData.id == data.id))
+        session.commit()
 
 
 @pytest.fixture

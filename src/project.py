@@ -180,6 +180,7 @@ class Project:
             )
 
         self.analysis = self.pars.get_class("analysis", **analysis_kwargs)
+        self.analysis.observatories = self.observatories
 
     def make_observatory(self, name, inputs):
         """

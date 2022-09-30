@@ -37,9 +37,10 @@ Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import RawData, Lightcurve
+    from src.dataset import RawData, Lightcurve, source_raw_data_association
     from src.detection import DetectionInTime
 
+    source_raw_data_association.drop(engine)
     Source.metadata.drop_all(engine)
     RawData.metadata.drop_all(engine)
     Lightcurve.metadata.drop_all(engine)
