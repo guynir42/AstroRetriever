@@ -1257,6 +1257,13 @@ class RawData(DatasetMixin, Base):
 
         self.data = df
 
+    source_name = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Name of the source for which this observation was taken",
+    )
+
     detections_in_time = orm.relationship(
         "DetectionInTime",
         back_populates="raw_data",

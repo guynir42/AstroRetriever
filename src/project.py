@@ -31,11 +31,27 @@ class ParsProject(Parameters):
             "version_control", False, bool, "Whether to use version control"
         )
 
+        self.ignore_missing_raw_data = self.add_par(
+            "ignore_missing_raw_data",
+            False,
+            bool,
+            "Whether to ignore (or else raise) missing raw data on disk.",
+        )
+
+        # these are hashes to be automatically filled
+        # and added to the output config file
         self.git_hash = self.add_par(
             "git_hash",
             None,
             (None, str),
             "Git hash of the current commit, if using version control",
+        )
+
+        self.cat_hash = self.add_par(
+            "cat_hash",
+            None,
+            (None, str),
+            "Hash of the names in the catalog for this project.",
         )
 
         # each observatory name can be given its own, specific keyword arguments
@@ -166,6 +182,7 @@ class Project:
 
         self.catalog = Catalog(**catalog_kwargs)
         self.catalog.load()
+        self.pars.cat_hash = self.catalog.cat_hash
 
         self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
@@ -302,16 +319,41 @@ class Project:
 
         # TODO: write the config file to the output folder
 
-    # def download(self, **kwargs):
-    #     pass
-    #
-    # def reduce(self, **kwargs):
-    #     pass
-    #
-    # def analyze(self, **kwargs):
-    #     pass
-
     def run(self, **kwargs):
+        """
+        Run the full pipeline on each source in the catalog.
+
+        For each source, will try to find a DB row with that name.
+        If it doesn't exist, it will create one. If it already exists
+        and has a Properties object associated with it,
+        then the source has already been analyzed and the pipeline
+        will skip it. For each source that has not yet been analyzed,
+        will look for RawData objects (for each observatory and source name).
+        If there is a RawData row but the data is missing on disk,
+        it could raise a RuntimeError or simply skip that source if
+        pars.ignore_missing_data is True.
+        If no RawData exists, it will download the raw data
+        using the observatory.
+        For each RawData that is found or downloaded, will look
+        for reduced datasets matching that raw data
+        (e.g., a photometry type RawData will have Lightcurve objects).
+        If the reduced data exists on DB and on disk it will be used.
+        If it is missing on either DB or disk, it will be re-reduced
+        by the observatory object.
+        After all RawData objects from all observatories are reduced
+        the data is transferred to the Analysis object.
+        This will look for existing processed datasets,
+        if they are missing from DB or disk they will get re-processed.
+        Finally, the processed datasets are used to produce
+        detections and properties objects, which are saved to the DB.
+        If the data for this source has not been added to the
+        histograms, they will be updated as well.
+
+        Parameters
+        ----------
+        kwargs: additional arguments to use such as...
+
+        """
         pass
 
 

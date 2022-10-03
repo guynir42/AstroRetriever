@@ -504,27 +504,26 @@ def test_source_unique_constraint():
 def test_raw_data_relationships(new_source, new_source2, raw_photometry):
 
     with Session() as session:
-        try:  # save to disk and cleanup
-            new_source.raw_data = [raw_photometry]
-            new_source2.raw_data = [raw_photometry]
-            session.add(raw_photometry)
-            raw_photometry.save()
-            session.commit()
+        new_source.raw_data = [raw_photometry]
+        new_source2.raw_data = [raw_photometry]
+        session.add(raw_photometry)
+        raw_photometry.save()
+        session.commit()
 
-            ids = [new_source.id, new_source2.id]
-            names = [new_source.name, new_source2.name]
+        ids = [new_source.id, new_source2.id]
+        names = [new_source.name, new_source2.name]
 
-            # check the linking is ok
-            assert new_source.id is not None
-            assert new_source2.id is not None
+        # check the linking is ok
+        assert new_source.id is not None
+        assert new_source2.id is not None
 
-            assert all([s.id in ids for s in raw_photometry.sources])
-            assert all([s.name in names for s in raw_photometry.sources])
+        # check all sources are linked to raw_photometry
+        assert all([s.id in ids for s in raw_photometry.sources])
+        assert all([s.name in names for s in raw_photometry.sources])
 
-        finally:
-            # make sure not to leave orphan files
-            pass
-            # raw_photometry.delete_data_from_disk()
+        # make some reduced lightcurves:
+
+        # test processed lightcurves show up as well
 
 
 def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):

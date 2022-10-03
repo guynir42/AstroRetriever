@@ -3,6 +3,7 @@ import requests
 import re
 import subprocess
 import shutil
+import hashlib
 from datetime import datetime, timezone
 import dateutil.parser
 from astropy.table import Table
@@ -151,6 +152,7 @@ class Catalog:
 
         self.data = None
         self.inverse_name_index = None
+        self.cat_hash = None
 
     def __len__(self):
         return len(self.data)
@@ -318,6 +320,9 @@ class Catalog:
                 self.data[self.pars.name_column], range(len(self.data))
             )
         }
+
+        names = list(self.inverse_name_index.keys())
+        self.cat_hash = hashlib.sha256("".join(names).encode("utf-8")).hexdigest()
 
     def get_index_from_name(self, name):
         """

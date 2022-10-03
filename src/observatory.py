@@ -525,8 +525,9 @@ class VirtualObservatory:
         """
         with Session() as session:
             source = session.scalars(
-                sa.select(Source).where(Source.name == cat_row["name"])
-                # .options(joinedload(Source.raw_data))
+                sa.select(Source).where(
+                    Source.name == cat_row["name"]
+                )  # TODO: add cfg_hash
             ).first()
             if source is None:
                 source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
@@ -544,16 +545,21 @@ class VirtualObservatory:
                 raise RuntimeError(
                     f"Source {source.name} has more than one RawData object from this observatory."
                 )
-            # raw_data = session.scalars(
-            #     sa.select(RawData).where(
-            #         RawData.source_name == source.name, RawData.observatory == self.name
-            #     )
-            # ).first()
+            if raw_data is None:
+                raw_data = session.scalars(
+                    sa.select(RawData).where(
+                        RawData.source_name == source.name,
+                        RawData.observatory == self.name,
+                    )
+                ).first()
 
             # remove RawData objects that have no file
             if raw_data is not None and not raw_data.check_file_exists():
-                session.delete(raw_data)
-                raw_data = None
+                # session.delete(raw_data)
+                # raw_data = None
+                raise RuntimeError(
+                    f"RawData object for source {source.name} exists in DB but file does not exist."
+                )
 
             # file exists, try to load it:
             if raw_data is not None:
@@ -578,6 +584,7 @@ class VirtualObservatory:
                     data=data,
                     altdata=altdata,
                     observatory=self.name,
+                    source_name=cat_row["name"],
                     **dataset_args,
                 )
 
