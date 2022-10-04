@@ -124,12 +124,12 @@ class Source(Base, conesearch_alchemy.Point):
             raise ValueError(f"Unknown keyword arguments: {kwargs}")
 
     def __repr__(self):
+        mag = f"{self.mag:.2f}" if self.mag is not None else "None"
         string = (
             f'Source(name="{self.name}", '
             f"ra={Catalog.ra2sex(self.ra)}, "
             f"dec={Catalog.dec2sex(self.dec)}, "
-            f"mag= {self.mag:.2f}, "
-            f'project="{self.project}", '
+            f'mag= {mag}, project="{self.project}", '
             f"datasets= {len(self.raw_data)})"
         )
         return string

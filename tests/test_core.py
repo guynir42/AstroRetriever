@@ -371,6 +371,7 @@ def test_add_source_and_data():
             # add the data to a database mapped object
             new_data = RawData(
                 data=df,
+                source_name=source_name,
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(foo="bar"),
@@ -768,10 +769,10 @@ def test_reducer_with_outliers(test_project, new_source):
             df = pd.DataFrame(test_data)
 
             # add the data to a database mapped object
-            source_id = new_source.id
             new_source.project = test_project.name
             new_data = RawData(
                 data=df,
+                source_name=new_source.name,
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(exptime="25.0"),
@@ -809,6 +810,17 @@ def test_reducer_with_outliers(test_project, new_source):
 
             # also check that the data is uniformly sampled
             assert lc.is_uniformly_sampled
+
+            # check the data is persisted
+            loaded_raw_data = session.scalars(
+                sa.select(RawData).where(RawData.source_name == new_source.name)
+            ).all()
+            assert len(loaded_raw_data) == 1
+
+            loaded_lcs = session.scalars(
+                sa.select(Lightcurve).where(Lightcurve.source_name == new_source.name)
+            ).all()
+            assert len(loaded_lcs) == len(lightcurves)
 
         finally:
             if new_data:
@@ -1047,7 +1059,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(reruns=5)
 def test_finder(simple_finder, lightcurve_factory):
 
     # this lightcurve has no outliers:

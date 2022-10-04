@@ -43,7 +43,12 @@ def new_source2():
 
 @pytest.fixture
 def raw_photometry():
-    data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
+    data = RawData(
+        folder="data_temp",
+        altdata=dict(foo="bar"),
+        observatory="demo",
+        source_name=str(uuid.uuid4()),
+    )
     data.make_random_photometry(number=30)
     yield data
 
@@ -56,7 +61,12 @@ def raw_photometry():
 
 @pytest.fixture
 def raw_photometry_no_exptime():
-    data = RawData(folder="data_temp", altdata=dict(foo="bar"), observatory="demo")
+    data = RawData(
+        folder="data_temp",
+        altdata=dict(foo="bar"),
+        observatory="demo",
+        source_name=str(uuid.uuid4()),
+    )
     data.make_random_photometry(number=30, exptime=None)
     yield data
 
