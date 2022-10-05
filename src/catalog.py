@@ -152,6 +152,7 @@ class Catalog:
 
         self.data = None
         self.inverse_name_index = None
+        self.names = None
         self.cat_hash = None
 
     def __len__(self):
@@ -321,8 +322,8 @@ class Catalog:
             )
         }
 
-        names = list(self.inverse_name_index.keys())
-        self.cat_hash = hashlib.sha256("".join(names).encode("utf-8")).hexdigest()
+        self.names = list(self.inverse_name_index.keys())
+        self.cat_hash = hashlib.sha256("".join(self.names).encode("utf-8")).hexdigest()
 
     def get_index_from_name(self, name):
         """

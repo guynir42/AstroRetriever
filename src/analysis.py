@@ -246,7 +246,7 @@ class Analysis:
                 session.add(source)
                 session.commit()
 
-    def process_lightcurves(self, source):
+    def process_lightcurves(self, source, observatory=None):
         """
         Run quality checks and calculate S/N etc.
         on the source's lightcurves.
@@ -258,6 +258,14 @@ class Analysis:
         ----------
         source: Source object
             The source to process the lightcurves for.
+        observatory: Observatory object (optional)
+            If given, only process the lightcurves from this observatory.
+
+        Returns
+        -------
+        list of Lightcurve objects with data that
+        has been processed, e.g., has S/N and quality flags.
+        The Lightcurve object will also have has_processed=True.
         """
 
         pass
@@ -298,7 +306,7 @@ class Analysis:
 
     def check_lightcurves(self, lightcurves):
         """
-        Apply the Quality object to the lightcurvs,
+        Apply the Quality object to the lightcurves,
         and add the results in a column in the lightcurve
         dataframe.
         Data that has any quality scores above / below
@@ -314,7 +322,7 @@ class Analysis:
         for lc in lightcurves:
             self.checker.check(lc)
 
-    def detect_in_lightcurves(self, lightcurves, sim_pars=None):
+    def detect_in_lightcurves(self, source, sim_pars=None):
         """
         Apply the Finder object(s) associated with this
         Analysis, to produce Detection objects based
@@ -322,8 +330,8 @@ class Analysis:
 
         Parameters
         ----------
-        lightcurves: list of Lightcurve objects
-            Data that needs to be scanned for detections.
+        source: Source object
+            The lightcurves for this source are scanned.
         sim_pars: dict or None
             If None, assume the data is real.
             If a dict, the data is either simulated,
@@ -425,6 +433,7 @@ class Analysis:
         pass
 
 
+# I think we can get rid of this:
 class Threshold:
     def __init__(self, name, **kwargs):
         self.name = name

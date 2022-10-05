@@ -1,10 +1,12 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy import orm, func
+from sqlalchemy.ext.declarative import declared_attr
 
 from src.database import Base, engine
 from src.source import Source
-from sqlalchemy import orm, func
-from sqlalchemy.ext.declarative import declared_attr
+from src.dataset import RawData, Lightcurve
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -13,6 +15,15 @@ class DetectionMixin:
 
     project = sa.Column(
         sa.String, nullable=False, index=True, doc="Project this detection belongs to."
+    )
+
+    cfg_hash = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        default="",
+        doc="Hash of the configuration used to generate this object."
+        "(leave empty if not using version control)",
     )
 
     time_start = sa.Column(
@@ -56,6 +67,8 @@ class DetectionMixin:
             cascade="all",
             foreign_keys=f"{cls.__name__}.source_id",
         )
+
+    source_name = association_proxy("source", "name")
 
     @declared_attr
     def raw_data_id(cls):
@@ -158,6 +171,20 @@ Source.detections_in_time = orm.relationship(
     single_parent=True,
     passive_deletes=True,
     doc="Detections associated with lightcurves from this source",
+)
+
+
+RawData.detections_in_time = orm.relationship(
+    "DetectionInTime",
+    back_populates="raw_data",
+    cascade="all, delete-orphan",
+)
+
+
+Lightcurve.detections_in_time = orm.relationship(
+    "DetectionInTime",
+    back_populates="lightcurve",
+    cascade="all, delete-orphan",
 )
 
 

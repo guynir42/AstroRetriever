@@ -1,17 +1,19 @@
 import importlib
 import os
-
+import json
+import yaml
+import hashlib
 import git
 
 import sqlalchemy as sa
 
-from src.database import Session
+from src.database import Session, DATA_ROOT
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.source import Source
+from src.dataset import RawData, Lightcurve
 from src.analysis import Analysis
-
-from src.database import DATA_ROOT
+from src.properties import Properties
 
 
 class ParsProject(Parameters):
@@ -36,6 +38,20 @@ class ParsProject(Parameters):
             False,
             bool,
             "Whether to ignore (or else raise) missing raw data on disk.",
+        )
+
+        self.analysis_module = self.add_par(
+            "analysis_module",
+            "src.analysis",
+            str,
+            "Module to use for analysis.",
+        )
+
+        self.analysis_class = self.add_par(
+            "analysis_class",
+            "Analysis",
+            str,
+            "Class to use for analysis.",
         )
 
         # these are hashes to be automatically filled
@@ -284,41 +300,6 @@ class Project:
             session.execute(stmt)
             session.commit()
 
-    def setup_output_folder(self):
-        """
-        Create a folder for the output of this project.
-        This will include all the reduced and analyzed data,
-        the histograms, and so on.
-
-        It also includes a copy of the configuration file,
-        with the final adjustments made by e.g., the user
-        upon initialization or just before running the pipeline.
-
-        If version control is enabled, the cfg hash is calculated
-        for the full OUTPUT config file, and the hash is used to tag
-        all DB objects and is appended to the output folder name.
-
-        """
-
-        self.output_folder = self.name.upper()
-
-        # TODO: collect all parameter objects from sub-objects
-        # and produce a massive config dictionary
-        # translate that into a yaml file in memory
-        # get that file's hash
-
-        # version control is enabled
-        if self.pars.version_control:
-            self.output_folder += f"_{self.cfg_hash}"
-
-        self.output_folder = os.path.join(DATA_ROOT, self.output_folder)
-
-        # create the output folder
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
-
-        # TODO: write the config file to the output folder
-
     def run(self, **kwargs):
         """
         Run the full pipeline on each source in the catalog.
@@ -354,7 +335,206 @@ class Project:
         kwargs: additional arguments to use such as...
 
         """
-        pass
+
+        self.save_config()
+
+        source_names = self.catalog.names
+
+        with Session() as session:
+            for name in source_names:
+                source = session.scalars(
+                    sa.select(Source).where(
+                        Source.name == name,
+                        Source.project == self.name,
+                        Source.cfg_hash == self.cfg_hash,
+                    )
+                ).first()
+
+                # need to generate a new source
+                if source is None:
+                    cat_row = self.catalog.get_row(name, "name", "dict")
+                    source = Source(
+                        name=name,
+                        project=self.name,
+                        cfg_hash=self.cfg_hash,
+                        **cat_row,
+                    )
+
+                # check if source has already been processed (has properties)
+                if len(source.properties) > 0:
+                    continue
+
+                need_skip = False
+                for obs in self.observatories:
+                    if need_skip:
+                        continue
+
+                    # check if raw data is attached to this source
+                    # if not, look around the DB for any raw data
+                    # with a matching name and observatory
+                    # (e.g., from another project or version)
+                    data = [rd for rd in source.raw_data if rd.observatory == obs.name]
+                    if len(data) == 0:
+                        loaded_data = session.scalars(
+                            sa.select(RawData).where(
+                                RawData.source_name == name,
+                                RawData.project == self.name,
+                                RawData.observatory == obs.name,
+                            )
+                        ).all()
+                        source.raw_data += loaded_data
+
+                    data = [rd for rd in source.raw_data if rd.observatory == obs.name]
+                    if len(data) == 0:
+                        pass  # TODO: download data
+
+                    if len(data) > 1:
+                        raise RuntimeError(
+                            "Each source should have only one "
+                            "RawData associated with each observatory. "
+                            f"For source {name} and observatory {obs.name}, "
+                            f"found {len(data)} RawData objects."
+                        )
+
+                    # check each dataset has data on disk/in memory
+                    # (if not, skip entire source or raise RuntimeError)
+                    data = data[0]
+                    if not data.check_data_exists():
+                        if self.pars.ignore_missing_data:
+                            need_skip = True
+                            continue
+                        else:
+                            raise RuntimeError(
+                                f"RawData for source {source.name} and observatory {obs.name} "
+                                "is missing from disk. "
+                                "Set pars.ignore_missing_data to True to ignore this."
+                            )
+
+                    # look for reduced data and reproduce if missing
+                    if data.type == "photometry":
+                        lcs = [
+                            lc
+                            for lc in source.lightcurves
+                            if lc.observatory == obs.name
+                        ]
+                        if len(lcs) == 0:  # try to load from DB
+                            lcs = session.scalars(
+                                sa.select(Lightcurve).where(
+                                    Lightcurve.source_name == name,
+                                    Lightcurve.observatory == obs.name,
+                                    Lightcurve.project == self.name,
+                                    Lightcurve.cfg_hash == self.cfg_hash,
+                                    Lightcurve.was_processed.is_(False),
+                                )
+                            ).all()
+                        if len(lcs) == 0:  # reduce data
+                            lcs = obs.reduce(data, to="lcs")
+
+                        source.lightcurves += lcs
+
+                    # add additional elif for other types...
+                    else:
+                        raise ValueError(f"Unknown RawData type: {data.type}")
+
+                    # TODO: look for processed data and reproduce if missing
+                    if data.type == "photometry":
+                        lcs = [
+                            lc
+                            for lc in source.processed_lightcurves
+                            if lc.observatory == obs.name
+                        ]
+                        if len(lcs) == 0:  # try to load from DB
+                            lcs = session.scalars(
+                                sa.select(Lightcurve).where(
+                                    Lightcurve.source_name == name,
+                                    Lightcurve.observatory == obs.name,
+                                    Lightcurve.project == self.name,
+                                    Lightcurve.cfg_hash == self.cfg_hash,
+                                    Lightcurve.was_processed.is_(True),
+                                )
+                            ).all()
+                        if len(lcs) == 0:  # process the data
+                            lcs = self.analysis.process_lightcurves(
+                                source, observatory=obs.name
+                            )
+
+                        source.processed_lightcurves += lcs
+
+                    # add additional elif for other types...
+                    else:
+                        raise ValueError(f"Unknown RawData type: {data.type}")
+
+                    # TODO: simulated_lightcurves also need to be found/generated
+
+                # finished looping on observatories
+
+                # send source with all data to analysis object for
+                # finding detections / adding properties
+                if data.type == "photometry":
+                    self.analysis.detect_in_lightcurves(source)
+
+                session.add(source)
+                session.commit()
+
+    def save_config(self):
+        """
+        Save the configuration file to disk.
+        This is the point where the project
+        gets a dedicated output folder.
+
+        Also calculate a cfg_hash if using
+        version control.
+        If not, will just set cfg_hash=""
+        """
+
+        # TODO: pick up all the config keys from all the objects
+        cfg_dict = {}
+        cfg_json = json.dumps(cfg_dict)
+        if self.pars.version_control:
+            self.cfg_hash = hashlib.sha256(
+                "".join(cfg_json).encode("utf-8")
+            ).hexdigest()
+        else:
+            self.cfg_hash = ""
+
+        self.setup_output_folder()
+
+        # write the config file to disk
+        with open("config.yaml", "w") as f:
+            yaml.dump(cfg_dict, f)
+
+    def setup_output_folder(self):
+        """
+        Create a folder for the output of this project.
+        This will include all the reduced and analyzed data,
+        the histograms, and so on.
+
+        It also includes a copy of the configuration file,
+        with the final adjustments made by e.g., the user
+        upon initialization or just before running the pipeline.
+
+        If version control is enabled, the cfg hash is calculated
+        for the full OUTPUT config file, and the hash is used to tag
+        all DB objects and is appended to the output folder name.
+
+        """
+
+        self.output_folder = self.name.upper()
+
+        # TODO: collect all parameter objects from sub-objects
+        # and produce a massive config dictionary
+        # translate that into a yaml file in memory
+        # get that file's hash
+
+        # version control is enabled
+        if self.pars.version_control:
+            self.output_folder += f"_{self.cfg_hash}"
+
+        self.output_folder = os.path.join(DATA_ROOT, self.output_folder)
+
+        # create the output folder
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
 
 
 class NamedList(list):

@@ -88,13 +88,6 @@ class VO_Base:
         doc="Name of the observatory this data is associated with.",
     )
 
-    cfg_hash = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Hash of the configuration used to generate this object.",
-    )
-
 
 Base = declarative_base(cls=VO_Base)
 

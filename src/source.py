@@ -192,43 +192,10 @@ class Source(Base, conesearch_alchemy.Point):
         sources = session.scalars(stmt).first()
         return sources is not None
 
-    def check_data(self):
-        """
-        Check that all data associated with this source is in memory or on disk.
-        This should be called after a source is loaded from the database.
-        If data is missing (TODO: what to do?)
-        """
-        for d in self.raw_data:
-            d.check_data_exists()
-
     __table_args__ = (
         UniqueConstraint(
             "name", "project", "cfg_hash", name="_source_name_in_project_uc"
         ),
-    )
-
-    id = sa.Column(
-        sa.Integer,
-        primary_key=True,
-        index=True,
-        autoincrement=True,
-        doc="Unique identifier for this source",
-    )
-
-    created_at = sa.Column(
-        sa.DateTime,
-        nullable=False,
-        default=utcnow,
-        index=True,
-        doc="UTC time of insertion of object's row into the database.",
-    )
-
-    modified = sa.Column(
-        sa.DateTime,
-        default=utcnow,
-        onupdate=utcnow,
-        nullable=False,
-        doc="UTC time the object's row was last modified in the database.",
     )
 
     name = sa.Column(sa.String, nullable=False, index=True, doc="Name of the source")

@@ -502,6 +502,38 @@ def test_source_unique_constraint():
         session.commit()
 
 
+def test_raw_data_unique_constraint(raw_photometry, raw_photometry_no_exptime):
+
+    with Session() as session:
+        name = str(uuid.uuid4())
+        raw_photometry.source_name = name
+        raw_photometry.filename = "unique_test1.h5"
+        raw_photometry.save()
+        raw_photometry_no_exptime.source_name = name
+        raw_photometry_no_exptime.filename = "unique_test2.h5"
+        raw_photometry_no_exptime.save()
+
+        session.add(raw_photometry)
+        session.add(raw_photometry_no_exptime)
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        # should work once the observatory name is different
+        raw_photometry_no_exptime.observatory = str(uuid.uuid4())
+        session.add(raw_photometry)
+        session.add(raw_photometry_no_exptime)
+        session.commit()
+
+        # let's try to add the data with same obs
+        # but different source name
+        session.delete(raw_photometry)
+        raw_photometry.observatory = raw_photometry_no_exptime.observatory
+        raw_photometry.source_name = str(uuid.uuid4())
+        session.add(raw_photometry)
+        session.commit()
+
+
 def test_raw_data_relationships(new_source, new_source2, raw_photometry):
 
     with Session() as session:

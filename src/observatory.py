@@ -950,7 +950,7 @@ class VirtualObservatory:
         # arguments to be passed into the new dataset constructors
         init_kwargs = {}
         for att in DatasetMixin.default_copy_attributes:
-            values = list({getattr(d, att) for d in datasets})
+            values = list({getattr(d, att) for d in datasets if hasattr(d, att)})
             # only copy values if they're the same
             # for all source (raw) datasets
             if len(values) == 1:

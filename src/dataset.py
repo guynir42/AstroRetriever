@@ -17,13 +17,12 @@ import h5py
 
 import sqlalchemy as sa
 from sqlalchemy import orm, event
-from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.ext.associationproxy import association_proxy
 
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import Base, Session, engine
-from src.catalog import Catalog
 from src.source import Source
 
 # root folder is either defined via an environment variable
@@ -1264,10 +1263,8 @@ class RawData(DatasetMixin, Base):
         doc="Name of the source for which this observation was taken",
     )
 
-    detections_in_time = orm.relationship(
-        "DetectionInTime",
-        back_populates="raw_data",
-        cascade="all, delete-orphan",
+    __table_args__ = (
+        UniqueConstraint("source_name", "observatory", name="_source_name_obs_name_uc"),
     )
 
 
@@ -1715,6 +1712,15 @@ class Lightcurve(DatasetMixin, Base):
         doc="Project this lightcurve is associated with",
     )
 
+    cfg_hash = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        default="",
+        doc="Hash of the configuration used to generate this object."
+        "(leave empty if not using version control)",
+    )
+
     raw_data_id = sa.Column(
         sa.Integer,
         sa.ForeignKey("raw_data.id"),
@@ -1873,14 +1879,18 @@ class Lightcurve(DatasetMixin, Base):
         sa.Boolean,
         nullable=False,
         default=False,
+        index=True,
         doc="True when lightcurve has been processed/analyzed "
         "and has quality cuts and S/N applied.",
     )
 
-    detections_in_time = orm.relationship(
-        "DetectionInTime",
-        back_populates="lightcurve",
-        cascade="all, delete-orphan",
+    is_simulated = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+        doc="True when lightcurve is simulated "
+        "(or when injected with simulated events).",
     )
 
 
