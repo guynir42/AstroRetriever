@@ -45,38 +45,207 @@ def simplify(key):
     return key.lower().replace(" ", "").replace("_", "").replace("-", "")
 
 
+allowed_data_types = ["photometry", "spectra", "images"]
+
+
+def convert_data_type(data_type):
+    """
+    Accept a string and return a string that is a valid data type.
+    Convert aliases of data types to the canonical name.
+
+    Parameters
+    ----------
+    data_type: str
+        The data type to convert.
+        Could be, e.g., "lightcurves" instead of "photometry".
+
+    Returns
+    -------
+    data_type: str
+        The canonical name of the data type.
+        Will be one of the allowed_data_types.
+    """
+    if data_type.lower in [
+        "photometry",
+        "phot",
+        "lightcurve",
+        "lightcurves",
+        "lc",
+        "lcs",
+    ]:
+        out_type = "photometry"
+    elif data_type.lower in ["spectra", "spec", "spectrum", "spectra", "sed", "seds"]:
+        out_type = "spectra"
+    elif data_type.lower in ["images", "image", "im", "img", "imgs"]:
+        out_type = "images"
+    else:
+        raise ValueError(
+            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
+        )
+    return out_type
+
+
+def normalize_data_types(data_types):
+    """
+    Go over a single string or list of strings
+    and check that they conform to one of the
+    allowed data types (or their aliases).
+    Raises a ValueError if any of the data
+    types is not allowed.
+
+    Parameters
+    ----------
+    data_types: str or list of str
+        The data types to check.
+    """
+    if isinstance(data_types, str):
+        return convert_data_type(data_types)
+    return [convert_data_type(dt) for dt in data_types]
+
+
 class DatasetMixin:
+    """
+    A Dataset object maps a location on disk
+    with raw data in memory.
+    Each Dataset is associated with one source
+    (via the source_id foreign key).
+    If there are multiple datasets in a file,
+    use the "filekey" parameter to identify which
+    one is associated with this Dataset.
+
+    Parameters will be applied from kwargs
+    if they match any existing attributes.
+    If "data" is given as an input,
+    it will be set first, allowing the object
+    to calculate some attributes
+    (like type and start/end times).
+    After that any other properties will be
+    assigned and can override the values
+    calculated from the data.
+
+    Subclasses of this mixin will contain
+    specific type of data. For example
+    the RawPhotometry class will contain raw
+    photometric data dwonloaded as-is from the observatory.
+    This can be reduced into a Lightcurve
+    object using a reducer function
+    from the correct observatory object.
+
+    """
+
+    observatory = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Observatory this dataset is associated with",
+    )
+
+    # original series of images used to make this dataset
+    series_identifier = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Identifier of the series this dataset is associated with, "
+        "e.g., the set of images the include this source but others as well",
+    )
+    series_object = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Name of object relative to the series this dataset is associated with",
+    )
+
+    # saving the data to file
+    _filename = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Filename of the dataset, including path, relative to the DATA_ROOT",
+    )
+
+    _folder = sa.Column(
+        sa.String,
+        nullable=True,
+        doc="Folder where this dataset is stored. "
+        "If relative path, it is relative to DATA_ROOT. ",
+    )
+
+    filekey = sa.Column(
+        sa.String,
+        nullable=True,
+        doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
+    )
+
+    format = sa.Column(
+        sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
+    )
+
+    # TODO: add a method to use this dictionary
+    load_instructions = sa.Column(
+        JSONB,
+        nullable=True,
+        doc="Instructions dictionary for loading the data from disk",
+    )
+
+    altdata = sa.Column(
+        JSONB,
+        nullable=True,
+        doc="Additional meta-data associated with this dataset",
+    )
+
+    # timing data and number / size of images
+    time_start = sa.Column(
+        sa.DateTime,
+        nullable=True,
+        doc="Start time of the dataset (e.g., time of first observation)",
+    )
+    time_end = sa.Column(
+        sa.DateTime,
+        nullable=True,
+        doc="End time of the dataset (e.g., time of last observation)",
+    )
+
+    # data size and shape
+    shape = sa.Column(sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset")
+    number = sa.Column(
+        sa.Integer, nullable=False, doc="Number of observations/epochs in the dataset"
+    )
+    size = sa.Column(
+        sa.Integer,
+        nullable=False,
+        doc="Size of the dataset in bytes",
+    )
+
+    public = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        doc="Whether this dataset is publicly available",
+    )
+
+    autoload = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=AUTOLOAD,
+        doc="Whether this dataset should be automatically loaded (lazy loaded)",
+    )
+
+    autosave = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=AUTOSAVE,
+        doc="Whether this dataset should be automatically saved",
+    )
+
+    overwrite = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=OVERWRITE,
+        doc="Whether the data on disk should be overwritten if it already exists "
+        "(if False, an error will be raised)",
+    )
+
     def __init__(self, **kwargs):
-        """
-        Produce a Dataset object,
-        which maps a location on disk
-        with raw data in memory.
-        Each Dataset is associated with one source
-        (via the source_id foreign key).
-        If there are multiple datasets in a file,
-        use the "filekey" parameter to identify which
-        one is associated with this Dataset.
-
-        Parameters will be applied from kwargs
-        if they match any existing attributes.
-        If "data" is given as an input,
-        it will be set first, allowing the object
-        to calculate some attributes
-        (like type and start/end times).
-        After that any other properties will be
-        assigned and can override the values
-        calculated from the data.
-
-        Subclasses of this mixin will contain
-        specific type of data. For example
-        the RawData class will contain raw data
-        directly from the observatory.
-        This can be turned into e.g.,
-        a Lightcurve using a reducer function
-        from the correct observatory object.
-
-        """
-
         self._data = None
         self.colmap = {}
         self._times = None
@@ -133,7 +302,7 @@ class DatasetMixin:
     def guess_format(self):
         """
         Guess the format of the data file
-        using its extention.
+        using its extension.
 
         Returns
         -------
@@ -182,19 +351,6 @@ class DatasetMixin:
             return ".nc"
         else:
             raise ValueError(f"Unknown format {self.format}")
-
-    def guess_type(self):
-        """
-        Guess the type of data,
-        based on the shape and type of data.
-
-        Returns
-        -------
-        str
-            Can be either photometry, spectrum, image.
-        """
-        # TODO: make this a little bit smarter...
-        return "photometry"
 
     def calc_size(self):
         """
@@ -381,10 +537,10 @@ class DatasetMixin:
         the ra range will be replaced with a random string.
         <observatory>_<data_type>_<random 16 char string>.ext
 
-        For subclasses of RawData that are reductions of the data
+        For subclasses that are reductions of the data
         found in another file (and have a "raw_data_filename" attribute),
         will just use that filename, appending the string "_reduced"
-        before adding the extension.
+        or "_processed" or "_simulated" before adding the extension.
 
         Parameters
         ----------
@@ -970,8 +1126,6 @@ class DatasetMixin:
         self.number = len(data)  # for imaging data this would be different?
         self.size = self.calc_size()
         self.format = self.guess_format()
-        if self.type is None:
-            self.type = self.guess_type()
         self.find_colmap(data)
         self.calc_times(data)
 
@@ -1001,126 +1155,10 @@ class DatasetMixin:
 
     @classmethod
     def backref_name(cls):
-        if cls.__name__ == "RawData":
-            return "raw_data"
+        if cls.__name__ == "RawPhotometry":
+            return "raw_photometry"
         elif cls.__name__ == "LightCurve":
             return "lightcurves"
-
-    observatory = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Observatory this dataset is associated with",
-    )
-
-    # original series of images used to make this dataset
-    series_identifier = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Identifier of the series this dataset is associated with, "
-        "e.g., the set of images the include this source but others as well",
-    )
-    series_object = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Name of object relative to the series this dataset is associated with",
-    )
-
-    # saving the data to file
-    _filename = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Filename of the dataset, including path, relative to the DATA_ROOT",
-    )
-
-    _folder = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Folder where this dataset is stored. "
-        "If relative path, it is relative to DATA_ROOT. ",
-    )
-
-    filekey = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
-    )
-
-    type = sa.Column(
-        sa.String, nullable=False, default="photometry", doc="Type of the dataset"
-    )
-
-    format = sa.Column(
-        sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
-    )
-
-    # TODO: add a method to use this dictionary
-    load_instructions = sa.Column(
-        JSONB,
-        nullable=True,
-        doc="Instructions dictionary for loading the data from disk",
-    )
-
-    altdata = sa.Column(
-        JSONB,
-        nullable=True,
-        doc="Additional meta-data associated with this dataset",
-    )
-
-    # timing data and number / size of images
-    time_start = sa.Column(
-        sa.DateTime,
-        nullable=True,
-        doc="Start time of the dataset (e.g., time of first observation)",
-    )
-    time_end = sa.Column(
-        sa.DateTime,
-        nullable=True,
-        doc="End time of the dataset (e.g., time of last observation)",
-    )
-
-    # data size and shape
-    shape = sa.Column(sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset")
-    number = sa.Column(
-        sa.Integer, nullable=False, doc="Number of observations/epochs in the dataset"
-    )
-    size = sa.Column(
-        sa.Integer,
-        nullable=False,
-        doc="Size of the dataset in bytes",
-    )
-
-    public = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        doc="Whether this dataset is publicly available",
-    )
-
-    autoload = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=AUTOLOAD,
-        doc="Whether this dataset should be automatically loaded (lazy loaded)",
-    )
-
-    autosave = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=AUTOSAVE,
-        doc="Whether this dataset should be automatically saved",
-    )
-
-    overwrite = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=OVERWRITE,
-        doc="Whether the data on disk should be overwritten if it already exists "
-        "(if False, an error will be raised)",
-    )
 
     # automatically copy these values
     # when reducing one dataset into another
@@ -1144,13 +1182,14 @@ class DatasetMixin:
     default_update_attributes = ["altdata"]
 
 
-class RawData(DatasetMixin, Base):
+# TODO: Do we want to split this off into a separate file?
+class RawPhotometry(DatasetMixin, Base):
 
-    __tablename__ = "raw_data"
+    __tablename__ = "raw_photometry"
 
     def __init__(self, **kwargs):
         """
-        This class is used to store raw data from a survey,
+        This class is used to store raw photometric data,
         that should probably need to be reduced into more
         manageable forms (saved using other subclasses).
 
@@ -1179,16 +1218,9 @@ class RawData(DatasetMixin, Base):
 
         return string
 
-    # @hybrid_property
-    # def source_name(self):
-    #     if len(self.sources) > 0:
-    #         return self.sources[0].name
-    #     else:
-    #         return None
-    #
-    # @source_name.expression
-    # def source_name(cls):
-    #     return sa.select([Source.name]).where(cls.source_id == Source.id).as_scalar()
+    @property
+    def type(self):
+        return "photometry"
 
     def make_random_photometry(
         self,
@@ -1295,7 +1327,6 @@ class Lightcurve(DatasetMixin, Base):
 
         DatasetMixin.__init__(self, **kwargs)
         Base.__init__(self)
-        self.type = "lightcurves"
 
         if "raw_data_id" in kwargs:
             self.raw_data_id = kwargs["raw_data_id"]
@@ -1368,15 +1399,26 @@ class Lightcurve(DatasetMixin, Base):
 
         return string
 
+    @property
+    def type(self):
+        return "photometry"
+
     # overload the DatasetMixin method
     def invent_filekey(self, source_name=None, prefix=None, suffix=None):
         DatasetMixin.invent_filekey(self, source_name, prefix, suffix)
 
-        self.filekey += (
-            f"_reduction_{self.reduction_number:02d}_of_{self.reduction_total:02d}"
-        )
+        if not self.was_processed:
+            self.filekey += (
+                f"_reduction_{self.reduction_number:02d}_of_{self.reduction_total:02d}"
+            )
+        else:  # processed lightcurve
+            self.filekey += (
+                f"_processed_{self.reduction_number:02d}_of_{self.reduction_total:02d}"
+            )
 
-    # maybe this should happen at the base class?
+        if self.is_simulated:
+            self.filekey += f"_simulated_{self.simulation_number:02d}_of_{self.simulation_total:02d}"
+
     def translate_altdata(self):
         """
         Change the column names given in altdata
@@ -1723,17 +1765,18 @@ class Lightcurve(DatasetMixin, Base):
 
     raw_data_id = sa.Column(
         sa.Integer,
-        sa.ForeignKey("raw_data.id"),
+        sa.ForeignKey("raw_photometry.id"),
         nullable=True,
         index=True,
-        doc="ID of the raw dataset that was used to produce this reduced dataset.",
+        doc="ID of the raw dataset that was used " "to produce this reduced dataset.",
     )
 
     raw_data_filename = sa.Column(
         sa.String,
         nullable=True,
         index=True,
-        doc="Filename of the raw dataset that was used to produce this reduced dataset.",
+        doc="Filename of the raw dataset that "
+        "was used to produce this reduced dataset.",
     )
 
     reduction_number = sa.Column(
@@ -1750,6 +1793,23 @@ class Lightcurve(DatasetMixin, Base):
         nullable=False,
         index=True,
         doc="Total number of reduced datasets, " "producted from the same raw data.",
+    )
+
+    simulation_number = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=False,
+        doc="Serial number for this reduced and simulated lightcurve. "
+        "For each reduced lightcurve can have multiple simulated ones. "
+        "This keeps track of the injection number for each reduced lightcurve.",
+    )
+
+    simulation_total = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=False,
+        doc="Total number of simulated lightcurves made "
+        "for each reduced lightcurve. ",
     )
 
     num_good = sa.Column(
@@ -1895,7 +1955,7 @@ class Lightcurve(DatasetMixin, Base):
 
 
 # make sure all the tables exist
-RawData.metadata.create_all(engine)
+RawPhotometry.metadata.create_all(engine)
 Lightcurve.metadata.create_all(engine)
 
 # add relationships between sources and data
@@ -1905,8 +1965,8 @@ Lightcurve.metadata.create_all(engine)
 # from different projects/git hashes can access
 # the same raw data
 # ref: https://docs.sqlalchemy.org/en/14/orm/basic_relationships.html#many-to-many
-source_raw_data_association = sa.Table(
-    "source_raw_data_association",
+source_raw_photometry_association = sa.Table(
+    "source_raw_photometry_association",
     Base.metadata,
     sa.Column(
         "source_id",
@@ -1915,83 +1975,86 @@ source_raw_data_association = sa.Table(
         primary_key=True,
     ),
     sa.Column(
-        "raw_data_id",
+        "raw_photometry_id",
         sa.Integer,
-        sa.ForeignKey("raw_data.id", ondelete="CASCADE"),
+        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
         primary_key=True,
     ),
 )
 
 
-Source.raw_data = orm.relationship(
-    "RawData",
-    secondary=source_raw_data_association,
+Source.raw_photometry = orm.relationship(
+    "RawPhotometry",
+    secondary=source_raw_photometry_association,
     back_populates="sources",
     lazy="selectin",
     cascade="all, delete",
-    doc="Raw Datasets associated with this source",
+    doc="Raw photometry associated with this source",
 )
 
 
-RawData.sources = orm.relationship(
+RawPhotometry.sources = orm.relationship(
     "Source",
-    secondary=source_raw_data_association,
-    back_populates="raw_data",
+    secondary=source_raw_photometry_association,
+    back_populates="raw_photometry",
     lazy="selectin",
     cascade="all, delete",
-    doc="Sources associated with this raw dataset",
+    doc="Sources associated with this raw photometry",
 )
 
 
-Source.lightcurves = orm.relationship(
+Source.reduced_lightcurves = orm.relationship(
     "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, Lightcurve.was_processed==False)",
+    primaryjoin="and_(Lightcurve.source_id==Source.id, "
+    "Lightcurve.was_processed==False, "
+    "Lightcurve.is_simulated==False)",
     back_populates="source",
     cascade="save-update, merge, refresh-expire, expunge, delete",
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
-    doc="Photometric Datasets associated with this source",
+    doc="Reduced photometric datasets associated with this source",
 )
 
 
 Source.processed_lightcurves = orm.relationship(
     "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, Lightcurve.was_processed==True)",
+    primaryjoin="and_(Lightcurve.source_id==Source.id, "
+    "Lightcurve.was_processed==True, "
+    "Lightcurve.is_simulated==False)",
     back_populates="source",
     cascade="save-update, merge, refresh-expire, expunge, delete",
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
-    doc="Photometric Datasets associated with this source",
+    doc="Reduced and simulated photometric datasets associated with this source",
 )
 
 
 Lightcurve.source = orm.relationship(
     "Source",
-    back_populates="lightcurves",
     doc="Source associated with this lightcurve dataset",
     foreign_keys="Lightcurve.source_id",
 )
 
 
-RawData.lightcurves = orm.relationship(
+RawPhotometry.lightcurves = orm.relationship(
     "Lightcurve",
-    back_populates="raw_data",
+    back_populates="raw_photometry",
     cascade="all",
     doc="Lightcurves derived from this raw dataset.",
 )
 
 
-Lightcurve.raw_data = orm.relationship(
-    "RawData",
+Lightcurve.raw_photometry = orm.relationship(
+    "RawPhotometry",
     back_populates="lightcurves",
     cascade="all",
     doc="The raw dataset that was used to produce this reduced dataset.",
 )
 
 
-@event.listens_for(RawData, "before_insert")
+@event.listens_for(RawPhotometry, "before_insert")
 @event.listens_for(Lightcurve, "before_insert")
 def insert_new_dataset(mapper, connection, target):
     """

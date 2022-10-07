@@ -37,21 +37,30 @@ Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import RawData, Lightcurve, source_raw_data_association
+    from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association
     from src.detection import DetectionInTime
+    from src.properties import Properties
 
-    source_raw_data_association.drop(engine)
-    Source.metadata.drop_all(engine)
-    RawData.metadata.drop_all(engine)
-    Lightcurve.metadata.drop_all(engine)
+    Properties.metadata.drop_all(engine)
     DetectionInTime.metadata.drop_all(engine)
+    Lightcurve.metadata.drop_all(engine)
+    RawPhotometry.metadata.drop_all(engine)
+    Source.metadata.drop_all(engine)
+    source_raw_photometry_association.drop(engine)
 
 
-def clear_test_sources():
+def clear_test_objects():
     from src.source import Source
+    from src.dataset import RawPhotometry, Lightcurve
+    from src.detection import DetectionInTime
+    from src.properties import Properties
 
     with Session() as session:
-        session.query(Source).filter(Source.project == "test_project").delete()
+        session.execute(sa.delete(Properties).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(DetectionInTime).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(Lightcurve).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(RawPhotometry).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(Source).where(Source.test_only.is_(True)))
 
 
 class VO_Base:
@@ -81,11 +90,14 @@ class VO_Base:
         doc="UTC time the object's row was last modified in the database.",
     )
 
-    observatory = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Name of the observatory this data is associated with.",
+    test_only = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        doc="Apply this to any test objects, "
+        "either in the testing suite or when "
+        "just debugging code interactively. "
+        "Remove such objects using clear_test_objects().",
     )
 
 

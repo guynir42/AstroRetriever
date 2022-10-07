@@ -6,6 +6,7 @@ from src.histogram import Histogram
 from src.dataset import Lightcurve
 from src.database import Session
 from src.source import Source
+from src.properties import Properties
 
 
 class ParsAnalysis(Parameters):
@@ -58,17 +59,18 @@ class ParsAnalysis(Parameters):
         self.update_histograms = self.add_par(
             "update_histograms", True, bool, "Update the histograms on file"
         )
-        self.save_reduced_lightcurves = self.add_par(
-            "save_reduced_lightcurves",
+        # self.save_reduced_lightcurves = self.add_par(
+        #     "save_reduced_lightcurves",
+        #     True,
+        #     bool,
+        #     "Save reduced lightcurves to file and database",
+        # )
+        self.commit_processed = self.add_par(
+            "commit_processed",
             True,
             bool,
-            "Save reduced lightcurves to file and database",
-        )
-        self.save_processed_lightcurves = self.add_par(
-            "save_processed_lightcurves",
-            True,
-            bool,
-            "Save processed lightcurves after finder and quality cuts with a new filename",
+            "Save and commit processed lightcurves "
+            "after finder and quality cuts with a new filename",
         )
         self.commit_detections = self.add_par(
             "commit_detections", True, bool, "Save detections to database"
@@ -103,20 +105,37 @@ class ParsAnalysis(Parameters):
 
 class Analysis:
     """
-    This is a pipeline object that accepts some data
-    (e.g., lightcurves) and performs some analysis.
-    The outputs of the analysis of a dataset are:
-    1) Detection objects (if we find anything interesting)
-    2) Update to the histogram (counts the number of measurements
-       with a specific score like S/N, specific magnitude, etc.)
+    This is a pipeline object that accepts a Source object
+    (e.g., with some lightcurves) and performs analysis to get it.
+    Use pars.data_type to choose which kind of analysis is to be done.
+    The default is to use lightcurves.
+    Any sources with all empty raw_data will be skipped.
+    Other sources are assumed to have reduced datasets,
+    and that they already contain the data required.
+    For example, a source with a lightcurve that is missing
+    its data (either in RAM or from disk) will raise an exception.
+
+    The outputs of the analysis are:
+    1) Properties object summarizing the results for each object (e.g., best S/N).
+    2) Processed data (e.g., lightcurves) with quality flags and S/N, etc.
+    3) Detection objects (if we find anything interesting)
+    4) Update to the histogram (counts the number of measurements
+       with a specific score like S/N, specific magnitude, etc.).
+    5) Simulated datasets and detections (if using injections).
 
     The Quality object is used to scan the data and assign
     scores on various parameters, that can be used to disqualify
-    some of the data.
+    parts of the data.
     For example, if the individual lightcurve RA/Dec values are
     too far from the source RA/Dec, then we can disqualify
     some data points, which will also flag the Detection objects
     that overlap those measurements.
+
+    The Finder object then proceeds to add S/N (and other scores)
+    to the processed lightcurve. These can be saved to the database
+    and to disk, or they can be removed to save space.
+    Use the pars.commit_processed to toggle this behavior.
+
     A Histogram object can be used to keep track of the number
     of measurements that are lost to each score,
     so we can fine tune the cut thresholds on the Quality object.
@@ -147,38 +166,17 @@ class Analysis:
         # self.extra_thresholds = []  # list of Threshold objects
 
         self.detections = []  # a list of Detection objects
+        # TODO: should we limit the length of this list in memory?
 
-    def initialize(self):
-        """
-        Initialize the Analysis object.
-        This is called before the first run of the pipeline.
-        It initializes all the objects that are needed
-        for the analysis, like the Quality object,
-        using the parameters from the config file or
-        from the user.
-
-        """
-
-        # TODO: do we really need a threshold object?
-        # self.threshold = Threshold(self.pars.trigger_threshold_dict)
-
-        # TODO: do we really need extra thresholds?
-        # for cut_dict in self.pars.extra_cut_thresholds:
-        #     self.extra_thresholds.append(self.pars.get_class("threshold", cut_dict))
-        # for cut_dict in self.pars.extra_cut_thresholds:
-        #     self.extra_scores.append(Histogram())
-
-    def analyze_sources_batch(self, sources):
+    def analyze_sources(self, sources):
         """
 
         Parameters
         ----------
-        sources: list of Source objects
+        sources: Source or list of Source objects
             A list of sources to run the analysis on.
-            After this batch is done, will commit the
-            detections to the database and update
-            the histogram file.
-
+            After this batch is done will update
+            the histogram on disk.
         """
         if isinstance(sources, Source):
             sources = [sources]
@@ -186,29 +184,18 @@ class Analysis:
         # TODO: load histograms from file
         batch_detections = []
         for source in sources:
+            if all([d.is_empty() for d in source.raw_data]):
+                source.properties = Properties(has_data=False)
+                continue  # skip sources without data
             if self.pars.data_type == "lightcurves":
-                # for each raw data, need to make sure lightcurves exist
-                for data in source.raw_data:
-                    if not data.is_empty():
-                        pass
-                if len(source.lightcurves) == 0 or all(
-                    [lc.check_data_exists for lc in source.lightcurves]
-                ):
-                    self.reduce_lightcurves(source)
-                if len(source.processed_lightcurves) == 0 or all(
-                    [lc.check_data_exists for lc in source.processed_lightcurves]
-                ):
-                    self.process_lightcurves(source)
-
                 det = self.analyze_lightcurves(source)
-
             # add more options here besides lightcurves
             else:
                 raise ValueError(f'Unknown data type: "{self.pars.data_type}"')
 
             batch_detections += det
 
-        if self.pars.save_processed_lightcurves:
+        if self.pars.commit_processed:
             pass  # TODO: save lcs after adding S/N and quality flags
 
             # TODO: update the histogram with this source's data
@@ -223,60 +210,24 @@ class Analysis:
 
         self.detections += batch_detections
 
-    def reduce_lightcurves(self, source):
-        """
-        Reduce the lightcurves for this source.
-        Each raw_data on the source will call
-        the relevant observatory to do this.
-        """
-
-        if self.observatories is None:
-            raise ValueError("The observatories are not set.")
-
-        for raw_data in source.raw_data:
-            obs = self.observatories[raw_data.observatory]
-            source.lightcurves += obs.reduce(raw_data, to="lc", source=source)
-
-        # TODO: move this to the end of each batch?
-        if self.pars.save_reduced_lightcurves:
-            with Session() as session:
-                for lc in source.lightcurves:
-                    # the filename should be the same as the raw_data + "_reduced"
-                    lc.save()
-                session.add(source)
-                session.commit()
-
-    def process_lightcurves(self, source, observatory=None):
-        """
-        Run quality checks and calculate S/N etc.
-        on the source's lightcurves.
-        The processed lightcurves are appended to the
-        source object (These are saved to disk and database
-        if using save_processed_lightcurves=True)
-
-        Parameters
-        ----------
-        source: Source object
-            The source to process the lightcurves for.
-        observatory: Observatory object (optional)
-            If given, only process the lightcurves from this observatory.
-
-        Returns
-        -------
-        list of Lightcurve objects with data that
-        has been processed, e.g., has S/N and quality flags.
-        The Lightcurve object will also have has_processed=True.
-        """
-
-        pass
-
     def analyze_lightcurves(self, source):
         """
         Run the analysis on a list of processed Lightcurve
         objects associated with the given source.
 
-        Then detection code is used to find detection
+        The processing is done using the Quality and Finder
+        objects, that generate processed versions of the
+        input data (e.g., lightcurves with S/N and quality flags).
+
+        Then the Finder's detection code is used to find detection
         objects and return those.
+
+        For each source, injection simulations are added using
+        the Simulator object. The injected data (e.g., lightcurves)
+        are re-processed using the same Quality and Finder objects,
+        that re-apply the same cuts and scores to the injected data.
+        Then the Finder looks for detections in those data, and
+        outputs them along with the regular detection objects.
 
         Parameters
         ----------
@@ -290,8 +241,12 @@ class Analysis:
         det: list of Detection objects
             The detections found in the data.
         """
+        # check if we need to re-generate the processed lightcurves
+        if len(source.processed_lightcurves) == 0 or not all(
+            [lc.check_data_exists for lc in source.processed_lightcurves]
+        ):
+            self.process_lightcurves(source)
 
-        new_lcs = self.process_lightcurves(source.lightcurves)
         new_det = self.detect_in_lightcurves(source.lightcurves)
         self.update_histograms(source.lightcurves)
 
@@ -303,6 +258,33 @@ class Analysis:
         det = new_det + sim_det
 
         return
+
+    def process_lightcurves(self, source, sim=None):
+        """
+        Run quality checks and calculate S/N etc.
+        on the source's lightcurves.
+        The processed lightcurves are appended to the
+        source object (These are saved to disk and database
+        if using save_processed_lightcurves=True)
+
+        Parameters
+        ----------
+        source: Source object
+            The source to process the lightcurves for.
+        sim: dict or None
+            If not None, then use this as the simulated
+            (ground truth) values to mark the produced
+            lightcurves and detections.
+            Will mark the lightcurves with is_simulated=True.
+
+        Returns
+        -------
+        list of Lightcurve objects with data that
+        has been processed, e.g., has S/N and quality flags.
+        The Lightcurve object will also have has_processed=True.
+        """
+        # TODO: finish this
+        pass
 
     def check_lightcurves(self, lightcurves):
         """

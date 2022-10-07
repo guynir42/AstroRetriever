@@ -58,16 +58,14 @@ class Finder:
     if they don't exist already from the reduction stage.
     If any (or all) of the scores go over the threshold
     it should save a Detection object with the details
-    of that detection (the Lightcurve ID, the time,
-    S/N and so on).
+    of that detection (the Lightcurve ID, the time, S/N and so on).
 
     If accepting images, TBD...
 
     It is important that the Finder state
     does not change when applied to new data,
     since we expect to re-run the same data
-    multiple times, before and after injecting
-    simulations.
+    multiple times, before/after injecting simulations.
     The sim parameter is used when the data
     ingested has an injected event in it.
     If sim=None, assume real data,
@@ -80,7 +78,7 @@ class Finder:
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)
 
-    def ingest_lightcurves(self, lightcurves, source=None, sim=None):
+    def ingest_lightcurves(self, source, sim=None):
         """
         Ingest a list of lightcurves and produce
         detections for them.
@@ -93,14 +91,12 @@ class Finder:
 
         Parameters
         ----------
-        lightcurves : list of Lightcurve objects
-            The lightcurves to ingest and produce
-            detections for.
-
-        source : Source object, optional
-            The source this lightcurve is associated with.
-            Derived classes may use properties of the source
-            to determine detections.
+        source : Source object
+            The source to get lightcurves from.
+            May also use properties of the source
+            to determine detections (e.g., magnitude).
+            Will also append processed_lightcurves
+            and in case of a simulated
 
         sim : dict or None
             The truth values for the injected event
@@ -114,10 +110,8 @@ class Finder:
         """
 
         detections = []  # List of detections to return
-        if isinstance(lightcurves, Lightcurve):
-            lightcurves = [lightcurves]
 
-        for lc in lightcurves:
+        for lc in source.lightcurves:
             # Add some scores to the lightcurve
             lc.data["snr"] = (
                 lc.data["flux"] - lc.flux_mean_robust

@@ -41,7 +41,7 @@ def get_source_identifiers(project_name, column="id"):
         Name of the project.
     column: str
         Name of the column to get identifiers from.
-        Default is "id".
+        Default is "id". Also useful is "name".
 
     Returns
     -------
@@ -97,6 +97,92 @@ class Source(Base, conesearch_alchemy.Point):
 
     __tablename__ = "sources"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "name", "project", "cfg_hash", name="_source_name_in_project_uc"
+        ),
+    )
+
+    name = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Name of the source",
+    )
+
+    # ra and dec are included from the Point class
+
+    project = sa.Column(
+        sa.String,
+        nullable=False,
+        default=DEFAULT_PROJECT,
+        index=True,
+        doc="Project name to which this source is associated with",
+    )
+
+    cfg_hash = sa.Column(
+        sa.String,
+        nullable=False,
+        default="",
+        index=True,
+        doc="Hash of the configuration used to create this source "
+        "(leave empty if not using version control)",
+    )
+
+    origin = sa.Column(
+        sa.String,
+        nullable=True,
+        index=True,
+        doc="Where this source came from in a general sense",
+    )
+
+    classification = sa.Column(
+        sa.String, nullable=True, doc="Classification of the source"
+    )
+
+    aliases = sa.Column(
+        sa.ARRAY(sa.String),
+        nullable=False,
+        default=[],
+        doc="A list of additional names for this source",
+    )
+
+    # magnitude of the source
+    mag = sa.Column(
+        sa.Float,
+        nullable=True,
+        index=True,
+        doc="Magnitude of the source",
+    )
+    mag_err = sa.Column(
+        sa.Float, nullable=True, doc="Error in the magnitude of the source"
+    )
+    mag_filter = sa.Column(
+        sa.String,
+        nullable=True,
+        doc="Filter used to measure the magnitude of the source",
+    )
+
+    # catalog related stuff
+    cat_index = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=True,
+        doc="Index of the source in the catalog",
+    )
+    cat_id = sa.Column(
+        sa.String, nullable=True, index=True, doc="ID of the source in the catalog"
+    )
+    cat_name = sa.Column(
+        sa.String, nullable=True, doc="Name of the catalog to which this source belongs"
+    )
+    cat_row = sa.Column(
+        JSONB, nullable=True, doc="Row from the catalog used to create this source"
+    )
+
+    # NOTE: all the source relationships are defined
+    # where the data is defined, e.g., dataset.py and detection.py
+
     def __init__(self, **kwargs):
 
         self.name = kwargs.pop("name", None)
@@ -130,7 +216,7 @@ class Source(Base, conesearch_alchemy.Point):
             f"ra={Catalog.ra2sex(self.ra)}, "
             f"dec={Catalog.dec2sex(self.dec)}, "
             f'mag= {mag}, project="{self.project}", '
-            f"datasets= {len(self.raw_data)})"
+            f"datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
         )
         return string
 
@@ -149,9 +235,9 @@ class Source(Base, conesearch_alchemy.Point):
         if ax is None:
             ax = plt.gca()
 
-        for d in self.raw_data:
-            if d.type == "photometry":
-                d.plot(ax=ax, ftype=ftype, ttype=ttype, use_phot_zp=True, **kwargs)
+        for rp in self.raw_photometry:
+            if rp.type == "photometry":
+                rp.plot(ax=ax, ftype=ftype, ttype=ttype, use_phot_zp=True, **kwargs)
         for lc in self.lightcurves:
             lc.plot(ax=ax, ftype=ftype, ttype=ttype, **kwargs)
 
@@ -191,81 +277,6 @@ class Source(Base, conesearch_alchemy.Point):
 
         sources = session.scalars(stmt).first()
         return sources is not None
-
-    __table_args__ = (
-        UniqueConstraint(
-            "name", "project", "cfg_hash", name="_source_name_in_project_uc"
-        ),
-    )
-
-    name = sa.Column(sa.String, nullable=False, index=True, doc="Name of the source")
-
-    # ra and dec are included from the Point class
-
-    project = sa.Column(
-        sa.String,
-        nullable=False,
-        default=DEFAULT_PROJECT,
-        index=True,
-        doc="Project name to which this source is associated with",
-    )
-
-    cfg_hash = sa.Column(
-        sa.String,
-        nullable=False,
-        default="",
-        index=True,
-        doc="Hash of the configuration used to create this source "
-        "(leave empty if not using version control)",
-    )
-
-    origin = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Where this source came from in a general sense",
-    )
-
-    classification = sa.Column(
-        sa.String, nullable=True, doc="Classification of the source"
-    )
-
-    alias = sa.Column(
-        sa.ARRAY(sa.String),
-        nullable=False,
-        default=[],
-        doc="A list of additional names for this source",
-    )
-
-    # magnitude of the source
-    mag = sa.Column(sa.Float, nullable=True, index=True, doc="Magnitude of the source")
-    mag_err = sa.Column(
-        sa.Float, nullable=True, doc="Error in the magnitude of the source"
-    )
-    mag_filter = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Filter used to measure the magnitude of the source",
-    )
-
-    # catalog related stuff
-    cat_index = sa.Column(
-        sa.Integer,
-        nullable=True,
-        index=True,
-        doc="Index of the source in the catalog",
-    )
-    cat_id = sa.Column(
-        sa.String, nullable=True, index=True, doc="ID of the source in the catalog"
-    )
-    cat_name = sa.Column(
-        sa.String, nullable=True, doc="Name of the catalog to which this source belongs"
-    )
-    cat_row = sa.Column(
-        JSONB, nullable=True, doc="Row from the catalog used to create this source"
-    )
-    # NOTE: all the source relationships are defined
-    # where the data is defined, e.g., dataset.py and detection.py
 
 
 # make sure the table exists

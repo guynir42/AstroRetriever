@@ -6,7 +6,7 @@ from sqlalchemy.ext.declarative import declared_attr
 
 from src.database import Base, engine
 from src.source import Source
-from src.dataset import RawData, Lightcurve
+from src.dataset import RawPhotometry, Lightcurve
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -70,24 +70,6 @@ class DetectionMixin:
 
     source_name = association_proxy("source", "name")
 
-    @declared_attr
-    def raw_data_id(cls):
-        return sa.Column(
-            sa.ForeignKey("raw_data.id"),
-            nullable=True,
-            index=True,
-            doc="ID of the raw dataset this detection is associated with",
-        )
-
-    @declared_attr
-    def raw_data(cls):
-        return orm.relationship(
-            "RawData",
-            back_populates=cls.backref_name(),
-            cascade="all",
-            foreign_keys=f"{cls.__name__}.raw_data_id",
-        )
-
     simulated = sa.Column(
         sa.Boolean,
         nullable=False,
@@ -134,6 +116,20 @@ class DetectionInTime(Base, DetectionMixin):
 
     __tablename__ = "detections_in_time"
 
+    raw_data_id = sa.Column(
+        sa.ForeignKey("raw_photometry.id"),
+        nullable=True,
+        index=True,
+        doc="ID of the raw dataset this detection is associated with",
+    )
+
+    raw_data = orm.relationship(
+        "RawPhotometry",
+        back_populates="detections",
+        cascade="all",
+        foreign_keys=f"DetectionsInTime.raw_data_id",
+    )
+
     time_peak = sa.Column(
         sa.DateTime,
         nullable=False,
@@ -174,7 +170,7 @@ Source.detections_in_time = orm.relationship(
 )
 
 
-RawData.detections_in_time = orm.relationship(
+RawPhotometry.detections_in_time = orm.relationship(
     "DetectionInTime",
     back_populates="raw_data",
     cascade="all, delete-orphan",

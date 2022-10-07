@@ -11,7 +11,7 @@ from src.database import Session, DATA_ROOT
 from src.parameters import Parameters
 from src.catalog import Catalog
 from src.source import Source
-from src.dataset import RawData, Lightcurve
+from src.dataset import RawPhotometry, Lightcurve, normalize_data_types
 from src.analysis import Analysis
 from src.properties import Properties
 
@@ -31,6 +31,10 @@ class ParsProject(Parameters):
 
         self.version_control = self.add_par(
             "version_control", False, bool, "Whether to use version control"
+        )
+
+        self.data_types = self.add_par(
+            "data_types", "photometry", (list, str), "Type(s) of data to use"
         )
 
         self.ignore_missing_raw_data = self.add_par(
@@ -125,6 +129,8 @@ class ParsProject(Parameters):
         if key == "obs_names":
             self.verify_observatory_names(value)
             return
+        if key == "data_types":
+            values = normalize_data_types(value)
 
         super().__setattr__(key, value)
 
@@ -137,7 +143,7 @@ class ParsProject(Parameters):
 
 
 class Project:
-    def __init__(self, name="default", **kwargs):
+    def __init__(self, name, **kwargs):
         """
         Create a new Project object.
         The project is used to combine a catalog,
@@ -286,6 +292,7 @@ class Project:
         """
         Get all sources from all observatories.
         """
+        # TODO: add cfg_hash to this
         stmt = sa.select(Source).where(Source.project == self.name)
         with Session() as session:
             sources = session.scalars(stmt).all()
@@ -295,6 +302,7 @@ class Project:
         """
         Delete all sources associated with this project.
         """
+        # TODO: add cfg_hash to this
         stmt = sa.delete(Source).where(Source.project == self.name)
         with Session() as session:
             session.execute(stmt)
@@ -308,25 +316,28 @@ class Project:
         If it doesn't exist, it will create one. If it already exists
         and has a Properties object associated with it,
         then the source has already been analyzed and the pipeline
-        will skip it. For each source that has not yet been analyzed,
-        will look for RawData objects (for each observatory and source name).
-        If there is a RawData row but the data is missing on disk,
+        will skip it.
+        Assuming a photometric analysis (it is the same for images, etc.):
+        For each source that has not yet been analyzed,
+        will look for RawPhotometry objects (for each observatory and source name).
+        If there is a RawPhotometry row but the data is missing on disk,
         it could raise a RuntimeError or simply skip that source if
-        pars.ignore_missing_data is True.
-        If no RawData exists, it will download the raw data
+        pars.ignore_missing_raw_data is True.
+        If no RawPhotometry exists, it will download the raw data
         using the observatory.
-        For each RawData that is found or downloaded, will look
-        for reduced datasets matching that raw data
-        (e.g., a photometry type RawData will have Lightcurve objects).
+        For each RawPhotometry that is found or downloaded, will look
+        for reduced datasets (Lightcurves) matching that raw data.
         If the reduced data exists on DB and on disk it will be used.
         If it is missing on either DB or disk, it will be re-reduced
         by the observatory object.
-        After all RawData objects from all observatories are reduced
+        After all RawPhotometry objects from all observatories are reduced
         the data is transferred to the Analysis object.
-        This will look for existing processed datasets,
-        if they are missing from DB or disk they will get re-processed.
-        Finally, the processed datasets are used to produce
-        detections and properties objects, which are saved to the DB.
+        This will (re-)create processed lighturves,
+        which are used to make detections and properties objects,
+        both of which are saved to the DB.
+        The processed lightcurves are optionally given to the
+        Simulator objects, which adds simulated lightcurves a
+        and simulated detections, which are saved to DB.
         If the data for this source has not been added to the
         histograms, they will be updated as well.
 
@@ -339,8 +350,12 @@ class Project:
         self.save_config()
 
         source_names = self.catalog.names
+        types = self.pars.data_types
+        if isinstance(types, str):
+            types = [types]
 
         with Session() as session:
+            # TODO: add batching of sources
             for name in source_names:
                 source = session.scalars(
                     sa.select(Source).where(
@@ -369,110 +384,94 @@ class Project:
                     if need_skip:
                         continue
 
-                    # check if raw data is attached to this source
-                    # if not, look around the DB for any raw data
-                    # with a matching name and observatory
-                    # (e.g., from another project or version)
-                    data = [rd for rd in source.raw_data if rd.observatory == obs.name]
-                    if len(data) == 0:
-                        loaded_data = session.scalars(
-                            sa.select(RawData).where(
-                                RawData.source_name == name,
-                                RawData.project == self.name,
-                                RawData.observatory == obs.name,
-                            )
-                        ).all()
-                        source.raw_data += loaded_data
-
-                    data = [rd for rd in source.raw_data if rd.observatory == obs.name]
-                    if len(data) == 0:
-                        pass  # TODO: download data
-
-                    if len(data) > 1:
-                        raise RuntimeError(
-                            "Each source should have only one "
-                            "RawData associated with each observatory. "
-                            f"For source {name} and observatory {obs.name}, "
-                            f"found {len(data)} RawData objects."
-                        )
-
-                    # check each dataset has data on disk/in memory
-                    # (if not, skip entire source or raise RuntimeError)
-                    data = data[0]
-                    if not data.check_data_exists():
-                        if self.pars.ignore_missing_data:
-                            need_skip = True
+                    for dt in types:
+                        if need_skip:
                             continue
+
+                        if dt == "photometry":
+                            # check if raw data is attached to this source
+                            data = [
+                                rd
+                                for rd in source.raw_photometry
+                                if rd.observatory == obs.name
+                            ]
+
+                            # if not, look around the DB for any raw data
+                            # with a matching name and observatory
+                            # (e.g., from another project or version)
+                            if len(data) == 0:
+                                loaded_data = session.scalars(
+                                    sa.select(RawPhotometry).where(
+                                        RawPhotometry.source_name == name,
+                                        RawPhotometry.observatory == obs.name,
+                                    )
+                                ).all()
+                                source.raw_photometry += loaded_data
+
+                            # did we find any raw photometry?
+                            data = [
+                                rp
+                                for rp in source.raw_photometry
+                                if rp.observatory == obs.name
+                            ]
+                            if len(data) == 0:
+                                # TODO: need to download the data
+                                raise RuntimeError("Need to implement this!")
+
+                            if len(data) > 1:
+                                raise RuntimeError(
+                                    "Each source should have only one "
+                                    "RawPhotometry associated with each observatory. "
+                                    f"For source {name} and observatory {obs.name}, "
+                                    f"found {len(data)} RawPhotometry objects."
+                                )
+
+                            # check dataset has data on disk/in memory
+                            # (if not, skip entire source or raise RuntimeError)
+                            data = data[0]
+                            if not data.check_data_exists():
+                                if self.pars.ignore_missing_raw_data:
+                                    need_skip = True
+                                    continue
+                                else:
+                                    raise RuntimeError(
+                                        f"RawData for source {source.name} and observatory {obs.name} "
+                                        "is missing from disk. "
+                                        "Set pars.ignore_missing_raw_data to True to ignore this."
+                                    )
+
+                            # look for reduced data and reproduce if missing
+                            lcs = [
+                                lc
+                                for lc in source.reduced_lightcurves
+                                if lc.observatory == obs.name
+                            ]
+                            if len(lcs) == 0:  # try to load from DB
+                                lcs = session.scalars(
+                                    sa.select(Lightcurve).where(
+                                        Lightcurve.source_name == name,
+                                        Lightcurve.observatory == obs.name,
+                                        Lightcurve.project == self.name,
+                                        Lightcurve.cfg_hash == self.cfg_hash,
+                                        Lightcurve.was_processed.is_(False),
+                                    )
+                                ).all()
+                            if len(lcs) == 0:  # reduce data
+                                lcs = obs.reduce(data, to="lcs")
+
+                            source.lightcurves += lcs
+
+                        # add additional elif for other types...
                         else:
-                            raise RuntimeError(
-                                f"RawData for source {source.name} and observatory {obs.name} "
-                                "is missing from disk. "
-                                "Set pars.ignore_missing_data to True to ignore this."
-                            )
+                            raise ValueError(f"Unknown data type: {dt}")
 
-                    # look for reduced data and reproduce if missing
-                    if data.type == "photometry":
-                        lcs = [
-                            lc
-                            for lc in source.lightcurves
-                            if lc.observatory == obs.name
-                        ]
-                        if len(lcs) == 0:  # try to load from DB
-                            lcs = session.scalars(
-                                sa.select(Lightcurve).where(
-                                    Lightcurve.source_name == name,
-                                    Lightcurve.observatory == obs.name,
-                                    Lightcurve.project == self.name,
-                                    Lightcurve.cfg_hash == self.cfg_hash,
-                                    Lightcurve.was_processed.is_(False),
-                                )
-                            ).all()
-                        if len(lcs) == 0:  # reduce data
-                            lcs = obs.reduce(data, to="lcs")
-
-                        source.lightcurves += lcs
-
-                    # add additional elif for other types...
-                    else:
-                        raise ValueError(f"Unknown RawData type: {data.type}")
-
-                    # TODO: look for processed data and reproduce if missing
-                    if data.type == "photometry":
-                        lcs = [
-                            lc
-                            for lc in source.processed_lightcurves
-                            if lc.observatory == obs.name
-                        ]
-                        if len(lcs) == 0:  # try to load from DB
-                            lcs = session.scalars(
-                                sa.select(Lightcurve).where(
-                                    Lightcurve.source_name == name,
-                                    Lightcurve.observatory == obs.name,
-                                    Lightcurve.project == self.name,
-                                    Lightcurve.cfg_hash == self.cfg_hash,
-                                    Lightcurve.was_processed.is_(True),
-                                )
-                            ).all()
-                        if len(lcs) == 0:  # process the data
-                            lcs = self.analysis.process_lightcurves(
-                                source, observatory=obs.name
-                            )
-
-                        source.processed_lightcurves += lcs
-
-                    # add additional elif for other types...
-                    else:
-                        raise ValueError(f"Unknown RawData type: {data.type}")
-
-                    # TODO: simulated_lightcurves also need to be found/generated
-
-                # finished looping on observatories
+                # finished looping on observatories and data types
 
                 # send source with all data to analysis object for
                 # finding detections / adding properties
-                if data.type == "photometry":
-                    self.analysis.detect_in_lightcurves(source)
+                self.analysis.analyze_sources(source)
 
+                # TODO: should the commit happen in the Analysis?
                 session.add(source)
                 session.commit()
 
@@ -577,14 +576,15 @@ if __name__ == "__main__":
     proj = Project(
         name="WD",
         obs_names="ZTF",  # a single observatory named ZTF
-        catalog={"default": "WD"},  # load the default WD catalog
+        catalog_kwargs={"default": "WD"},  # load the default WD catalog
         verbose=1,  # print out some info
-        obs_kwargs={},  # general parameters to pass to all observatories
-        ZTF={  # instructions for ZTF specifically
-            "data_glob": "lightcurves_WD*.h5",  # filename format
-            "catalog_matching": "number",  # match by catalog row number
-            "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
-        },
+        obs_kwargs={
+            "ZTF": {  # instructions for ZTF specifically
+                "data_glob": "lightcurves_WD*.h5",  # filename format
+                "catalog_matching": "number",  # match by catalog row number
+                "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
+            },
+        },  # general parameters to pass to all observatories
     )
 
     # proj.delete_all_sources()

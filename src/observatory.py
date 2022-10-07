@@ -10,11 +10,10 @@ import threading
 import concurrent.futures
 
 import sqlalchemy as sa
-from sqlalchemy.orm import joinedload
 from src.database import Session
 from src.parameters import Parameters
 from src.source import Source, get_source_identifiers
-from src.dataset import DatasetMixin, RawData, Lightcurve
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, normalize_data_types
 from src.detection import DetectionInTime
 
 from src.catalog import Catalog
@@ -53,6 +52,13 @@ class ParsObservatory(Parameters):
 
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
+
+        self.data_types = self.add_par(
+            "data_types",
+            "photometry",
+            (list, str),
+            "Type(s) of data to use (photometry, spectra, images, etc).",
+        )
 
         self.reducer = self.add_par(
             "reducer", {}, dict, "Argumnets to pass to reduction method"
@@ -171,6 +177,8 @@ class ParsObservatory(Parameters):
         # ignore any keywords that match an observatory name
         if key.upper() in self.__class__.allowed_obs_names:
             return
+        if key == "data_types":
+            value = normalize_data_types(value)
 
         super().__setattr__(key, value)
 
@@ -325,12 +333,13 @@ class VirtualObservatory:
         (unless start/stop are given),
         and download the data for each source.
 
-        Each source data is placed in a RawData object.
+        Each source data is placed in a RawPhotometry object
+        (if downloading images it will be in RawImages, etc).
         If a source does not exist in the database,
         it will be created. If it already exists,
         the data will be added to the existing source.
         If save=False is given, the data is not saved to disk
-        and the Source and RawData objects are not persisted to database.
+        and the Source and raw data objects are not persisted to database.
 
         The observatory's pars.download_batch_size parameter controls
         how many sources are stored in memory at a time.
@@ -346,16 +355,16 @@ class VirtualObservatory:
             Catalog index of last source to download.
             Default is None, which means the last source.
         save: bool, optional
-            If True, save the data to disk and the RawData
+            If True, save the data to disk and the raw data
             objects to the database (default).
             If False, do not save the data to disk or the
-            RawData objects to the database (debugging only).
+            raw data objects to the database (debugging only).
         dataset_args: dict
             Additional keyword arguments to pass to the
             download method of the specific observatory.
         dataset_args: dict
             Additional keyword arguments to pass to the
-            constructor of RawData objects.
+            constructor of raw data objects.
 
         Returns
         -------
@@ -431,7 +440,7 @@ class VirtualObservatory:
         (1) check if source and raw data exist in DB
         (2) if not, send a request to the observatory
         (3) if save=True, save the data to disk and the
-            RawData and Source objects to the database.
+            raw data and Source objects to the database.
 
         Since all these actions are I/O bound,
         it makes sense to bundle them up into threads.
@@ -444,13 +453,13 @@ class VirtualObservatory:
             Catalog index of last source to download.
         save: bool
             If True, save the data to disk and the
-            RawData / Source objects to database.
+            raw data / Source objects to database.
         fetch_args: dict
             Additional keyword arguments to pass to the
             fetch_data_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
-            constructor of RawData objects.
+            constructor of raw data objects.
 
         Returns
         -------
@@ -491,6 +500,7 @@ class VirtualObservatory:
 
         return sources
 
+    # TODO: make this function generic by accepting a class like RawPhotometry
     def check_and_fetch_source(
         self, cat_row, save=True, fetch_args={}, dataset_args={}
     ):
@@ -506,19 +516,19 @@ class VirtualObservatory:
             or RA/Dec coordinates.
         save: bool
             If True, save the data to disk and the
-            RawData / Source objects to database.
+            raw data / Source objects to database.
         fetch_args: dict
             Additional keyword arguments to pass to the
             fetch_data_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
-            constructor of RawData objects.
+            constructor of raw data objects.
 
         Returns
         -------
         source: Source
             A Source object. It should have at least
-            one RawData object attached, from this
+            one raw data object attached, from this
             observatory (it may have more data from
             other observatories).
 
@@ -535,7 +545,7 @@ class VirtualObservatory:
             # if source existed in DB it should have raw data objects
             # if it doesn't that means the data needs to be downloaded
             raw_data = [
-                data for data in source.raw_data if data.observatory == self.name
+                data for data in source.raw_photometry if data.observatory == self.name
             ]
             if len(raw_data) == 0:
                 raw_data = None
@@ -543,22 +553,22 @@ class VirtualObservatory:
                 raw_data = raw_data[0]
             else:
                 raise RuntimeError(
-                    f"Source {source.name} has more than one RawData object from this observatory."
+                    f"Source {source.name} has more than one RawPhotometry object from this observatory."
                 )
             if raw_data is None:
                 raw_data = session.scalars(
-                    sa.select(RawData).where(
-                        RawData.source_name == source.name,
-                        RawData.observatory == self.name,
+                    sa.select(RawPhotometry).where(
+                        RawPhotometry.source_name == source.name,
+                        RawPhotometry.observatory == self.name,
                     )
                 ).first()
 
-            # remove RawData objects that have no file
             if raw_data is not None and not raw_data.check_file_exists():
                 # session.delete(raw_data)
                 # raw_data = None
                 raise RuntimeError(
-                    f"RawData object for source {source.name} exists in DB but file does not exist."
+                    f"RawPhotometry object for source {source.name} "
+                    "exists in DB but file does not exist."
                 )
 
             # file exists, try to load it:
@@ -580,7 +590,7 @@ class VirtualObservatory:
             if raw_data is None:
                 # <-- magic happens here! -- >
                 data, altdata = self.fetch_data_from_observatory(cat_row, **fetch_args)
-                raw_data = RawData(
+                raw_data = RawPhotometry(
                     data=data,
                     altdata=altdata,
                     observatory=self.name,
@@ -589,10 +599,10 @@ class VirtualObservatory:
                 )
 
             if not any([r.observatory == self.name for r in source.raw_data]):
-                source.raw_data.append(raw_data)
+                source.raw_photometry.append(raw_data)
 
-            if raw_data.sources is None:
-                raw_data.sources.append(source)
+            # if raw_data.sources is None:
+            #     raw_data.sources.append(source)
 
             # unless debugging, you'd want to save this data
             if save:
@@ -637,18 +647,18 @@ class VirtualObservatory:
                     # make sure we do not leave orphans
                     session.rollback()
 
-                    # did this RawData object already exist?
+                    # did this RawPhotometry object already exist?
                     # if so, do not remove the file that goes with it...
                     raw_data_check = session.scalars(
-                        sa.select(RawData).filter(
-                            RawData.source_id == source.id,
-                            RawData.observatory == self.name,
+                        sa.select(RawPhotometry).filter(
+                            RawPhotometry.source_name == source.name,
+                            RawPhotometry.observatory == self.name,
                         )
                     ).first()
                     if raw_data_check is None:
                         # the raw data is not in the database,
                         # so delete from disk the data matching this
-                        # new RawData object
+                        # new RawPhotometry object
                         raw_data.delete_data_from_disk()
                     raise
 
@@ -672,9 +682,9 @@ class VirtualObservatory:
         Returns
         -------
         data : pandas.DataFrame or other data structure
-            Raw data from the observatory, to be put into a RawData object.
+            Raw data from the observatory, to be put into a raw data object.
         altdata: dict
-            Additional data to be stored in the RawData object.
+            Additional data to be stored in the raw data object.
 
         """
         raise NotImplementedError(
@@ -862,15 +872,17 @@ class VirtualObservatory:
         new_source.cat_index = index
         new_source.cat_name = self.catalog.pars.catalog_name
 
-        raw_data = RawData(
+        raw_photometry = RawPhotometry(
             data=data,
             observatory=self.name,
             filename=filename,
             key=key,
         )
 
-        new_source.raw_data = [raw_data]
-        new_source.lightcurves = self.reduce(raw_data, to="lcs", source=new_source)
+        new_source.raw_photometry = [raw_photometry]
+        new_source.lightcurves = self.reduce(
+            raw_photometry, to="lcs", source=new_source
+        )
         for lc in new_source.lightcurves:
             lc.save()
 
@@ -900,7 +912,7 @@ class VirtualObservatory:
 
         Parameters
         ----------
-        dataset: a src.dataset.RawData object (or list of such objects)
+        dataset: a src.dataset.RawPhotometry object (or list of such objects)
             The raw data to reduce.
         to: str
             The type of output to produce.
@@ -933,9 +945,11 @@ class VirtualObservatory:
             datasets = [dataset]
 
         for i, d in enumerate(datasets):
-            if not isinstance(d, RawData):
+            if "photometry" in self.pars.data_types and not isinstance(
+                d, RawPhotometry
+            ):
                 raise ValueError(
-                    f"Expected RawData object, but dataset {i} was a {type(d)}"
+                    f"Expected RawPhotometry object, but dataset {i} was a {type(d)}"
                 )
 
         # parameters for the reduction
@@ -990,6 +1004,7 @@ class VirtualObservatory:
 
         init_kwargs["filtmap"] = self.pars.filtmap
 
+        # TODO: should we just use the pars.data_types instead?
         # choose which kind of reduction to do
         if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
             new_datasets = self.reduce_to_lightcurves(
@@ -1129,9 +1144,9 @@ class VirtualDemoObs(VirtualObservatory):
         Returns
         -------
         data : pandas.DataFrame or other data structure
-            Raw data from the observatory, to be put into a RawData object.
+            Raw data from the observatory, to be put into a RawPhotometry object.
         altdata: dict
-            Additional data to be stored in the RawData object.
+            Additional data to be stored in the RawPhotometry object.
 
         """
 
@@ -1187,7 +1202,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         Parameters
         ----------
-        datasets: a list of src.dataset.RawData objects
+        datasets: a list of src.dataset.RawPhotometry objects
             The raw data to reduce.
         source: src.source.Source object
             The source to which the dataset belongs.
@@ -1219,20 +1234,13 @@ class VirtualDemoObs(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
-        if isinstance(datasets, RawData):
+        if isinstance(datasets, RawPhotometry):
             datasets = [datasets]
         for i, d in enumerate(datasets):
-            # check the raw input types make sense
-            if d.type is None or d.type not in allowed_types:
-                raise ValueError(
-                    f"Expected RawData to contain {str(allowed_types)}, "
-                    f"but dataset {i} was a {d.type} dataset."
-                )
             if not isinstance(d.data, allowed_dataclasses):
                 raise ValueError(
-                    f"Expected RawData to contain {str(allowed_dataclasses)}, "
+                    f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
                     f"but data in dataset {i} was a {type(d.data)} object."
                 )
 

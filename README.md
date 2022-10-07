@@ -93,8 +93,8 @@ Examples for storing and retrieving data products:
 
 - A `Project` object can load a configuration file and store the parameters in memory.
 - A `Catalog` can read FITS or CSV files with a table of sources.
-- Instances of `Source` and `RawData` and `Lightcurve` are persisted in a postgres database.
-- Data objects like `RawData` keep track of a filename on disk (in HDF5 or FITS format),
+- Instances of `Source` and `RawPhotometry` and `Lightcurve` are persisted in a postgres database.
+- Data objects like `RawPhotometry` keep track of a filename on disk (in HDF5 or FITS format),
   and load the data from disk when needed.
 - A `Histograms` object is associated with a netCDF file on disk,
   which is loaded into a multidimensional `xarray` when needed.
@@ -170,7 +170,7 @@ will produce some `Lightcurve` objects,
 possible more than one lightcurve per raw dataset.
 This is because the raw data may contain data from multiple filters,
 or from different observing seasons/runs.
-The details of how a `RawData` object is reduced to a `Lightcurve` object
+The details of how a `RawPhotometry` object is reduced to a `Lightcurve` object
 are determined by the specific observatory object and reduction parameters.
 
 When saving a `Lightcurve` object,
@@ -260,15 +260,15 @@ The module contains several classes:
   All astronomical data classes have `times` (a vector of datetime objects) and `mjds`
   (a vector of modified julian dates) as attributes. They all have a filename and if required,
   will also keep an in-file key for files containing multiple entries (e.g., HDF5 files).
-- `RawData` is used for all sorts of unprocessed data, including images, lightcurves, etc. Inherits from `DatasetMixin`.
+- `RawPhotometry` is used to store unprocessed photometric data. Inherits from `DatasetMixin`.
   This class is mostly used to store filenames to allow data to be easily saved/loaded for future analysis.
-  There are zero or more `RawData` objects associated with each `Source`, usually one per survey.
+  There are zero or more `RawPhotometry` objects associated with each `Source`, upt to one per observatory.
   Raw data is saved once per observatory, and can be reused in different projects (if they share sources).
 - `Lightcurve`: a set of time vs. flux measurements for a single object. Inherits from `DatasetMixin`.
   There are zero or more `Lightcurve` objects for each `Source`.
   Each `Lightcurve` is for a single filter in a single survey, usually for a single observing season/run.
   An `Analysis` applied to a `Source` can, for example, use the lightcurves as the input data.
-  There are one or more `Lightcurve` objects associated with each photometry `RawData` object.
+  There are one or more `Lightcurve` objects associated with each `RawPhotometry` object.
 - `DetectionMixin`: A base class for all sorts of detection objects. The simplest example is given below,
   which is the `DetectionInTime` object that stores information about a time-local event like a transient.
   Other subclasses that can be useful are `DetectionInPeriod` or `DetectionInSpectrum`.
@@ -303,7 +303,7 @@ Important files in the `src` folder are:
   It also contains the `VirtualDemoObs` which is an example observatory that can be used for testing data reduction.
 - `database.py` does not contain any classes, but is used to set up the database connection using SQLAlchemy.
 - `dataset.py` contains the `DatasetMixin` class, which is a base class for all data types.
-  It also contains the `RawData` class, which is used to store filenames for data that has not yet been reduced,
+  It also contains the `RawPhotometry` class, which is used to store filenames for data that has not yet been reduced,
   and the `Lightcurve` class, which is used to store reduced photometry (lightcurves).
 - `detection.py` contains the `DetectionMixin` class, which is a base class for all detection objects.
   It also contains the `DetectionInTime` class, which is a specific example of a detection class.
@@ -441,7 +441,7 @@ obs.download_all_sources(0, 1000, save=True)  # grab first 1000 sources in catal
 # use save=False to only download the data (for debugging)
 
 len(obs.sources)  # should only contain 100 latest Source objects
-len(obs.datasets)  # should only contain 100 latest RawData objects
+len(obs.datasets)  # should only contain 100 latest RawPhotometry objects
 ```
 
 This code will download all the data for the first 1000 sources in the catalog.
@@ -493,8 +493,8 @@ obs = VirtualZTF(
 Load the raw data and split it into lightcurves for different filters:
 
 ```python
-from src.dataset import RawData
-data = RawData(filename="my_raw_data.h5")
+from src.dataset import RawPhotometry
+data = RawPhotometry(filename="my_raw_data.h5")
 data.load()
 obs.pars.reducer = {'gap': 60}
 lcs = obs.reduce(data, to='lcs')
@@ -524,7 +524,7 @@ To get full objects (rather than tuples with specific columns)
 use the `session.scalars()`.
 Inside the `scalars` block, use the `sa.select(Class)` method
 to select from one of the tables of mapped objects
-(mapped classes include `Source`, `RawData`, `Lightcurve`, `DetectionInTime`, etc).
+(mapped classes include `Source`, `RawPhotometry`, `Lightcurve`, `DetectionInTime`, etc).
 Use the `all()` or `first()` methods to get all or the first object.
 To filter the results use the `where()` method on the select statement object.
 
@@ -549,8 +549,8 @@ Make sure that the data on disk is deleted first, e.g.,
 
 ```python
 data = session.scalars(
-  sa.select(RawData).where(
-    RawData.source_id == source.id
+  sa.select(RawPhotometry).where(
+    RawPhotometry.source_id == source.id
   )
 ).first()
 
@@ -586,7 +586,7 @@ with Session() as session:
 ### loading data from disk
 
 Raw data and reduced data should always be associated
-with a database object, either a `RawData` or `Lightcurve` object.
+with a database object, either a `RawPhotometry` or `Lightcurve` object.
 Each of them has a `get_fullname()` method that returns the full path
 to the file on disk, and if relevant, also has a `filekey` attribute
 that keeps track of the in-file key for this dataset (e.g., in HDF5 files).
@@ -620,8 +620,8 @@ These will lazy load the `data` attribute from disk.
 ```python
 with Session() as session:
   data = session.scalars(
-    sa.select(RawData).where(
-      RawData.source_name == "J123.1-32.13"
+    sa.select(RawPhotometry).where(
+      RawPhotometry.source_name == "J123.1-32.13"
     )
   ).first()
 
