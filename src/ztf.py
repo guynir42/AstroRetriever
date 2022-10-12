@@ -12,7 +12,7 @@ from ztfquery import lightcurve
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
-from src.dataset import DatasetMixin, RawData, Lightcurve
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 
 
 class ParsObsZTF(ParsObservatory):
@@ -71,7 +71,7 @@ class VirtualZTF(VirtualObservatory):
 
         Parameters
         ----------
-        datasets: a list of src.dataset.RawData objects
+        datasets: a list of src.dataset.RawPhotometry objects
             The raw data to reduce.
         source: src.source.Source object
             The source to which the dataset belongs.
@@ -112,19 +112,17 @@ class VirtualZTF(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_types = "photometry"
         allowed_dataclasses = pd.DataFrame
 
         for i, d in enumerate(datasets):
             # check the raw input types make sense
-            if d.type is None or d.type not in allowed_types:
+            if not isinstance(d, RawPhotometry):
                 raise ValueError(
-                    f"Expected RawData to contain {str(allowed_types)}, "
-                    f"but dataset {i} was a {d.type} dataset."
+                    f"Expected RawPhotometry object, got {type(d)} instead."
                 )
             if not isinstance(d.data, allowed_dataclasses):
                 raise ValueError(
-                    f"Expected RawData to contain {str(allowed_dataclasses)}, "
+                    f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
                     f"but data in dataset {i} was a {type(d.data)} object."
                 )
 

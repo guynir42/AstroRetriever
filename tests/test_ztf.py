@@ -4,7 +4,7 @@ import numpy as np
 from astropy.time import Time
 
 import src.dataset
-from src.dataset import RawData
+from src.dataset import RawPhotometry
 from src.ztf import VirtualZTF
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -20,7 +20,7 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # load the data into a RawData object
     new_source.project = "test_ZTF"
-    raw_data = RawData()
+    raw_data = RawPhotometry()
     raw_data.filename = "ZTF_lightcurve.csv"
     raw_data.load()
 
@@ -28,7 +28,7 @@ def test_ztf_reduction(ztf_project, new_source):
     new_source.mag = raw_data.data.mag.median()
     new_source.ra = raw_data.data.ra.median()
     new_source.dec = raw_data.data.dec.median()
-    new_source.raw_data.append(raw_data)
+    new_source.raw_photometry.append(raw_data)
 
     new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
     new_lc_epochs = np.sum([lc.number for lc in new_lcs])

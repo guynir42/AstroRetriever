@@ -127,7 +127,7 @@ class DetectionInTime(Base, DetectionMixin):
         "RawPhotometry",
         back_populates="detections",
         cascade="all",
-        foreign_keys=f"DetectionsInTime.raw_data_id",
+        foreign_keys=f"DetectionInTime.raw_data_id",
     )
 
     time_peak = sa.Column(
@@ -170,7 +170,7 @@ Source.detections_in_time = orm.relationship(
 )
 
 
-RawPhotometry.detections_in_time = orm.relationship(
+RawPhotometry.detections = orm.relationship(
     "DetectionInTime",
     back_populates="raw_data",
     cascade="all, delete-orphan",

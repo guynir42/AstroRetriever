@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from src.database import Session
 from src.source import Source
 from src.project import Project
-from src.dataset import RawData, Lightcurve
+from src.dataset import RawPhotometry, Lightcurve
 from src.finder import Finder
 
 
@@ -21,10 +21,10 @@ def new_source():
         dec=np.random.uniform(-90, 90),
     )
     yield source
-    with Session() as session:
-        if source.id:
-            session.execute(sa.delete(RawData).where(RawData.id == source.id))
-        session.commit()
+    # with Session() as session:
+    #     if source.id:
+    #         session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == source.id))
+    #     session.commit()
 
 
 @pytest.fixture
@@ -35,15 +35,15 @@ def new_source2():
         dec=np.random.uniform(-90, 90),
     )
     yield source
-    with Session() as session:
-        if source.id:
-            session.execute(sa.delete(RawData).where(RawData.id == source.id))
-        session.commit()
+    # with Session() as session:
+    #     if source.id:
+    #         session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == source.id))
+    #     session.commit()
 
 
 @pytest.fixture
-def raw_photometry():
-    data = RawData(
+def raw_phot():
+    data = RawPhotometry(
         folder="data_temp",
         altdata=dict(foo="bar"),
         observatory="demo",
@@ -55,13 +55,13 @@ def raw_photometry():
     data.delete_data_from_disk()
     with Session() as session:
         if data.id:
-            session.execute(sa.delete(RawData).where(RawData.id == data.id))
+            session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
         session.commit()
 
 
 @pytest.fixture
-def raw_photometry_no_exptime():
-    data = RawData(
+def raw_phot_no_exptime():
+    data = RawPhotometry(
         folder="data_temp",
         altdata=dict(foo="bar"),
         observatory="demo",
@@ -73,7 +73,7 @@ def raw_photometry_no_exptime():
     data.delete_data_from_disk()
     with Session() as session:
         if data.id:
-            session.execute(sa.delete(RawData).where(RawData.id == data.id))
+            session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
         session.commit()
 
 

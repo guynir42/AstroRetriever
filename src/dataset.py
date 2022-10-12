@@ -65,7 +65,7 @@ def convert_data_type(data_type):
         The canonical name of the data type.
         Will be one of the allowed_data_types.
     """
-    if data_type.lower in [
+    if data_type.lower() in [
         "photometry",
         "phot",
         "lightcurve",
@@ -74,9 +74,9 @@ def convert_data_type(data_type):
         "lcs",
     ]:
         out_type = "photometry"
-    elif data_type.lower in ["spectra", "spec", "spectrum", "spectra", "sed", "seds"]:
+    elif data_type.lower() in ["spectra", "spec", "spectrum", "spectra", "sed", "seds"]:
         out_type = "spectra"
-    elif data_type.lower in ["images", "image", "im", "img", "imgs"]:
+    elif data_type.lower() in ["images", "image", "im", "img", "imgs"]:
         out_type = "images"
     else:
         raise ValueError(
@@ -2023,6 +2023,7 @@ Source.processed_lightcurves = orm.relationship(
     "Lightcurve.was_processed==True, "
     "Lightcurve.is_simulated==False)",
     back_populates="source",
+    overlaps="reduced_lightcurves",
     cascade="save-update, merge, refresh-expire, expunge, delete",
     lazy="selectin",
     single_parent=True,
@@ -2040,13 +2041,13 @@ Lightcurve.source = orm.relationship(
 
 RawPhotometry.lightcurves = orm.relationship(
     "Lightcurve",
-    back_populates="raw_photometry",
+    back_populates="raw_data",
     cascade="all",
     doc="Lightcurves derived from this raw dataset.",
 )
 
 
-Lightcurve.raw_photometry = orm.relationship(
+Lightcurve.raw_data = orm.relationship(
     "RawPhotometry",
     back_populates="lightcurves",
     cascade="all",
@@ -2088,4 +2089,5 @@ if __name__ == "__main__":
     with Session() as session:
 
         sources = session.scalars(sa.select(Source).where(Source.project == "WD")).all()
-        ax = sources[0].plot_photometry(ttype="mjd", ftype="flux")
+        if len(sources):
+            ax = sources[0].plot_photometry(ttype="mjd", ftype="flux")

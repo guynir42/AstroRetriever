@@ -412,7 +412,7 @@ class VirtualObservatory:
             raw_data = []
             for s in sources:
                 this_data = None
-                for d in s.raw_data:
+                for d in s.raw_photometry:
                     if d.observatory == self.name:
                         this_data = d
                 if this_data is not None:
@@ -598,7 +598,7 @@ class VirtualObservatory:
                     **dataset_args,
                 )
 
-            if not any([r.observatory == self.name for r in source.raw_data]):
+            if not any([r.observatory == self.name for r in source.raw_photometry]):
                 source.raw_photometry.append(raw_data)
 
             # if raw_data.sources is None:

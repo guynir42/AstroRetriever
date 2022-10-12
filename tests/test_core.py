@@ -19,7 +19,7 @@ from src.ztf import VirtualZTF
 from src.database import Session
 from src.source import Source, DEFAULT_PROJECT
 import src.dataset
-from src.dataset import RawData, Lightcurve, PHOT_ZP
+from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
 from src.histogram import Histogram
@@ -304,15 +304,14 @@ def test_observatory_filename_conventions(test_project):
     num = np.random.randint(0, 1000)
     col = cat.pars.name_column
     name = cat.name_to_string(cat.data[col][num])
-    name_int = int(name)  # make sure conversion to int works
-    # assert name.startswith("WDJ")
+    _ = int(name)  # make sure conversion to int works
 
     # get some info on the source
     cat_row = cat.get_row(num, "number", "dict")
 
     # test the filename conventions
     source = obs.check_and_fetch_source(cat_row, save=False)
-    data = source.raw_data[0]
+    data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
     assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
@@ -321,11 +320,11 @@ def test_observatory_filename_conventions(test_project):
     num = np.random.randint(100000, 101000)
     col = cat.pars.name_column
     name = cat.name_to_string(cat.data[col][num])
-    name_int = int(name)  # make sure conversion to int works
+    _ = int(name)  # make sure conversion to int works
 
     # test the filename conventions
     source = obs.check_and_fetch_source(cat_row, save=False)
-    data = source.raw_data[0]
+    data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
     assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
@@ -365,11 +364,11 @@ def test_add_source_and_data():
 
             # make sure data cannot be initialized with bad keyword
             with pytest.raises(ValueError) as e:
-                _ = RawData(data=df, foobar="test")
+                _ = RawPhotometry(data=df, foobar="test")
                 assert "Unknown keyword argument" in str(e.value)
 
             # add the data to a database mapped object
-            new_data = RawData(
+            new_data = RawPhotometry(
                 data=df,
                 source_name=source_name,
                 observatory="demo",
@@ -383,7 +382,7 @@ def test_add_source_and_data():
             assert start_time == new_data.time_start
             assert end_time == new_data.time_end
 
-            new_source.raw_data.append(new_data)
+            new_source.raw_photometry.append(new_data)
             session.add(new_source)
 
             # this should not work because
@@ -406,7 +405,7 @@ def test_add_source_and_data():
             session.add(new_source)
 
             # filename should be auto-generated
-            new_data.save()  # must save to allow RawData to be added to DB
+            new_data.save()  # must save to allow RawPhotometry to be added to DB
             session.commit()  # this should now work fine
             assert new_source.id is not None
             assert new_source.id == new_data.sources[0].id
@@ -428,12 +427,12 @@ def test_add_source_and_data():
                 sa.select(Source).where(Source.name == source_name)
             ).first()
             assert sources is not None
-            assert len(sources.raw_data) == 1
-            assert sources.raw_data[0].filename == filename
-            assert sources.raw_data[0].filekey == new_data.filekey
-            assert sources.raw_data[0].sources[0].id == new_source.id
+            assert len(sources.raw_photometry) == 1
+            assert sources.raw_photometry[0].filename == filename
+            assert sources.raw_photometry[0].filekey == new_data.filekey
+            assert sources.raw_photometry[0].sources[0].id == new_source.id
             # this autoloads the data:
-            assert sources.raw_data[0].data.equals(df)
+            assert sources.raw_photometry[0].data.equals(df)
 
     finally:
         if os.path.isfile(fullname):
@@ -444,20 +443,20 @@ def test_add_source_and_data():
 
     # make sure loading this data does not work without file
     with Session() as session:
-        sources = session.scalars(
+        source = session.scalars(
             sa.select(Source).where(Source.name == source_name)
         ).first()
-        assert sources is not None
-        assert len(sources.raw_data) == 1
+        assert source is not None
+        assert len(source.raw_photometry) == 1
         with pytest.raises(FileNotFoundError):
-            sources.raw_data[0].data.equals(df)
+            source.raw_photometry[0].data.equals(df)
 
     # make sure deleting the source also cleans up the data
     with Session() as session:
         session.execute(sa.delete(Source).where(Source.name == source_name))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(RawData.filekey == new_data.filekey)
+            sa.select(RawPhotometry).where(RawPhotometry.filekey == new_data.filekey)
         ).first()
         assert not any([s.name == source_name for s in data.sources])
 
@@ -502,45 +501,45 @@ def test_source_unique_constraint():
         session.commit()
 
 
-def test_raw_data_unique_constraint(raw_photometry, raw_photometry_no_exptime):
+def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
 
     with Session() as session:
         name = str(uuid.uuid4())
-        raw_photometry.source_name = name
-        raw_photometry.filename = "unique_test1.h5"
-        raw_photometry.save()
-        raw_photometry_no_exptime.source_name = name
-        raw_photometry_no_exptime.filename = "unique_test2.h5"
-        raw_photometry_no_exptime.save()
+        raw_phot.source_name = name
+        raw_phot.filename = "unique_test1.h5"
+        raw_phot.save()
+        raw_phot_no_exptime.source_name = name
+        raw_phot_no_exptime.filename = "unique_test2.h5"
+        raw_phot_no_exptime.save()
 
-        session.add(raw_photometry)
-        session.add(raw_photometry_no_exptime)
+        session.add(raw_phot)
+        session.add(raw_phot_no_exptime)
         with pytest.raises(IntegrityError):
             session.commit()
         session.rollback()
 
         # should work once the observatory name is different
-        raw_photometry_no_exptime.observatory = str(uuid.uuid4())
-        session.add(raw_photometry)
-        session.add(raw_photometry_no_exptime)
+        raw_phot_no_exptime.observatory = str(uuid.uuid4())
+        session.add(raw_phot)
+        session.add(raw_phot_no_exptime)
         session.commit()
 
         # let's try to add the data with same obs
         # but different source name
-        session.delete(raw_photometry)
-        raw_photometry.observatory = raw_photometry_no_exptime.observatory
-        raw_photometry.source_name = str(uuid.uuid4())
-        session.add(raw_photometry)
+        session.delete(raw_phot)
+        raw_phot.observatory = raw_phot_no_exptime.observatory
+        raw_phot.source_name = str(uuid.uuid4())
+        session.add(raw_phot)
         session.commit()
 
 
-def test_raw_data_relationships(new_source, new_source2, raw_photometry):
+def test_raw_photometry_relationships(new_source, new_source2, raw_phot):
 
     with Session() as session:
-        new_source.raw_data = [raw_photometry]
-        new_source2.raw_data = [raw_photometry]
-        session.add(raw_photometry)
-        raw_photometry.save()
+        new_source.raw_photometry = [raw_phot]
+        new_source2.raw_photometry = [raw_phot]
+        session.add(raw_phot)
+        raw_phot.save()
         session.commit()
 
         ids = [new_source.id, new_source2.id]
@@ -550,16 +549,16 @@ def test_raw_data_relationships(new_source, new_source2, raw_photometry):
         assert new_source.id is not None
         assert new_source2.id is not None
 
-        # check all sources are linked to raw_photometry
-        assert all([s.id in ids for s in raw_photometry.sources])
-        assert all([s.name in names for s in raw_photometry.sources])
+        # check all sources are linked to raw_phot
+        assert all([s.id in ids for s in raw_phot.sources])
+        assert all([s.name in names for s in raw_phot.sources])
 
-        # make some reduced lightcurves:
+        # TODO: make some reduced lightcurves:
 
-        # test processed lightcurves show up as well
+        # TODO: test processed lightcurves show up as well
 
 
-def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
+def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
     lightcurves = None
 
@@ -568,8 +567,8 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
             # add the data to a database mapped object
             source_id = new_source.id
             new_source.project = test_project.name
-            raw_photometry_no_exptime.save(overwrite=True)
-            new_source.raw_data.append(raw_photometry_no_exptime)
+            raw_phot_no_exptime.save(overwrite=True)
+            new_source.raw_photometry.append(raw_phot_no_exptime)
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
@@ -580,14 +579,12 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
 
             # cannot generate photometric data without an exposure time
             with pytest.raises(ValueError) as exc:
-                obs.reduce(raw_photometry_no_exptime, to="lcs", source=new_source)
+                obs.reduce(raw_phot_no_exptime, to="lcs", source=new_source)
             assert "No exposure time" in str(exc.value)
 
             # add exposure time to the dataframe:
-            new_source.raw_data[0].data["exp_time"] = 30.0
-            lightcurves = obs.reduce(
-                raw_photometry_no_exptime, to="lcs", source=new_source
-            )
+            new_source.raw_photometry[0].data["exp_time"] = 30.0
+            lightcurves = obs.reduce(raw_phot_no_exptime, to="lcs", source=new_source)
             new_source.lightcurves = lightcurves
             session.add(new_source)
 
@@ -603,8 +600,8 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
             # check that the data has been reduced as expected
             for lc in lightcurves:
                 filt = lc.filter
-                dff = raw_photometry_no_exptime.data[
-                    raw_photometry_no_exptime.data["filter"] == filt
+                dff = raw_phot_no_exptime.data[
+                    raw_phot_no_exptime.data["filter"] == filt
                 ]
                 dff = dff.sort_values(by="mjd", inplace=False)
                 dff.reset_index(drop=True, inplace=True)
@@ -642,11 +639,11 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
 
                 # make sure relationships are correct
                 assert lc.source_id == new_source.id
-                assert lc.raw_data_id == raw_photometry_no_exptime.id
+                assert lc.raw_data_id == raw_phot_no_exptime.id
 
         finally:
-            # filename = raw_photometry_no_exptime.filename
-            # raw_photometry_no_exptime.delete_data_from_disk()
+            # filename = raw_phot_no_exptime.filename
+            # raw_phot_no_exptime.delete_data_from_disk()
             # assert not os.path.isfile(filename)
 
             if lightcurves:
@@ -658,8 +655,8 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
         session.execute(sa.delete(Source).where(Source.name == source_id))
         session.commit()
         data = session.scalars(
-            sa.select(RawData).where(
-                RawData.filekey == raw_photometry_no_exptime.filekey
+            sa.select(RawPhotometry).where(
+                RawPhotometry.filekey == raw_phot_no_exptime.filekey
             )
         ).first()
         assert data is None
@@ -669,7 +666,7 @@ def test_data_reduction(test_project, new_source, raw_photometry_no_exptime):
         assert len(data) == 0
 
 
-def test_filter_mapping(raw_photometry):
+def test_filter_mapping(raw_phot):
 
     # make a demo observatory with a string filtmap:
     obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
@@ -677,14 +674,14 @@ def test_filter_mapping(raw_photometry):
     # check parameter is propagated correctly
     assert obs.pars.filtmap is not None
 
-    N1 = len(raw_photometry.data) // 2
-    N2 = len(raw_photometry.data)
+    N1 = len(raw_phot.data) // 2
+    N2 = len(raw_phot.data)
 
-    raw_photometry.data.loc[0:N1, "filter"] = "g"
-    raw_photometry.data.loc[N1:N2, "filter"] = "r"
-    raw_photometry.observatory = obs.name
+    raw_phot.data.loc[0:N1, "filter"] = "g"
+    raw_phot.data.loc[N1:N2, "filter"] = "r"
+    raw_phot.observatory = obs.name
 
-    lcs = obs.reduce(raw_photometry, to="lcs")
+    lcs = obs.reduce(raw_phot, to="lcs")
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
@@ -696,7 +693,7 @@ def test_filter_mapping(raw_photometry):
     # now use a dictionary filtmap
     obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
 
-    lcs = obs.reduce(raw_photometry, to="lcs")
+    lcs = obs.reduce(raw_phot, to="lcs")
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
@@ -706,59 +703,57 @@ def test_filter_mapping(raw_photometry):
     assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
 
 
-def test_data_file_paths(raw_photometry):
+def test_data_file_paths(raw_phot):
     try:  # at end, delete the temp files
-        raw_photometry.save(overwrite=True)
-        assert raw_photometry.filename is not None
-        assert "photometry" in raw_photometry.filename
-        assert raw_photometry.filename.endswith(".h5")
+        raw_phot.save(overwrite=True)
+        assert raw_phot.filename is not None
+        assert "photometry" in raw_phot.filename
+        assert raw_phot.filename.endswith(".h5")
 
     finally:
-        raw_photometry.delete_data_from_disk()
-        assert not os.path.isfile(raw_photometry.get_fullname())
+        raw_phot.delete_data_from_disk()
+        assert not os.path.isfile(raw_phot.get_fullname())
 
     # just a filename does not affect folder
     # default folder is given as 'DATA'
-    raw_photometry.folder = None
-    raw_photometry.filename = "test.h5"
-    assert raw_photometry.folder is None
-    assert raw_photometry.filename == "test.h5"
-    assert raw_photometry.get_fullname() == os.path.join(basepath, "DEMO/test.h5")
+    raw_phot.folder = None
+    raw_phot.filename = "test.h5"
+    assert raw_phot.folder is None
+    assert raw_phot.filename == "test.h5"
+    assert raw_phot.get_fullname() == os.path.join(basepath, "DEMO/test.h5")
 
     # no folder is given, but has observatory name to use as default
-    raw_photometry.observatory = "ztf"
-    assert raw_photometry.get_fullname() == os.path.join(basepath, "ZTF/test.h5")
+    raw_phot.observatory = "ztf"
+    assert raw_phot.get_fullname() == os.path.join(basepath, "ZTF/test.h5")
 
     # give the folder explicitly, will override the default
-    raw_photometry.folder = "test"
-    assert raw_photometry.get_fullname() == os.path.join(basepath, "test/test.h5")
+    raw_phot.folder = "test"
+    assert raw_phot.get_fullname() == os.path.join(basepath, "test/test.h5")
 
     # adding a path to filename puts that path into "folder"
-    raw_photometry.folder = None
-    raw_photometry.filename = "path/to/test/test.h5"
-    assert raw_photometry.folder == "path/to/test"
-    assert raw_photometry.get_fullname() == os.path.join(
-        basepath, "path/to/test/test.h5"
-    )
+    raw_phot.folder = None
+    raw_phot.filename = "path/to/test/test.h5"
+    assert raw_phot.folder == "path/to/test"
+    assert raw_phot.get_fullname() == os.path.join(basepath, "path/to/test/test.h5")
 
     # an absolute path in "folder" will ignore DATA_ROOT
-    raw_photometry.folder = None
-    raw_photometry.filename = "/path/to/test/test.h5"
-    assert raw_photometry.folder == "/path/to/test"
-    assert raw_photometry.get_fullname() == "/path/to/test/test.h5"
+    raw_phot.folder = None
+    raw_phot.filename = "/path/to/test/test.h5"
+    assert raw_phot.folder == "/path/to/test"
+    assert raw_phot.get_fullname() == "/path/to/test/test.h5"
 
 
-def test_reduced_data_file_keys(test_project, new_source, raw_photometry):
+def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
     obs = test_project.observatories["demo"]
-    raw_photometry.altdata["exptime"] = 30.0
-    lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
+    raw_phot.altdata["exptime"] = 30.0
+    lcs = obs.reduce(raw_phot, to="lcs", source=new_source)
 
     try:  # at end, delete the temp file
-        raw_photometry.save(overwrite=True)
-        basename = os.path.splitext(raw_photometry.filename)[0]
+        raw_phot.save(overwrite=True)
+        basename = os.path.splitext(raw_phot.filename)[0]
 
-        lcs = obs.reduce(raw_photometry, to="lcs", source=new_source)
+        lcs = obs.reduce(raw_phot, to="lcs", source=new_source)
 
         for lc in lcs:
             lc.save(overwrite=True)
@@ -774,8 +769,8 @@ def test_reduced_data_file_keys(test_project, new_source, raw_photometry):
                 assert len(store[lc.filekey]) == len(lc.data)
 
     finally:
-        raw_photometry.delete_data_from_disk()
-        assert not os.path.isfile(raw_photometry.get_fullname())
+        raw_phot.delete_data_from_disk()
+        assert not os.path.isfile(raw_phot.get_fullname())
         for lc in lcs:
             lc.delete_data_from_disk()
         assert not os.path.isfile(lcs[0].get_fullname())
@@ -802,7 +797,7 @@ def test_reducer_with_outliers(test_project, new_source):
 
             # add the data to a database mapped object
             new_source.project = test_project.name
-            new_data = RawData(
+            new_data = RawPhotometry(
                 data=df,
                 source_name=new_source.name,
                 observatory="demo",
@@ -810,7 +805,7 @@ def test_reducer_with_outliers(test_project, new_source):
                 altdata=dict(exptime="25.0"),
             )
             new_data.save()
-            new_source.raw_data.append(new_data)
+            new_source.raw_photometry.append(new_data)
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
@@ -845,7 +840,9 @@ def test_reducer_with_outliers(test_project, new_source):
 
             # check the data is persisted
             loaded_raw_data = session.scalars(
-                sa.select(RawData).where(RawData.source_name == new_source.name)
+                sa.select(RawPhotometry).where(
+                    RawPhotometry.source_name == new_source.name
+                )
             ).all()
             assert len(loaded_raw_data) == 1
 
@@ -1092,21 +1089,23 @@ def test_histogram():
 
 
 @pytest.mark.flaky(reruns=5)
-def test_finder(simple_finder, lightcurve_factory):
+def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # this lightcurve has no outliers:
     lc = lightcurve_factory()
-    det = simple_finder.ingest_lightcurves(lc)
+    new_source.reduced_lightcurves.append(lc)
+    det = simple_finder.ingest_lightcurves(new_source)
     assert len(det) == 0
 
     # this lightcurve has outliers:
     lc = lightcurve_factory()
+    new_source.reduced_lightcurves[0] = lc
     n_sigma = 8
     mean_flux = lc.data.flux.mean()
     std_flux = lc.data.flux.std()
     flare_flux = mean_flux + std_flux * n_sigma
     lc.data.loc[4, "flux"] = flare_flux
-    det = simple_finder.ingest_lightcurves(lc)
+    det = simple_finder.ingest_lightcurves(new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
@@ -1117,7 +1116,7 @@ def test_finder(simple_finder, lightcurve_factory):
 
     # check for negative detections:
     lc.data.loc[96, "flux"] = mean_flux - std_flux * n_sigma
-    det = simple_finder.ingest_lightcurves(lc)
+    det = simple_finder.ingest_lightcurves(new_source)
 
     assert len(det) == 2
     assert det[1].source_id == lc.source_id
@@ -1127,7 +1126,7 @@ def test_finder(simple_finder, lightcurve_factory):
     # now do not look for negative detections:
     lc.data["detected"] = False  # clear the previous detections
     simple_finder.pars.abs_snr = False
-    det = simple_finder.ingest_lightcurves(lc)
+    det = simple_finder.ingest_lightcurves(new_source)
 
     assert len(det) == 1
     assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
@@ -1139,7 +1138,8 @@ def test_finder(simple_finder, lightcurve_factory):
     lc.data.loc[np.arange(10, 20, 1), "flag"] = True
     lc.data.loc[50, "flux"] = flare_flux
 
-    det = simple_finder.ingest_lightcurves(lc)
+    new_source.reduced_lightcurves[0] = lc
+    det = simple_finder.ingest_lightcurves(new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
@@ -1149,7 +1149,8 @@ def test_finder(simple_finder, lightcurve_factory):
     # this lightcurve has an outlier with five epochs
     lc = lightcurve_factory()
     lc.data.loc[10:14, "flux"] = flare_flux
-    det = simple_finder.ingest_lightcurves(lc)
+    new_source.reduced_lightcurves[0] = lc
+    det = simple_finder.ingest_lightcurves(new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id

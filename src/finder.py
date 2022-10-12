@@ -3,7 +3,7 @@ import pandas as pd
 
 from src.parameters import Parameters
 from src.source import Source
-from src.dataset import RawData, Lightcurve
+from src.dataset import RawPhotometry, Lightcurve
 from src.detection import DetectionInTime
 
 
@@ -111,7 +111,7 @@ class Finder:
 
         detections = []  # List of detections to return
 
-        for lc in source.lightcurves:
+        for lc in source.reduced_lightcurves:
             # Add some scores to the lightcurve
             lc.data["snr"] = (
                 lc.data["flux"] - lc.flux_mean_robust

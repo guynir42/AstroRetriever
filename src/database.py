@@ -12,6 +12,10 @@
 # create DB using: psql -U postgres -d postgres -c "CREATE DATABASE virtualobserver"
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
 
+# To drop the entire database (in case things get very messed up):
+# Use sudo -u postgres psql -c "DROP DATABASE virtualobserver"
+# This will only work if no connections are active.
+
 import os
 import sqlalchemy as sa
 from sqlalchemy import func
