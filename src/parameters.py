@@ -11,8 +11,11 @@ from src.database import DATA_ROOT
 LOADED_FILES = {}
 
 
-# TODO: use typing module to specify types and Annotatted for descriptions
+# TODO: use typing module to specify types and Annotated for descriptions
 # ref: https://stackoverflow.com/a/8820636/18256949
+
+
+propagated_keys = ["data_types", "project", "cfg_file", "verbose"]
 
 
 class Parameters:
@@ -103,7 +106,7 @@ class Parameters:
             hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
         )
 
-        if new_attrs_check and key not in self.__dict__:
+        if new_attrs_check and key not in self.__dict__ and key not in propagated_keys:
             raise AttributeError(f'Attribute "{key}" does not exist.')
 
         type_checks = (
@@ -473,7 +476,7 @@ class Parameters:
         parameter values that need to be shared by
         sub-objects.
         """
-        keys = ["project", "cfg_file", "verbose"]
+        keys = propagated_keys
         for k in keys:
             if k in self and k not in inputs:
                 inputs[k] = self[k]

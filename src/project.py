@@ -178,6 +178,7 @@ class Project:
         # add some default keys like "project" and "verbose" to kwargs
         self.pars.add_defaults_to_dict(obs_kwargs)
         self.pars.add_defaults_to_dict(catalog_kwargs)
+        self.pars.add_defaults_to_dict(analysis_kwargs)
 
         # filled by setup_output_folder at runtime:
         self.output_folder = None
@@ -201,16 +202,12 @@ class Project:
             self.pars.git_hash = git_hash
 
         # make a catalog object based on the parameters:
-
         self.catalog = Catalog(**catalog_kwargs)
         self.catalog.load()
         self.pars.cat_hash = self.catalog.cat_hash
 
         self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
-            specific_kwargs = getattr(self.pars, obs, {})
-            specific_kwargs.update({"project": self.name})
-
             self.observatories.append(
                 self.make_observatory(
                     name=obs,
@@ -265,12 +262,6 @@ class Project:
 
         if not isinstance(inputs, dict):
             raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
-
-        # specific_kwargs = {}
-        # for k, v in inputs.items():
-        #     if k.lower() == name.lower():
-        #         specific_kwargs = inputs.pop(k)
-        #         break
 
         module = importlib.import_module("." + module_name, package="src")
         obs_class = getattr(module, class_name)

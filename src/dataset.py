@@ -45,6 +45,14 @@ def simplify(key):
     return key.lower().replace(" ", "").replace("_", "").replace("-", "")
 
 
+def add_alias(att):
+    return property(
+        fget=lambda self: getattr(self, att),
+        fset=lambda self, value: setattr(self, att, value),
+        doc=f'Alias for "{att}"',
+    )
+
+
 allowed_data_types = ["photometry", "spectra", "images"]
 
 
@@ -2016,6 +2024,9 @@ Source.reduced_lightcurves = orm.relationship(
     doc="Reduced photometric datasets associated with this source",
 )
 
+Source.reduced_photometry = add_alias("reduced_lightcurves")
+Source.redu_lcs = add_alias("reduced_lightcurves")
+
 
 Source.processed_lightcurves = orm.relationship(
     "Lightcurve",
@@ -2030,6 +2041,9 @@ Source.processed_lightcurves = orm.relationship(
     passive_deletes=True,
     doc="Reduced and simulated photometric datasets associated with this source",
 )
+
+Source.processed_photometry = add_alias("processed_lightcurves")
+Source.proc_lcs = add_alias("processed_lightcurves")
 
 
 Lightcurve.source = orm.relationship(
