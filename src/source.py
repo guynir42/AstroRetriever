@@ -15,6 +15,7 @@ from astropy import units as u
 
 from src.database import Base, Session, engine
 from src.catalog import Catalog
+from src.parameters import convert_data_type, get_class_from_data_type
 
 # matplotlib.use("qt5agg")
 
@@ -219,6 +220,69 @@ class Source(Base, conesearch_alchemy.Point):
             f"datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
         )
         return string
+
+    def get_raw_data(self, obs, data_type, session=None):
+        """
+        Get the raw data object associated with this source,
+        the observatory named by "obs" and the data type
+        requested by "data_type".
+        If given a session object, will also look for the
+        raw data in the database even if it wasn't associated
+        with this source.
+
+        Parameters
+        ----------
+        obs: str
+            Name of the observatory that produced
+            the requested raw data.
+        data_type: str
+            Type of data, could be "photometry", "spectroscopy",
+            "images", etc.
+        session: sqlalchemy session object (optional)
+            If given, will also search the DB for matching
+            raw data objects, if none are found attached
+            to the source.
+
+        Returns
+        -------
+        raw_data: a RawPhotometry or similar object
+            The object containing the data that matches
+            this source and the required observatory
+            and data type.
+            The object does not necessarily have data
+            loaded and does not necessarily have that
+            data saved on disk (these should be tested
+            separately).
+            If no matching data is found, returns None.
+        """
+        data_type = convert_data_type(data_type)
+        data_class = get_class_from_data_type(data_type)
+        # if source existed in DB it should have raw data objects
+        # if it doesn't that means the data needs to be downloaded
+        raw_data = [  # e.g., go over all raw_photometry...
+            data
+            for data in getattr(self, f"raw_{data_type}")
+            if data.observatory == obs
+        ]
+        if len(raw_data) == 0:
+            raw_data = None
+        elif len(raw_data) == 1:
+            raw_data = raw_data[0]
+        else:
+            raise RuntimeError(
+                f"Source {self.name} has more than one "
+                f"{data_class.__name__} object from this observatory."
+            )
+        if raw_data is None:
+            raw_data = session.scalars(
+                sa.select(data_class).where(
+                    data_class.source_name == self.name,
+                    data_class.observatory == obs,
+                    # TODO: add cfg_hash filtering
+                )
+            ).first()
+
+        return raw_data
 
     def plot_photometry(self, ax=None, ftype="mag", ttype="times", **kwargs):
         """

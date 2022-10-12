@@ -55,6 +55,8 @@ def convert_data_type(data_type):
         out_type = "spectra"
     elif data_type.lower() in ["images", "image", "im", "img", "imgs"]:
         out_type = "images"
+    elif data_type.lower() in ["cutout", "cutouts", "thumbnail", "thumbnails"]:
+        out_type = "cutouts"
     else:
         raise ValueError(
             f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"

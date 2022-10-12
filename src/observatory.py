@@ -11,7 +11,12 @@ import concurrent.futures
 
 import sqlalchemy as sa
 from src.database import Session
-from src.parameters import Parameters, normalize_data_types, get_class_from_data_type
+from src.parameters import (
+    Parameters,
+    convert_data_type,
+    normalize_data_types,
+    get_class_from_data_type,
+)
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 from src.detection import DetectionInTime
@@ -541,27 +546,9 @@ class VirtualObservatory:
                 data_class = get_class_from_data_type(dt)
                 # if source existed in DB it should have raw data objects
                 # if it doesn't that means the data needs to be downloaded
-                raw_data = [  # e.g., go over all raw_photometry...
-                    data
-                    for data in getattr(source, f"raw_{dt}")
-                    if data.observatory == self.name
-                ]
-                if len(raw_data) == 0:
-                    raw_data = None
-                elif len(raw_data) == 1:
-                    raw_data = raw_data[0]
-                else:
-                    raise RuntimeError(
-                        f"Source {source.name} has more than one "
-                        f"{data_class} object from this observatory."
-                    )
-                if raw_data is None:
-                    raw_data = session.scalars(
-                        sa.select(data_class).where(
-                            data_class.source_name == source.name,
-                            data_class.observatory == self.name,
-                        )
-                    ).first()
+                raw_data = source.get_raw_data(
+                    obs=self.name, data_type=dt, session=session
+                )
 
                 if raw_data is not None and not raw_data.check_file_exists():
                     # session.delete(raw_data)
@@ -579,7 +566,9 @@ class VirtualObservatory:
                     except KeyError as e:
                         if "No object named" in str(e):
                             # This does not exist in the file
-                            session.delete(raw_data)
+                            session.delete(
+                                raw_data
+                            )  # TODO: is delete the right thing to do?
                             raw_data = None
                         else:
                             raise e
@@ -611,7 +600,6 @@ class VirtualObservatory:
 
             # unless debugging, you'd want to save this data
             if save:
-
                 if source.ra is not None:
                     ra = source.ra
                     ra_deg = np.floor(ra)
@@ -685,6 +673,7 @@ class VirtualObservatory:
             "fetch_data_from_observatory() must be implemented in subclass"
         )
 
+    # TODO: this should be replaced by populate raw data?
     def populate_sources(self, files_glob="*.h5", num_files=None, num_sources=None):
         """
         Read the list of files with data,
@@ -737,8 +726,12 @@ class VirtualObservatory:
                             break
                         data = store[k]
                         cat_id = self.find_dataset_identifier(data, k)
+                        data_type = (
+                            "photometry"  # TODO: what about multiple data types??
+                        )
+                        # TODO: maybe just infer the data type from the filename?
                         self.commit_source(
-                            data, cat_id, source_ids, filename, k, session
+                            data, data_type, cat_id, source_ids, filename, k, session
                         )
 
         if self.pars.verbose:
@@ -792,8 +785,9 @@ class VirtualObservatory:
 
         return value
 
-    # TODO: make this use data types
-    def commit_source(self, data, cat_id, source_ids, filename, key, session):
+    def commit_source(
+        self, data, data_type, cat_id, source_ids, filename, key, session
+    ):
         """
         Save a source to the database,
         using the dataset loaded from file,
@@ -807,6 +801,9 @@ class VirtualObservatory:
         data: dataframe or other data types
             Data loaded from file.
             For HDF5 files this is a dataframe.
+        data_type: str
+            The type of data loaded from file,
+            e.g., 'photometry', 'spectroscopy', etc.
         cat_id: str or int
             The identifier that connects the data
             to the catalog row. Can be a string
@@ -866,19 +863,18 @@ class VirtualObservatory:
         new_source.cat_index = index
         new_source.cat_name = self.catalog.pars.catalog_name
 
-        raw_photometry = RawPhotometry(
+        data_class = get_class_from_data_type(data_type)
+        raw_data = data_class(
             data=data,
             observatory=self.name,
             filename=filename,
             key=key,
         )
 
-        new_source.raw_photometry = [raw_photometry]
-        new_source.lightcurves = self.reduce(
-            raw_photometry, to="lcs", source=new_source
-        )
-        for lc in new_source.lightcurves:
-            lc.save()
+        setattr(new_source, f"raw_{data_type}", [raw_data])
+        setattr(new_source, f"reduced_{data_type}", self.reduce(new_source))
+        for d in getattr(new_source, f"reduced_{data_type}"):
+            d.save()
 
         session.add(new_source)
         session.commit()
@@ -886,10 +882,10 @@ class VirtualObservatory:
 
         # TODO: is here the point where we also do analysis?
 
-    def reduce(self, dataset, to="lcs", source=None, **kwargs):
+    def reduce(self, source, data_type, output_type=None, **kwargs):
         """
         Reduce raw data into more useful,
-        second level data products.
+        second level (reduced) data products.
         Input raw data could be
         raw photometry, images, cutouts, spectra.
         The type of reduction to use is inferred
@@ -899,31 +895,28 @@ class VirtualObservatory:
         the raw data can be lightcurves (i.e.,
         processed photometry ready for analysis)
         or SED (i.e., Spectral Energy Distribution,
-        which is just a reduced spectra ready for
-        analysis) or even just calibrating an image.
-        Possible values for the "to" input are:
-        "lcs", "sed", "img", "thumb".
+        which is just a reduced spectra ready for analysis)
+        or even just calibrating an image.
 
         Parameters
         ----------
-        dataset: a src.dataset.RawPhotometry object (or list of such objects)
-            The raw data to reduce.
-        to: str
+        source: src.source.Source object
+            A source with datasets to be reduced.
+        data_type: str
+            The type of data to reduce.
+            Can be one of 'photometry', 'spectroscopy', 'images', 'cutouts'.
+        output_type: str (optional)
             The type of output to produce.
             Possible values are:
             "lcs", "sed", "img", "thumb".
             If the input type is photometric data,
-            the "to" will be replaced by "lcs".
+            the output_type will be replaced by "lcs".
             If the input type is a spectrum,
-            the "to" will be replaced by "sed".
+            the output_type will be replaced by "sed".
             Imaging data can be reduced into
             "img" (a calibrated image), "thumb" (a thumbnail),
             or "lcs" (a lightcurve of extracted sources).
-        source: src.source.Source object
-            The source to which the dataset belongs.
-            If None, the reduction will not use any
-            data of the source, such as the expected
-            magnitude, the position, etc.
+            By default, this is inferred by the input data type.
         kwargs: dict
             Additional arguments to pass to the reduction function.
 
@@ -933,18 +926,11 @@ class VirtualObservatory:
             The reduced dataset,
             can be, e.g., a Lightcurve object.
         """
-        if isinstance(dataset, list):
-            datasets = dataset
-        else:
-            datasets = [dataset]
 
-        for i, d in enumerate(datasets):
-            if "photometry" in self.pars.data_types and not isinstance(
-                d, RawPhotometry
-            ):
-                raise ValueError(
-                    f"Expected RawPhotometry object, but dataset {i} was a {type(d)}"
-                )
+        # this is called without a session,
+        # so raw data must be attached to source
+        dataset = source.get_raw_data(obs=self.name, data_type=data_type)
+        data_type = convert_data_type(data_type)
 
         # parameters for the reduction
         # are taken from the config first,
@@ -958,66 +944,49 @@ class VirtualObservatory:
         # arguments to be passed into the new dataset constructors
         init_kwargs = {}
         for att in DatasetMixin.default_copy_attributes:
-            values = list({getattr(d, att) for d in datasets if hasattr(d, att)})
-            # only copy values if they're the same
-            # for all source (raw) datasets
-            if len(values) == 1:
-                init_kwargs[att] = values[0]
+            if hasattr(dataset, att):
+                init_kwargs[att] = getattr(dataset, att)
 
         # if all data comes from a single raw dataset
         # we should link back to it from the new datasets
-        raw_data_ids = list({d.id for d in datasets})
-        if len(raw_data_ids) == 1:
-            init_kwargs["raw_data_id"] = raw_data_ids[0]
-            init_kwargs["raw_data"] = datasets[0]
-        raw_data_filenames = list({d.filename for d in datasets})
-        if "raw_data_filename" not in init_kwargs and len(raw_data_filenames) == 1:
-            init_kwargs["raw_data_filename"] = raw_data_filenames[0]
 
-        # all datasets come from the same source?
-        if source is None:
-            source_names = set()
-            for d in datasets:
-                for s in d.sources:
-                    source_names.add(s.name)
-            source_names = list(source_names)
+        init_kwargs["raw_data_id"] = dataset.id
+        init_kwargs["raw_data"] = dataset
 
-            if len(source_names) == 1:
-                source = datasets[0].sources[0]
-        elif source is False:  # explicitly don't use source
-            source = None
+        if "raw_data_filename" not in init_kwargs:
+            init_kwargs["raw_data_filename"] = dataset.filename
 
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}
-            for d in datasets:
-                new_value = getattr(d, att)
-                if isinstance(new_value, dict):
-                    new_dict.update(new_value)
+            new_value = getattr(dataset, att)
+            if isinstance(new_value, dict):
+                new_dict.update(new_value)
             if len(new_dict) > 0:
                 init_kwargs[att] = new_dict
 
         init_kwargs["filtmap"] = self.pars.filtmap
 
-        # TODO: should we just use the pars.data_types instead?
         # choose which kind of reduction to do
-        if to.lower() in ("lc", "lcs", "lightcurves", "photometry"):
+        if output_type is None:
+            output_type = data_type
+        else:
+            output_type = convert_data_type(output_type)
+        if output_type == "photometry":
             new_datasets = self.reduce_to_lightcurves(
-                datasets, source, init_kwargs, **kwargs
+                dataset, source, init_kwargs, **kwargs
             )
-        elif to.lower() in ("sed", "seds", "spectra", "spectrum"):
-            new_datasets = self.reduce_to_sed(datasets, source, init_kwargs, **kwargs)
-        elif to.lower() == "img":
-            new_datasets = self.reduce_to_images(
-                datasets, source, init_kwargs, **kwargs
-            )
-        elif to.lower() == "thumb":
-            new_datasets = self.reduce_to_thumbnail(
-                datasets, source, init_kwargs, **kwargs
+        elif output_type == "spectra":
+            new_datasets = self.reduce_to_sed(dataset, source, init_kwargs, **kwargs)
+        elif output_type == "images":
+            new_datasets = self.reduce_to_images(dataset, source, init_kwargs, **kwargs)
+        elif output_type == "cutouts":
+            new_datasets = self.reduce_to_thumbnails(
+                dataset, source, init_kwargs, **kwargs
             )
         else:
-            raise ValueError(f'Unknown value for "to" input: {to}')
+            raise ValueError(f'Unknown value for "to" input: {output_type}')
 
-        new_datasets = sorted(new_datasets, key=lambda d: d.time_start)
+        new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
 
         # copy some properties of the observatory into the new datasets
         copy_attrs = ["project", "cfg_hash"]
@@ -1036,16 +1005,16 @@ class VirtualObservatory:
 
         return new_datasets
 
-    def reduce_to_lightcurves(self, datasets, source=None, init_kwargs={}, **kwargs):
+    def reduce_to_lightcurves(self, dataset, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Photometric reduction not implemented in this class")
 
-    def reduce_to_sed(self, datasets, source=None, init_kwargs={}, **kwargs):
+    def reduce_to_sed(self, dataset, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("SED reduction not implemented in this class")
 
-    def reduce_to_images(self, datasets, source=None, init_kwargs={}, **kwargs):
+    def reduce_to_images(self, dataset, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Image reduction not implemented in this class")
 
-    def reduce_to_thumbnail(self, datasets, source=None, init_kwargs={}, **kwargs):
+    def reduce_to_thumbnails(self, dataset, source=None, init_kwargs={}, **kwargs):
         raise NotImplementedError("Thumbnail reduction not implemented in this class")
 
 
@@ -1189,7 +1158,7 @@ class VirtualDemoObs(VirtualObservatory):
         return df
 
     def reduce_to_lightcurves(
-        self, datasets, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
+        self, dataset, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
     ):
         """
         Reduce the datasets to lightcurves.
@@ -1229,8 +1198,10 @@ class VirtualDemoObs(VirtualObservatory):
             using the "reducer" parameter (or function inputs).
         """
         allowed_dataclasses = pd.DataFrame
-        if isinstance(datasets, RawPhotometry):
-            datasets = [datasets]
+        if not isinstance(dataset, RawPhotometry):
+            raise TypeError(
+                f"dataset must be a RawPhotometry object, not {type(dataset)}"
+            )
         for i, d in enumerate(datasets):
             if not isinstance(d.data, allowed_dataclasses):
                 raise ValueError(
