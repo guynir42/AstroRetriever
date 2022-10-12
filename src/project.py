@@ -8,10 +8,10 @@ import git
 import sqlalchemy as sa
 
 from src.database import Session, DATA_ROOT
-from src.parameters import Parameters
+from src.parameters import Parameters, normalize_data_types
 from src.catalog import Catalog
 from src.source import Source
-from src.dataset import RawPhotometry, Lightcurve, normalize_data_types
+from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
 from src.properties import Properties
 
@@ -31,10 +31,6 @@ class ParsProject(Parameters):
 
         self.version_control = self.add_par(
             "version_control", False, bool, "Whether to use version control"
-        )
-
-        self.data_types = self.add_par(
-            "data_types", "photometry", (list, str), "Type(s) of data to use"
         )
 
         self.ignore_missing_raw_data = self.add_par(
@@ -129,8 +125,6 @@ class ParsProject(Parameters):
         if key == "obs_names":
             self.verify_observatory_names(value)
             return
-        if key == "data_types":
-            values = normalize_data_types(value)
 
         super().__setattr__(key, value)
 

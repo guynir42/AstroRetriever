@@ -53,64 +53,6 @@ def add_alias(att):
     )
 
 
-allowed_data_types = ["photometry", "spectra", "images"]
-
-
-def convert_data_type(data_type):
-    """
-    Accept a string and return a string that is a valid data type.
-    Convert aliases of data types to the canonical name.
-
-    Parameters
-    ----------
-    data_type: str
-        The data type to convert.
-        Could be, e.g., "lightcurves" instead of "photometry".
-
-    Returns
-    -------
-    data_type: str
-        The canonical name of the data type.
-        Will be one of the allowed_data_types.
-    """
-    if data_type.lower() in [
-        "photometry",
-        "phot",
-        "lightcurve",
-        "lightcurves",
-        "lc",
-        "lcs",
-    ]:
-        out_type = "photometry"
-    elif data_type.lower() in ["spectra", "spec", "spectrum", "spectra", "sed", "seds"]:
-        out_type = "spectra"
-    elif data_type.lower() in ["images", "image", "im", "img", "imgs"]:
-        out_type = "images"
-    else:
-        raise ValueError(
-            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
-        )
-    return out_type
-
-
-def normalize_data_types(data_types):
-    """
-    Go over a single string or list of strings
-    and check that they conform to one of the
-    allowed data types (or their aliases).
-    Raises a ValueError if any of the data
-    types is not allowed.
-
-    Parameters
-    ----------
-    data_types: str or list of str
-        The data types to check.
-    """
-    if isinstance(data_types, str):
-        return convert_data_type(data_types)
-    return [convert_data_type(dt) for dt in data_types]
-
-
 class DatasetMixin:
     """
     A Dataset object maps a location on disk

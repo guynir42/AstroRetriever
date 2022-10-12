@@ -69,6 +69,7 @@ def test_load_save_parameters():
             "username",
             "password",
             "extra_parameter",
+            "data_types",
             "verbose",
             "project",
             "cfg_file",

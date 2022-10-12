@@ -11,9 +11,9 @@ import concurrent.futures
 
 import sqlalchemy as sa
 from src.database import Session
-from src.parameters import Parameters
+from src.parameters import Parameters, normalize_data_types, get_class_from_data_type
 from src.source import Source, get_source_identifiers
-from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, normalize_data_types
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 from src.detection import DetectionInTime
 
 from src.catalog import Catalog
@@ -52,13 +52,6 @@ class ParsObservatory(Parameters):
 
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
-
-        self.data_types = self.add_par(
-            "data_types",
-            "photometry",
-            (list, str),
-            "Type(s) of data to use (photometry, spectra, images, etc).",
-        )
 
         self.reducer = self.add_par(
             "reducer", {}, dict, "Argumnets to pass to reduction method"
@@ -411,16 +404,18 @@ class VirtualObservatory:
 
             raw_data = []
             for s in sources:
-                this_data = None
-                for d in s.raw_photometry:
-                    if d.observatory == self.name:
-                        this_data = d
-                if this_data is not None:
-                    raw_data.append(this_data)
-                else:
-                    raise RuntimeError(
-                        f"Cannot find data from this observatory on source {s.name}"
-                    )
+                for dt in self.pars.data_types:
+                    obs_data = None
+                    for data in getattr(s, f"raw_{dt}"):
+                        if data.observatory == self.name:
+                            obs_data = data
+                    if obs_data is not None:
+                        raw_data.append(obs_data)
+                    else:
+                        raise RuntimeError(
+                            "Cannot find data from observatory "
+                            f"{self.name} on source {s.name}"
+                        )
 
             # keep a subset of sources/datasets in memory
             self.sources += sources
@@ -500,7 +495,6 @@ class VirtualObservatory:
 
         return sources
 
-    # TODO: make this function generic by accepting a class like RawPhotometry
     def check_and_fetch_source(
         self, cat_row, save=True, fetch_args={}, dataset_args={}
     ):
@@ -529,8 +523,8 @@ class VirtualObservatory:
         source: Source
             A Source object. It should have at least
             one raw data object attached, from this
-            observatory (it may have more data from
-            other observatories).
+            observatory for each data type required by pars.
+            (it may have more data from other observatories).
 
         """
         with Session() as session:
@@ -542,67 +536,78 @@ class VirtualObservatory:
             if source is None:
                 source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
 
-            # if source existed in DB it should have raw data objects
-            # if it doesn't that means the data needs to be downloaded
-            raw_data = [
-                data for data in source.raw_photometry if data.observatory == self.name
-            ]
-            if len(raw_data) == 0:
-                raw_data = None
-            elif len(raw_data) == 1:
-                raw_data = raw_data[0]
-            else:
-                raise RuntimeError(
-                    f"Source {source.name} has more than one RawPhotometry object from this observatory."
-                )
-            if raw_data is None:
-                raw_data = session.scalars(
-                    sa.select(RawPhotometry).where(
-                        RawPhotometry.source_name == source.name,
-                        RawPhotometry.observatory == self.name,
+            new_data = []
+            for dt in self.pars.data_types:
+                data_class = get_class_from_data_type(dt)
+                # if source existed in DB it should have raw data objects
+                # if it doesn't that means the data needs to be downloaded
+                raw_data = [  # e.g., go over all raw_photometry...
+                    data
+                    for data in getattr(source, f"raw_{dt}")
+                    if data.observatory == self.name
+                ]
+                if len(raw_data) == 0:
+                    raw_data = None
+                elif len(raw_data) == 1:
+                    raw_data = raw_data[0]
+                else:
+                    raise RuntimeError(
+                        f"Source {source.name} has more than one "
+                        f"{data_class} object from this observatory."
                     )
-                ).first()
+                if raw_data is None:
+                    raw_data = session.scalars(
+                        sa.select(data_class).where(
+                            data_class.source_name == source.name,
+                            data_class.observatory == self.name,
+                        )
+                    ).first()
 
-            if raw_data is not None and not raw_data.check_file_exists():
-                # session.delete(raw_data)
-                # raw_data = None
-                raise RuntimeError(
-                    f"RawPhotometry object for source {source.name} "
-                    "exists in DB but file does not exist."
-                )
+                if raw_data is not None and not raw_data.check_file_exists():
+                    # session.delete(raw_data)
+                    # raw_data = None
+                    raise RuntimeError(
+                        f"{data_class} object for source {source.name} "
+                        "exists in DB but file does not exist."
+                    )
 
-            # file exists, try to load it:
-            if raw_data is not None:
-                lock.acquire()
-                try:
-                    raw_data.load()
-                except KeyError as e:
-                    if "No object named" in str(e):
-                        # This does not exist in the file
-                        session.delete(raw_data)
-                        raw_data = None
-                    else:
-                        raise e
-                finally:
-                    lock.release()
+                # file exists, try to load it:
+                if raw_data is not None:
+                    lock.acquire()
+                    try:
+                        raw_data.load()
+                    except KeyError as e:
+                        if "No object named" in str(e):
+                            # This does not exist in the file
+                            session.delete(raw_data)
+                            raw_data = None
+                        else:
+                            raise e
+                    finally:
+                        lock.release()
 
-            # no data on DB/file, must re-fetch from observatory website:
-            if raw_data is None:
-                # <-- magic happens here! -- >
-                data, altdata = self.fetch_data_from_observatory(cat_row, **fetch_args)
-                raw_data = RawPhotometry(
-                    data=data,
-                    altdata=altdata,
-                    observatory=self.name,
-                    source_name=cat_row["name"],
-                    **dataset_args,
-                )
+                # no data on DB/file, must re-fetch from observatory website:
+                if raw_data is None:
+                    # <-- magic happens here! -- >
+                    data, altdata = self.fetch_data_from_observatory(
+                        cat_row, **fetch_args
+                    )
+                    raw_data = data_class(
+                        data=data,
+                        altdata=altdata,
+                        observatory=self.name,
+                        source_name=cat_row["name"],
+                        **dataset_args,
+                    )
+                    # keep track of new dataset that need
+                    # to be saved to disk and DB
+                    new_data.append(raw_data)
 
-            if not any([r.observatory == self.name for r in source.raw_photometry]):
-                source.raw_photometry.append(raw_data)
-
-            # if raw_data.sources is None:
-            #     raw_data.sources.append(source)
+                # this dataset is not appended to source yet:
+                if not any(
+                    [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
+                ):
+                    getattr(source, f"raw_{dt}").append(raw_data)
 
             # unless debugging, you'd want to save this data
             if save:
@@ -628,38 +633,27 @@ class VirtualObservatory:
                     # try to save the data to disk
                     lock.acquire()  # thread blocks at this line until it can obtain lock
                     try:
-                        raw_data.save(
-                            overwrite=self.pars.overwrite_files,
-                            source_name=source.name,
-                            ra_deg=ra_deg,
-                            ra_minute=ra_minute,
-                            ra_second=ra_second,
-                            key_prefix=self.pars.filekey_prefix,
-                            key_suffix=self.pars.filekey_suffix,
-                        )
+                        for data in new_data:
+                            data.save(
+                                overwrite=self.pars.overwrite_files,
+                                source_name=source.name,
+                                ra_deg=ra_deg,
+                                ra_minute=ra_minute,
+                                ra_second=ra_second,
+                                key_prefix=self.pars.filekey_prefix,
+                                key_suffix=self.pars.filekey_suffix,
+                            )
                     finally:
                         lock.release()
 
                     # try to save the source+data to the database
                     session.commit()
-                except:
+                except Exception:
+                    session.rollback()
                     # if saving to disk or database fails,
                     # make sure we do not leave orphans
-                    session.rollback()
-
-                    # did this RawPhotometry object already exist?
-                    # if so, do not remove the file that goes with it...
-                    raw_data_check = session.scalars(
-                        sa.select(RawPhotometry).filter(
-                            RawPhotometry.source_name == source.name,
-                            RawPhotometry.observatory == self.name,
-                        )
-                    ).first()
-                    if raw_data_check is None:
-                        # the raw data is not in the database,
-                        # so delete from disk the data matching this
-                        # new RawPhotometry object
-                        raw_data.delete_data_from_disk()
+                    for data in new_data:
+                        data.delete_data_from_disk()
                     raise
 
         return source
@@ -798,15 +792,15 @@ class VirtualObservatory:
 
         return value
 
+    # TODO: make this use data types
     def commit_source(self, data, cat_id, source_ids, filename, key, session):
         """
         Save a source to the database,
         using the dataset loaded from file,
         and matching it to the catalog.
-        If the source already exists in the database,
-        nothing happens.
+        If the source already exists in the database, nothing happens.
         If the source does not exist in the database,
-        it is created and it's id is added to the source_ids.
+        it is created, and its id is added to the source_ids.
 
         Parameters
         ----------
@@ -895,7 +889,7 @@ class VirtualObservatory:
     def reduce(self, dataset, to="lcs", source=None, **kwargs):
         """
         Reduce raw data into more useful,
-        second level data product.
+        second level data products.
         Input raw data could be
         raw photometry, images, cutouts, spectra.
         The type of reduction to use is inferred

@@ -15,7 +15,83 @@ LOADED_FILES = {}
 # ref: https://stackoverflow.com/a/8820636/18256949
 
 
+# parameters that are propagated from one Parameters object
+# to the next when creating subclasses.
+# If the child Parameters doesn't have any one of these
+# then that key is just skipped
 propagated_keys = ["data_types", "project", "cfg_file", "verbose"]
+
+# possible values for the data_types parameter
+allowed_data_types = ["photometry", "spectra", "images"]
+
+
+def convert_data_type(data_type):
+    """
+    Accept a string and return a string that is a valid data type.
+    Convert aliases of data types to the canonical name.
+
+    Parameters
+    ----------
+    data_type: str
+        The data type to convert.
+        Could be, e.g., "lightcurves" instead of "photometry".
+
+    Returns
+    -------
+    data_type: str
+        The canonical name of the data type.
+        Will be one of the allowed_data_types.
+    """
+    if data_type.lower() in [
+        "photometry",
+        "phot",
+        "lightcurve",
+        "lightcurves",
+        "lc",
+        "lcs",
+    ]:
+        out_type = "photometry"
+    elif data_type.lower() in ["spectra", "spec", "spectrum", "spectra", "sed", "seds"]:
+        out_type = "spectra"
+    elif data_type.lower() in ["images", "image", "im", "img", "imgs"]:
+        out_type = "images"
+    else:
+        raise ValueError(
+            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
+        )
+    return out_type
+
+
+def normalize_data_types(data_types):
+    """
+    Go over a single string or list of strings
+    and check that they conform to one of the
+    allowed data types (or their aliases).
+    Raises a ValueError if any of the data
+    types is not allowed.
+
+    Parameters
+    ----------
+    data_types: str or list of str
+        The data types to check.
+    """
+    if isinstance(data_types, str):
+        return [convert_data_type(data_types)]
+    return [convert_data_type(dt) for dt in data_types]
+
+
+def get_class_from_data_type(data_type):
+    from src.dataset import RawPhotometry
+
+    if data_type == "photometry":
+        return RawPhotometry
+    # elif data_type == "spectra":
+    #     return RawSpectra
+    # add more data types here
+    else:
+        raise ValueError(
+            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
+        )
 
 
 class Parameters:
@@ -63,6 +139,13 @@ class Parameters:
             "If None, the default file named as the project will be used. "
             "If False, no file will be loaded.",
         )
+        self.data_types = self.add_par(
+            "data_types",
+            "photometry",
+            list,
+            "Types of data to use (e.g., photometry, spectroscopy)",
+        )
+
         self.verbose = self.add_par("verbose", 0, int, "Level of verbosity (0=quiet).")
 
         self._enforce_type_checks = self.add_par(
@@ -108,6 +191,9 @@ class Parameters:
 
         if new_attrs_check and key not in self.__dict__ and key not in propagated_keys:
             raise AttributeError(f'Attribute "{key}" does not exist.')
+
+        if key == "data_types":
+            value = normalize_data_types(value)
 
         type_checks = (
             hasattr(self, "_enforce_type_checks") and self._enforce_type_checks
