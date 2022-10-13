@@ -15,7 +15,11 @@ from astropy import units as u
 
 from src.database import Base, Session, engine
 from src.catalog import Catalog
-from src.parameters import convert_data_type, get_class_from_data_type
+from src.parameters import (
+    allowed_data_types,
+    convert_data_type,
+    get_class_from_data_type,
+)
 
 # matplotlib.use("qt5agg")
 
@@ -212,16 +216,17 @@ class Source(Base, conesearch_alchemy.Point):
 
     def __repr__(self):
         mag = f"{self.mag:.2f}" if self.mag is not None else "None"
-        string = (
-            f'Source(name="{self.name}", '
-            f"ra={Catalog.ra2sex(self.ra)}, "
-            f"dec={Catalog.dec2sex(self.dec)}, "
-            f'mag= {mag}, project="{self.project}", '
-            f"datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
-        )
+        string = f'Source(name="{self.name}"'
+        if self.ra is not None:
+            string += f", ra={Catalog.ra2sex(self.ra)}"
+        if self.dec is not None:
+            string += f", dec={Catalog.dec2sex(self.dec)}"
+        string += f', mag= {mag}, project="{self.project}"'
+        string += f"datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
+
         return string
 
-    def get_raw_data(self, obs, data_type, session=None):
+    def get_raw_data(self, obs, data_type=None, session=None):
         """
         Get the raw data object associated with this source,
         the observatory named by "obs" and the data type
@@ -235,9 +240,14 @@ class Source(Base, conesearch_alchemy.Point):
         obs: str
             Name of the observatory that produced
             the requested raw data.
-        data_type: str
+        data_type: str (optional)
             Type of data, could be "photometry", "spectroscopy",
             "images", etc.
+            If not given, will try to infer the data type
+            by looking at the different types of data
+            associated with this source.
+            If there is more than one type of data,
+            will raise an error.
         session: sqlalchemy session object (optional)
             If given, will also search the DB for matching
             raw data objects, if none are found attached
@@ -255,7 +265,19 @@ class Source(Base, conesearch_alchemy.Point):
             separately).
             If no matching data is found, returns None.
         """
-        data_type = convert_data_type(data_type)
+        if data_type is not None:  # data type is given explicitly
+            data_type = convert_data_type(data_type)
+        else:
+            # for each data type, check if there is that sort of data
+            # on this source, if it is not an empty list, add it
+            types = {t for t in allowed_data_types if getattr(self, f"raw_t", [])}
+            if len(types) == 0:
+                raise ValueError("No data types found for this source.")
+            elif len(types) > 1:
+                raise ValueError("More than one data type found for this source.")
+            else:
+                data_type = list(types)[0]
+
         data_class = get_class_from_data_type(data_type)
         # if source existed in DB it should have raw data objects
         # if it doesn't that means the data needs to be downloaded

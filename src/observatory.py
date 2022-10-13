@@ -882,7 +882,7 @@ class VirtualObservatory:
 
         # TODO: is here the point where we also do analysis?
 
-    def reduce(self, source, data_type, output_type=None, **kwargs):
+    def reduce(self, source, data_type=None, output_type=None, **kwargs):
         """
         Reduce raw data into more useful,
         second level (reduced) data products.
@@ -902,9 +902,10 @@ class VirtualObservatory:
         ----------
         source: src.source.Source object
             A source with datasets to be reduced.
-        data_type: str
+        data_type: str (optional)
             The type of data to reduce.
             Can be one of 'photometry', 'spectroscopy', 'images', 'cutouts'.
+            If None, will try to infer the type from the data.
         output_type: str (optional)
             The type of output to produce.
             Possible values are:
@@ -929,8 +930,15 @@ class VirtualObservatory:
 
         # this is called without a session,
         # so raw data must be attached to source
-        dataset = source.get_raw_data(obs=self.name, data_type=data_type)
-        data_type = convert_data_type(data_type)
+        if isinstance(source, Source):
+            dataset = source.get_raw_data(obs=self.name, data_type=data_type)
+            data_type = convert_data_type(data_type)
+        elif isinstance(source, DatasetMixin):
+            dataset = source
+            data_type = dataset.type
+            source = None
+        else:
+            raise TypeError("source must be a Source or a dataset object")
 
         # parameters for the reduction
         # are taken from the config first,
@@ -942,49 +950,32 @@ class VirtualObservatory:
             kwargs = parameters
 
         # arguments to be passed into the new dataset constructors
-        init_kwargs = {}
-        for att in DatasetMixin.default_copy_attributes:
-            if hasattr(dataset, att):
-                init_kwargs[att] = getattr(dataset, att)
-
-        # if all data comes from a single raw dataset
-        # we should link back to it from the new datasets
-
-        init_kwargs["raw_data_id"] = dataset.id
-        init_kwargs["raw_data"] = dataset
-
-        if "raw_data_filename" not in init_kwargs:
-            init_kwargs["raw_data_filename"] = dataset.filename
-
-        for att in DatasetMixin.default_update_attributes:
-            new_dict = {}
-            new_value = getattr(dataset, att)
-            if isinstance(new_value, dict):
-                new_dict.update(new_value)
-            if len(new_dict) > 0:
-                init_kwargs[att] = new_dict
-
-        init_kwargs["filtmap"] = self.pars.filtmap
+        init_kwargs = self.make_init_kwargs(dataset)
 
         # choose which kind of reduction to do
         if output_type is None:
             output_type = data_type
         else:
             output_type = convert_data_type(output_type)
-        if output_type == "photometry":
-            new_datasets = self.reduce_to_lightcurves(
-                dataset, source, init_kwargs, **kwargs
-            )
-        elif output_type == "spectra":
-            new_datasets = self.reduce_to_sed(dataset, source, init_kwargs, **kwargs)
-        elif output_type == "images":
-            new_datasets = self.reduce_to_images(dataset, source, init_kwargs, **kwargs)
-        elif output_type == "cutouts":
-            new_datasets = self.reduce_to_thumbnails(
-                dataset, source, init_kwargs, **kwargs
-            )
+
+        # get the name of the reducer function
+        if data_type == output_type:  # same type reductions
+            reducer_name = f"reduce_{data_type}"
+        else:  # cross reductions like image->lightcurve
+            reducer_name = f"reduce_{data_type}_to_{output_type}"
+
+        # get the reducer function
+        if hasattr(self, reducer_name):
+            reducer = getattr(self, reducer_name)
         else:
-            raise ValueError(f'Unknown value for "to" input: {output_type}')
+            reducer = None
+
+        # check the reducer function is legit
+        if reducer is None or not callable(reducer):
+            raise NotImplementedError(f'No reduction method "{reducer_name}" found.')
+
+        # TODO: should we allow using source=None?
+        new_datasets = reducer(dataset, source, init_kwargs, **kwargs)
 
         new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
 
@@ -1005,17 +996,48 @@ class VirtualObservatory:
 
         return new_datasets
 
-    def reduce_to_lightcurves(self, dataset, source=None, init_kwargs={}, **kwargs):
-        raise NotImplementedError("Photometric reduction not implemented in this class")
+    def make_init_kwargs(self, dataset):
+        """
+        Make a dictionary of arguments to pass to the
+        constructor of a new (reduced) dataset.
 
-    def reduce_to_sed(self, dataset, source=None, init_kwargs={}, **kwargs):
-        raise NotImplementedError("SED reduction not implemented in this class")
+        Parameters
+        ----------
+        dataset: a raw data object like src.dataset.RawPhotometry
+            The raw data to be reduced. Some info from this
+            data will be copied into the new dataset.
 
-    def reduce_to_images(self, dataset, source=None, init_kwargs={}, **kwargs):
-        raise NotImplementedError("Image reduction not implemented in this class")
+        Returns
+        -------
+        dict:
+            A dictionary of arguments to pass to the constructor
+            of a new dataset.
+        """
+        # arguments to be passed into the new dataset constructors
+        init_kwargs = {}
+        for att in DatasetMixin.default_copy_attributes:
+            if hasattr(dataset, att):
+                init_kwargs[att] = getattr(dataset, att)
 
-    def reduce_to_thumbnails(self, dataset, source=None, init_kwargs={}, **kwargs):
-        raise NotImplementedError("Thumbnail reduction not implemented in this class")
+        # TODO: What if dataset has not been committed yet and has no id?
+        init_kwargs["raw_data_id"] = dataset.id
+        init_kwargs["raw_data"] = dataset
+
+        # TODO: what if dataset has not been saved yet and has no filename?
+        if "raw_data_filename" not in init_kwargs:
+            init_kwargs["raw_data_filename"] = dataset.filename
+
+        for att in DatasetMixin.default_update_attributes:
+            new_dict = {}
+            new_value = getattr(dataset, att)
+            if isinstance(new_value, dict):
+                new_dict.update(new_value)
+            if len(new_dict) > 0:
+                init_kwargs[att] = new_dict
+
+        init_kwargs["filtmap"] = self.pars.filtmap
+
+        return init_kwargs
 
 
 class ParsDemoObs(ParsObservatory):
@@ -1157,16 +1179,16 @@ class VirtualDemoObs(VirtualObservatory):
 
         return df
 
-    def reduce_to_lightcurves(
+    def reduce_photometry(
         self, dataset, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
     ):
         """
-        Reduce the datasets to lightcurves.
+        Reduce the dataset.
 
         Parameters
         ----------
-        datasets: a list of src.dataset.RawPhotometry objects
-            The raw data to reduce.
+        dataset: a src.dataset.RawPhotometry object or other data types
+            The raw data to reduce. Can be photometry, images, etc.
         source: src.source.Source object
             The source to which the dataset belongs.
             If None, the reduction will not use any
@@ -1202,48 +1224,34 @@ class VirtualDemoObs(VirtualObservatory):
             raise TypeError(
                 f"dataset must be a RawPhotometry object, not {type(dataset)}"
             )
-        for i, d in enumerate(datasets):
-            if not isinstance(d.data, allowed_dataclasses):
-                raise ValueError(
-                    f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                    f"but data in dataset {i} was a {type(d.data)} object."
-                )
+        if not isinstance(dataset, allowed_dataclasses):
+            raise ValueError(
+                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
+                f"but data was given as a {type(dataset.data)} object."
+            )
 
         # check the source magnitude is within the range
         if source and source.mag is not None and mag_range:
-            # need to make a copy of the list so we don't
-            # delete what we are iterating over!
-            for d in list(datasets):
-                mag = d.data[d.mag_col]
+            mag = dataset.data[dataset.mag_col]
 
-                if not (
-                    source.mag - mag_range < np.nanmedian(mag) < source.mag + mag_range
-                ):
-                    datasets.remove(d)
+            if not (
+                source.mag - mag_range < np.nanmedian(mag) < source.mag + mag_range
+            ):
+                return []  # this dataset is not within the range
 
         # split the data by filters
-        # (assume all datasets have the same data class
-        # and that the internal column structure is the same
-        # which is a reasonable assumption as they all come
-        # from the same observatory)
-        if isinstance(datasets[0].data, pd.DataFrame):
+        if isinstance(dataset.data, pd.DataFrame):
             # make sure there is some photometric data available
-
-            frames = [d.data for d in datasets]
-            all_dfs = pd.concat(frames)
-
-            filt_col = datasets[0].colmap["filter"]
-            flag_col = (
-                datasets[0].colmap["flag"] if "flag" in datasets[0].colmap else None
-            )
-            filters = all_dfs[filt_col].unique()
+            filt_col = dataset.colmap["filter"]
+            flag_col = dataset.colmap["flag"] if "flag" in dataset.colmap else None
+            filters = dataset.data[filt_col].unique()
             dfs = []
             for f in filters:
-                # new dataframe for each filter
-                # each one with a new index
-                df_new = all_dfs[all_dfs[filt_col] == f].reset_index(drop=True)
-                # df_new = df_new.sort([datasets[0].time_col], inplace=False)
-                # df_new.reset_index(drop=True, inplace=True)
+                # new dataframe for each filter, each one with a new index
+                df_new = dataset.data[dataset.data[filt_col] == f].reset_index(
+                    drop=True
+                )
+
                 if drop_bad and flag_col is not None:
                     df_new = df_new[df_new[flag_col] == 0]
 
