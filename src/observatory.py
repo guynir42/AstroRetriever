@@ -1233,10 +1233,9 @@ class VirtualDemoObs(VirtualObservatory):
         # check the source magnitude is within the range
         if source and source.mag is not None and mag_range:
             mag = dataset.data[dataset.mag_col]
-
-            if not (
-                source.mag - mag_range < np.nanmedian(mag) < source.mag + mag_range
-            ):
+            mag_mx = source.mag + mag_range
+            mag_mn = source.mag - mag_range
+            if not mag_mn < np.nanmedian(mag) < mag_mx:
                 return []  # this dataset is not within the range
 
         # split the data by filters
@@ -1248,9 +1247,8 @@ class VirtualDemoObs(VirtualObservatory):
             dfs = []
             for f in filters:
                 # new dataframe for each filter, each one with a new index
-                df_new = dataset.data[dataset.data[filt_col] == f].reset_index(
-                    drop=True
-                )
+                df_new = dataset.data[dataset.data[filt_col] == f]
+                df_new.reset_index(drop=True)
 
                 if drop_bad and flag_col is not None:
                     df_new = df_new[df_new[flag_col] == 0]

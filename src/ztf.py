@@ -38,7 +38,7 @@ class VirtualZTF(VirtualObservatory):
         """
         Generate an instance of a VirtualZTF object.
         This can be used to download ZTF data
-        and run analysis on it.
+        and reduce the raw data.
 
         Parameters
         ----------
@@ -50,9 +50,11 @@ class VirtualZTF(VirtualObservatory):
         self.pars = ParsObsZTF(**kwargs)
         super().__init__(name="ztf")
 
-    def reduce_to_lightcurves(
+    # TODO: these specific parameters should live in the Parameters object
+    #  we should do that when splitting it into a separate Reducer class
+    def reduce_photometry(
         self,
-        datasets,
+        dataset,
         source=None,
         init_kwargs={},
         mag_range=0.75,
@@ -62,7 +64,7 @@ class VirtualZTF(VirtualObservatory):
         **_,
     ):
         """
-        Reduce the datasets to lightcurves.
+        Reduce the raw dataset to lightcurves.
         Splits up the raw data that corresponds
         to several object IDs (oid) into separate
         lightcurves. Will also split observing seasons
@@ -71,7 +73,7 @@ class VirtualZTF(VirtualObservatory):
 
         Parameters
         ----------
-        datasets: a list of src.dataset.RawPhotometry objects
+        dataset: a src.dataset.RawPhotometry object
             The raw data to reduce.
         source: src.source.Source object
             The source to which the dataset belongs.
@@ -83,11 +85,11 @@ class VirtualZTF(VirtualObservatory):
             passed to the constructor of the new dataset.
         mag_range: float or None
             If not None, and if the source is also given,
-            this value will be used to remove datasets
-            where the median magnitude is outside of this range,
+            this value will be used to remove oid's
+            where the median magnitude is outside this range,
             relative to the source's magnitude.
         radius: float
-            The maximum distance (in arcesconds) from the source
+            The maximum distance (in arc-seconds) from the source
             for each oid lightcurve to be considered a match.
             If outside the radius, the oid lightcurve will be
             dropped. Only works if given the source.
@@ -114,29 +116,25 @@ class VirtualZTF(VirtualObservatory):
         """
         allowed_dataclasses = pd.DataFrame
 
-        for i, d in enumerate(datasets):
-            # check the raw input types make sense
-            if not isinstance(d, RawPhotometry):
-                raise ValueError(
-                    f"Expected RawPhotometry object, got {type(d)} instead."
-                )
-            if not isinstance(d.data, allowed_dataclasses):
-                raise ValueError(
-                    f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                    f"but data in dataset {i} was a {type(d.data)} object."
-                )
+        if not isinstance(dataset, RawPhotometry):
+            raise ValueError(f"Expected RawPhotometry object, got {type(d)} instead.")
+        if not isinstance(dataset.data, allowed_dataclasses):
+            raise ValueError(
+                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
+                f"but data was given as a {type(dataset.data)} object."
+            )
 
-        data = pd.concat([d.data for d in datasets])
+        data = dataset.data
 
-        time_col = datasets[0].colmap["time"]
-        mjd_conversion = datasets[0].time_info["to mjd"]
-        exp_col = datasets[0].colmap["exptime"]
-        filt_col = datasets[0].colmap["filter"]
-        flag_col = datasets[0].colmap["flag"] if "flag" in datasets[0].colmap else None
-        mag_col = datasets[0].colmap["mag"]
-        magerr_col = datasets[0].colmap["magerr"]
-        ra_col = datasets[0].colmap["ra"]
-        dec_col = datasets[0].colmap["dec"]
+        time_col = dataset.colmap["time"]
+        mjd_conversion = dataset.time_info["to mjd"]
+        exp_col = dataset.colmap["exptime"]
+        filt_col = dataset.colmap["filter"]
+        flag_col = dataset.colmap["flag"] if "flag" in dataset.colmap else None
+        mag_col = dataset.colmap["mag"]
+        magerr_col = dataset.colmap["magerr"]
+        ra_col = dataset.colmap["ra"]
+        dec_col = dataset.colmap["dec"]
 
         # all filters in this dataset
         filters = list(set(data[filt_col]))
