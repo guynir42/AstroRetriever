@@ -1224,7 +1224,7 @@ class VirtualDemoObs(VirtualObservatory):
             raise TypeError(
                 f"dataset must be a RawPhotometry object, not {type(dataset)}"
             )
-        if not isinstance(dataset, allowed_dataclasses):
+        if not isinstance(dataset.data, allowed_dataclasses):
             raise ValueError(
                 f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
                 f"but data was given as a {type(dataset.data)} object."

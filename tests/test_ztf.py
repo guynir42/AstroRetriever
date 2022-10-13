@@ -20,8 +20,9 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # load the data into a RawData object
     new_source.project = "test_ZTF"
-    raw_data = RawPhotometry()
+    raw_data = RawPhotometry(observatory="ztf")
     raw_data.filename = "ZTF_lightcurve.csv"
+    raw_data.folder = "DATA"
     raw_data.load()
 
     # set the source mag to fit the data:
@@ -29,8 +30,7 @@ def test_ztf_reduction(ztf_project, new_source):
     new_source.ra = raw_data.data.ra.median()
     new_source.dec = raw_data.data.dec.median()
     new_source.raw_photometry.append(raw_data)
-
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
+    new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=40)
     new_lc_epochs = np.sum([lc.number for lc in new_lcs])
 
     assert raw_data.number == new_lc_epochs
@@ -56,7 +56,7 @@ def test_ztf_reduction(ztf_project, new_source):
     # check the number of lightcurves is reduced when gap is increased
     filters = np.unique(raw_data.data.filtercode)
 
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=300)
+    new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=300)
     new_lc_epochs2 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs == new_lc_epochs2
@@ -64,7 +64,9 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # check that flagged points are removed
     flags = (raw_data.data["catflags"] > 0) | np.isnan(raw_data.data.mag)
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40, drop_bad=True)
+    new_lcs = ztf.reduce(
+        source=new_source, data_type="photometry", gap=40, drop_bad=True
+    )
     new_lc_epochs3 = np.sum([lc.number for lc in new_lcs])
 
     num_bad = np.sum(flags)
@@ -75,7 +77,7 @@ def test_ztf_reduction(ztf_project, new_source):
     raw_data.data.loc[raw_data.data.oid == oid, "mag"] = 12.0
     num_bad = np.sum(raw_data.data.oid == oid)
 
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
+    new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=40)
     new_lc_epochs4 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs4 == new_lc_epochs - num_bad
@@ -86,19 +88,19 @@ def test_ztf_reduction(ztf_project, new_source):
     raw_data.data.loc[raw_data.data.oid == oid, "ra"] -= 0.1
     num_bad = np.sum(raw_data.data.oid == oid)
 
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40)
+    new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=40)
     new_lc_epochs5 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs5 == new_lc_epochs - num_bad
 
     # increasing the radius should bring back those points
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=new_source, gap=40, radius=500)
+    new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=40, radius=500)
     new_lc_epochs6 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs6 == new_lc_epochs
 
     # not giving the source should also bring back those points
-    new_lcs = ztf.reduce(raw_data, to="lcs", source=False, gap=40)
+    new_lcs = ztf.reduce(raw_data, data_type="photometry", gap=40)
     new_lc_epochs7 = np.sum([lc.number for lc in new_lcs])
 
     assert new_lc_epochs7 == new_lc_epochs

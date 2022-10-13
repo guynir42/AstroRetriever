@@ -564,14 +564,14 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
     lightcurves = None
 
     with Session() as session:
-        try:  # at end, delete the temp file
+        try:  # at end, delete the lightcurve files
             # add the data to a database mapped object
             source_id = new_source.id
             new_source.project = test_project.name
             raw_phot_no_exptime.save(overwrite=True)
             new_source.raw_photometry.append(raw_phot_no_exptime)
 
-            # reduce the data use the demo observatory
+            # reduce the data using the demo observatory
             assert len(test_project.observatories) == 1
             obs_key = list(test_project.observatories.keys())[0]
             assert obs_key == "demo"
@@ -580,12 +580,12 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
             # cannot generate photometric data without an exposure time
             with pytest.raises(ValueError) as exc:
-                obs.reduce(raw_phot_no_exptime, to="lcs", source=new_source)
+                obs.reduce(source=new_source, data_type="photometry")
             assert "No exposure time" in str(exc.value)
 
             # add exposure time to the dataframe:
             new_source.raw_photometry[0].data["exp_time"] = 30.0
-            lightcurves = obs.reduce(raw_phot_no_exptime, to="lcs", source=new_source)
+            lightcurves = obs.reduce(source=new_source, data_type="photometry")
             new_source.lightcurves = lightcurves
             session.add(new_source)
 
@@ -643,10 +643,6 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
                 assert lc.raw_data_id == raw_phot_no_exptime.id
 
         finally:
-            # filename = raw_phot_no_exptime.filename
-            # raw_phot_no_exptime.delete_data_from_disk()
-            # assert not os.path.isfile(filename)
-
             if lightcurves:
                 filenames = [lc.filename for lc in lightcurves]
                 [lc.delete_data_from_disk() for lc in lightcurves]
@@ -682,7 +678,7 @@ def test_filter_mapping(raw_phot):
     raw_phot.data.loc[N1:N2, "filter"] = "r"
     raw_phot.observatory = obs.name
 
-    lcs = obs.reduce(raw_phot, to="lcs")
+    lcs = obs.reduce(raw_phot)
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
@@ -694,7 +690,7 @@ def test_filter_mapping(raw_phot):
     # now use a dictionary filtmap
     obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
 
-    lcs = obs.reduce(raw_phot, to="lcs")
+    lcs = obs.reduce(raw_phot)
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
@@ -748,13 +744,14 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
     obs = test_project.observatories["demo"]
     raw_phot.altdata["exptime"] = 30.0
-    lcs = obs.reduce(raw_phot, to="lcs", source=new_source)
+    new_source.raw_photometry.append(raw_phot)
+    lcs = obs.reduce(source=new_source, data_type="photometry")
 
     try:  # at end, delete the temp file
         raw_phot.save(overwrite=True)
         basename = os.path.splitext(raw_phot.filename)[0]
 
-        lcs = obs.reduce(raw_phot, to="lcs", source=new_source)
+        lcs = obs.reduce(source=new_source, data_type="photometry")
 
         for lc in lcs:
             lc.save(overwrite=True)
@@ -815,7 +812,7 @@ def test_reducer_with_outliers(test_project, new_source):
             assert isinstance(obs, VirtualDemoObs)
 
             obs.pars.reducer["drop_flagged"] = False
-            lightcurves = obs.reduce(new_data, to="lcs", source=new_source)
+            lightcurves = obs.reduce(source=new_source, data_type="photometry")
             new_source.lightcurves = lightcurves
 
             assert len(lightcurves) == 1

@@ -1300,7 +1300,7 @@ class Lightcurve(DatasetMixin, Base):
 
             self.data[fcol] = self.data[fcol].map(filter_mapping)
 
-        filters = self.data[fcol]
+        filters = self.data[fcol].values
         if not all([f == filters[0] for f in filters]):
             raise ValueError("All filters must be the same for a Lightcurve")
         self.filter = filters[0]

@@ -295,12 +295,15 @@ class Source(Base, conesearch_alchemy.Point):
                 f"Source {self.name} has more than one "
                 f"{data_class.__name__} object from this observatory."
             )
-        if raw_data is None:
+
+        # try to recover the raw data from the DB directly
+        # this may find data that was associated with the
+        # same source but in a different project or cfg_hash (version)
+        if raw_data is None and session is not None:
             raw_data = session.scalars(
                 sa.select(data_class).where(
                     data_class.source_name == self.name,
                     data_class.observatory == obs,
-                    # TODO: add cfg_hash filtering
                 )
             ).first()
 
