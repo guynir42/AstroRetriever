@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
+from sqlalchemy.orm.session import make_transient
 
 DATA_ROOT = os.getenv("VO_DATA")
 if DATA_ROOT is None:
@@ -45,12 +46,30 @@ def clear_tables():
     from src.detection import DetectionInTime
     from src.properties import Properties
 
-    Properties.metadata.drop_all(engine)
-    DetectionInTime.metadata.drop_all(engine)
-    Lightcurve.metadata.drop_all(engine)
-    RawPhotometry.metadata.drop_all(engine)
-    Source.metadata.drop_all(engine)
-    source_raw_photometry_association.drop(engine)
+    try:
+        Properties.metadata.drop_all(engine)
+    except:
+        pass
+    try:
+        DetectionInTime.metadata.drop_all(engine)
+    except:
+        pass
+    try:
+        Lightcurve.metadata.drop_all(engine)
+    except:
+        pass
+    try:
+        RawPhotometry.metadata.drop_all(engine)
+    except:
+        pass
+    try:
+        Source.metadata.drop_all(engine)
+    except:
+        pass
+    try:
+        source_raw_photometry_association.drop(engine)
+    except:
+        pass
 
 
 def clear_test_objects():

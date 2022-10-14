@@ -130,7 +130,7 @@ def lightcurve_factory():
         test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
-        lc = Lightcurve(data=df, observatory="demo")
+        lc = Lightcurve(data=df, observatory="demo", project="test_project")
 
         return lc
 

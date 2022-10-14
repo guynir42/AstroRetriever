@@ -79,7 +79,7 @@ def normalize_data_types(data_types):
     """
     if isinstance(data_types, str):
         return [convert_data_type(data_types)]
-    return [convert_data_type(dt) for dt in data_types]
+    return sorted(convert_data_type(dt) for dt in data_types)
 
 
 def get_class_from_data_type(data_type):

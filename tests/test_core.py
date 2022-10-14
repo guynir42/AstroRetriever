@@ -3,6 +3,7 @@ import yaml
 import time
 import uuid
 import pytest
+from pprint import pprint
 
 import numpy as np
 import pandas as pd
@@ -561,96 +562,90 @@ def test_raw_photometry_relationships(new_source, new_source2, raw_phot):
 
 def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
-    lightcurves = None
-
     with Session() as session:
-        try:  # at end, delete the lightcurve files
-            # add the data to a database mapped object
-            source_id = new_source.id
-            new_source.project = test_project.name
-            raw_phot_no_exptime.save(overwrite=True)
-            new_source.raw_photometry.append(raw_phot_no_exptime)
 
-            # reduce the data using the demo observatory
-            assert len(test_project.observatories) == 1
-            obs_key = list(test_project.observatories.keys())[0]
-            assert obs_key == "demo"
-            obs = test_project.observatories[obs_key]
-            assert isinstance(obs, VirtualDemoObs)
+        # add the data to a database mapped object
+        source_id = new_source.id
+        new_source.project = test_project.name
+        raw_phot_no_exptime.save(overwrite=True)
+        new_source.raw_photometry.append(raw_phot_no_exptime)
 
-            # cannot generate photometric data without an exposure time
-            with pytest.raises(ValueError) as exc:
-                obs.reduce(source=new_source, data_type="photometry")
-            assert "No exposure time" in str(exc.value)
+        # reduce the data using the demo observatory
+        assert len(test_project.observatories) == 1
+        obs_key = list(test_project.observatories.keys())[0]
+        assert obs_key == "demo"
+        obs = test_project.observatories[obs_key]
+        assert isinstance(obs, VirtualDemoObs)
 
-            # add exposure time to the dataframe:
-            new_source.raw_photometry[0].data["exp_time"] = 30.0
-            lightcurves = obs.reduce(source=new_source, data_type="photometry")
-            new_source.lightcurves = lightcurves
-            session.add(new_source)
+        # cannot generate photometric data without an exposure time
+        with pytest.raises(ValueError) as exc:
+            obs.reduce(source=new_source, data_type="photometry")
+        assert "No exposure time" in str(exc.value)
+        # add exposure time to the dataframe:
+        new_source.raw_photometry[0].data["exp_time"] = 30.0
+        lightcurves = obs.reduce(source=new_source, data_type="photometry")
 
-            with pytest.raises(ValueError) as exc:
-                session.commit()
-            assert "No filename" in str(exc.value)
-            session.rollback()
-
-            # must save dataset before adding it to DB
-            [lc.save(overwrite=True) for lc in lightcurves]
+        session.add(new_source)
+        with pytest.raises(ValueError) as exc:
             session.commit()
+        assert "No filename" in str(exc.value)
+        session.rollback()
 
-            # check that the data has been reduced as expected
-            for lc in lightcurves:
-                filt = lc.filter
-                dff = raw_phot_no_exptime.data[
-                    raw_phot_no_exptime.data["filter"] == filt
-                ]
-                dff = dff.sort_values(by="mjd", inplace=False)
-                dff.reset_index(drop=True, inplace=True)
+        # must save dataset before adding it to DB
+        [lc.save(overwrite=True) for lc in lightcurves]
+        filenames = [lc.get_fullname() for lc in lightcurves]
 
-                # make sure it picks out the right points
-                assert dff["mjd"].equals(lc.data["mjd"])
-                assert dff["mag"].equals(lc.data["mag"])
-                assert dff["mag_err"].equals(lc.data["mag_err"])
+        session.add(new_source)
+        session.commit()
 
-                # make sure the number of points are correct
-                assert lc.number == len(dff)
-                assert lc.shape == (len(dff), len(lc.colmap))
+        # check that the data has been reduced as expected
+        for lc in lightcurves:
+            filt = lc.filter
+            dff = raw_phot_no_exptime.data[raw_phot_no_exptime.data["filter"] == filt]
+            dff = dff.sort_values(by="mjd", inplace=False)
+            dff.reset_index(drop=True, inplace=True)
 
-                # make sure the frame rate and exposure time are correct
-                assert lc.exp_time == 30.0
-                assert np.isclose(
-                    1.0 / lc.frame_rate, dff["mjd"].diff().median() * 24 * 3600
-                )
-                assert not lc.is_uniformly_sampled
+            # make sure it picks out the right points
+            assert dff["mjd"].equals(lc.data["mjd"])
+            assert dff["mag"].equals(lc.data["mag"])
+            assert dff["mag_err"].equals(lc.data["mag_err"])
 
-                # make sure the average flux is correct
-                flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
-                assert np.isclose(lc.flux_mean, np.mean(flux))
+            # make sure the number of points are correct
+            assert lc.number == len(dff)
+            assert lc.shape == (len(dff), len(lc.colmap))
 
-                # make sure flux min/max are correct
-                assert np.isclose(lc.flux_min, np.min(flux))
-                assert np.isclose(lc.flux_max, np.max(flux))
+            # make sure the frame rate and exposure time are correct
+            assert lc.exp_time == 30.0
+            assert np.isclose(
+                1.0 / lc.frame_rate, dff["mjd"].diff().median() * 24 * 3600
+            )
+            assert not lc.is_uniformly_sampled
 
-                # make sure superfluous columns are dropped
-                assert "oid" not in lc.data.columns
+            # make sure the average flux is correct
+            flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
+            assert np.isclose(lc.flux_mean, np.mean(flux))
 
-                # make sure the start/end times are correct
-                assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
-                assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
+            # make sure flux min/max are correct
+            assert np.isclose(lc.flux_min, np.min(flux))
+            assert np.isclose(lc.flux_max, np.max(flux))
 
-                # make sure relationships are correct
-                assert lc.source_id == new_source.id
-                assert lc.raw_data_id == raw_phot_no_exptime.id
+            # make sure superfluous columns are dropped
+            assert "oid" not in lc.data.columns
 
-        finally:
-            if lightcurves:
-                filenames = [lc.filename for lc in lightcurves]
-                [lc.delete_data_from_disk() for lc in lightcurves]
-                assert not any([os.path.isfile(f) for f in filenames])
+            # make sure the start/end times are correct
+            assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
+            assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
+
+            # make sure relationships are correct
+            assert lc.source_id == new_source.id
+            assert lc.raw_data_id == raw_phot_no_exptime.id
 
         # make sure deleting the source also cleans up the data
-        session.execute(sa.delete(Source).where(Source.name == source_id))
+        # session.execute(sa.delete(Source).where(Source.name == source_id))
+        session.delete(new_source)
         session.commit()
+        for lc in new_source.reduced_lightcurves:
+            print(lc.source)
         data = session.scalars(
             sa.select(RawPhotometry).where(
                 RawPhotometry.filekey == raw_phot_no_exptime.filekey
@@ -661,6 +656,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
             sa.select(Lightcurve).where(Lightcurve.source_id == source_id)
         ).all()
         assert len(data) == 0
+        assert not any([os.path.isfile(f) for f in filenames])
 
 
 def test_filter_mapping(raw_phot):
@@ -769,9 +765,6 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
     finally:
         raw_phot.delete_data_from_disk()
         assert not os.path.isfile(raw_phot.get_fullname())
-        for lc in lcs:
-            lc.delete_data_from_disk()
-        assert not os.path.isfile(lcs[0].get_fullname())
 
 
 def test_reducer_with_outliers(test_project, new_source):
@@ -857,9 +850,6 @@ def test_reducer_with_outliers(test_project, new_source):
 
             if lightcurves:
                 for lc in lightcurves:
-                    filename = lc.filename
-                    lc.delete_data_from_disk()
-                    assert not os.path.isfile(filename)
                     session.delete(lc)
                 session.commit()
 
@@ -870,6 +860,71 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  use explicit values and check them online with a magnitude calculator
     #  make sure the statistical errors are correct using a large number of points
     #  make sure the flux_min/max are correct
+
+
+def test_lightcurve_file_is_auto_deleted(lightcurve_factory):
+    lc1 = lightcurve_factory()
+    with Session() as session:
+        lc1.save()
+        session.add(lc1)
+        session.commit()
+
+    # with session closed, check file is there
+    assert os.path.isfile(lc1.get_fullname())
+
+    with Session() as session:
+        session.delete(lc1)
+        session.commit()
+
+    # with session closed, check file is gone
+    assert not os.path.isfile(lc1.get_fullname())
+
+
+def test_lightcurve_copy_constructor(lightcurve_factory):
+    lc1 = lightcurve_factory()
+    lc1.altdata = {"exptime": 30.0}
+    lc2 = Lightcurve(lc1)
+
+    # data should be different but equal dataframes
+    assert lc1.data is not lc2.data
+    assert lc1.data.equals(lc2.data)
+
+    # same for times and mjds
+    assert lc1.times is not lc2.times
+    assert np.all(lc1.times == lc2.times)
+    assert lc1.mjds is not lc2.mjds
+    assert np.all(lc1.mjds == lc2.mjds)
+
+    # check some other attributes
+    assert lc1.exp_time == lc2.exp_time
+    assert lc1.filter == lc2.filter
+    assert lc1.flux_max == lc2.flux_max
+
+    # check the dictionaries are not related:
+    assert lc1.altdata is not lc2.altdata
+    assert lc1.altdata["exptime"] == lc2.altdata["exptime"]
+    lc1.altdata["exptime"] = 100
+    assert lc1.altdata["exptime"] != lc2.altdata["exptime"]
+    assert lc1.was_processed == lc2.was_processed
+
+    # make sure DB related attributes are not copied
+    with Session() as session:
+        try:  # cleanup at the end
+            lc1.save()
+            session.add(lc1)
+            session.commit()
+            lc3 = Lightcurve(lc1)
+            assert lc3.id is None
+            assert lc3.filename is None
+            assert lc3.filekey is None
+            assert lc1.was_processed == lc3.was_processed
+        except Exception:
+            session.rollback()
+            raise
+        finally:  # remove lightcurves from DB and disk
+            if lc1 in session:
+                session.delete(lc1)
+                session.commit()
 
 
 @pytest.mark.flaky(reruns=3)

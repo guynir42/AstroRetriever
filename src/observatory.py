@@ -902,6 +902,10 @@ class VirtualObservatory:
         ----------
         source: src.source.Source object
             A source with datasets to be reduced.
+            Can also give a raw data object
+            (e.g., a RawPhotometry object) instead.
+            If so, the data_type will be inferred from the object.
+            In this case no source is given to the reduction function.
         data_type: str (optional)
             The type of data to reduce.
             Can be one of 'photometry', 'spectroscopy', 'images', 'cutouts'.
@@ -976,7 +980,6 @@ class VirtualObservatory:
 
         # TODO: should we allow using source=None?
         new_datasets = reducer(dataset, source, init_kwargs, **kwargs)
-
         new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
 
         # copy some properties of the observatory into the new datasets
@@ -988,6 +991,10 @@ class VirtualObservatory:
         # make sure each reduced dataset is associated with a source
         for d in new_datasets:
             d.source = source
+
+        if source is not None:
+            old_datasets = getattr(source, f"reduced_{output_type}")
+            setattr(source, f"reduced_{output_type}", old_datasets + new_datasets)
 
         # make sure each reduced dataset has a serial number:
         for i, d in enumerate(new_datasets):

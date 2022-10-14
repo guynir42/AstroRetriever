@@ -222,7 +222,7 @@ class Source(Base, conesearch_alchemy.Point):
         if self.dec is not None:
             string += f", dec={Catalog.dec2sex(self.dec)}"
         string += f', mag= {mag}, project="{self.project}"'
-        string += f"datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
+        string += f", datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
 
         return string
 

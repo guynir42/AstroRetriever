@@ -456,7 +456,6 @@ class Project:
                 # finding detections / adding properties
                 self.analysis.analyze_sources(source)
 
-                # TODO: should the commit happen in the Analysis?
                 session.add(source)
                 session.commit()
 

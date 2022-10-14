@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from sqlalchemy.orm.session import make_transient
+
 from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
@@ -12,13 +14,6 @@ from src.properties import Properties
 class ParsAnalysis(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
-
-        self.data_type = self.add_par(
-            "data_type",
-            "lightcurves",
-            str,
-            "Type of data to use for analysis (lightcurves, images, etc.)",
-        )
 
         self.num_injections = self.add_par(
             "num_injections",
@@ -106,10 +101,10 @@ class ParsAnalysis(Parameters):
 class Analysis:
     """
     This is a pipeline object that accepts a Source object
-    (e.g., with some lightcurves) and performs analysis to get it.
-    Use pars.data_type to choose which kind of analysis is to be done.
-    The default is to use lightcurves.
-    Any sources with all empty raw_data will be skipped.
+    (e.g., with some lightcurves) and performs analysis on it.
+    Use pars.data_types to choose which kind of analysis is to be done.
+    The default is to use photometry.
+    Any sources with all empty raw data will be skipped.
     Other sources are assumed to have reduced datasets,
     and that they already contain the data required.
     For example, a source with a lightcurve that is missing
@@ -154,7 +149,6 @@ class Analysis:
         simulator_kwargs = kwargs.pop("simulator_kwargs", {})
 
         self.pars = ParsAnalysis(**kwargs)
-        self.observatories = None
         self.all_scores = Histogram()
         self.good_scores = Histogram()
         # self.extra_scores = []  # an optional list of extra Histogram objects
@@ -184,16 +178,25 @@ class Analysis:
         # TODO: load histograms from file
         batch_detections = []
         for source in sources:
-            if all([d.is_empty() for d in source.raw_data]):
+            # check how many raw datasets are not empty
+            non_empty = 0
+            for dt in self.pars.data_types:
+                for data in getattr(source, f"raw_{dt}"):
+                    if not data.is_empty():
+                        non_empty += 1
+            if non_empty == 0:
                 source.properties = Properties(has_data=False)
                 continue  # skip sources without data
-            if self.pars.data_type == "lightcurves":
-                det = self.analyze_lightcurves(source)
-            # add more options here besides lightcurves
-            else:
-                raise ValueError(f'Unknown data type: "{self.pars.data_type}"')
 
-            batch_detections += det
+            # what data types go into the analysis?
+            analysis_name = "analyze_" + "_and_".join(self.pars.data_types)
+            analysis_func = getattr(self, analysis_name, None)
+            if analysis_func is None or not callable(analysis_func):
+                raise ValueError(
+                    f'No analysis function named "{analysis_name}" was found. '
+                )
+
+            batch_detections += analysis_func(source)
 
         if self.pars.commit_processed:
             pass  # TODO: save lcs after adding S/N and quality flags
@@ -210,7 +213,7 @@ class Analysis:
 
         self.detections += batch_detections
 
-    def analyze_lightcurves(self, source):
+    def analyze_photometry(self, source):
         """
         Run the analysis on a list of processed Lightcurve
         objects associated with the given source.
@@ -241,23 +244,31 @@ class Analysis:
         det: list of Detection objects
             The detections found in the data.
         """
-        # check if we need to re-generate the processed lightcurves
-        if len(source.processed_lightcurves) == 0 or not all(
-            [lc.check_data_exists for lc in source.processed_lightcurves]
-        ):
-            self.process_lightcurves(source)
 
-        new_det = self.detect_in_lightcurves(source.lightcurves)
-        self.update_histograms(source.lightcurves)
+        source.processed_lightcurves = [
+            Lightcurve(lc) for lc in source.reduced_lightcurves
+        ]
+        self.process_lightcurves(source)
+
+        new_det = self.detect_in_lightcurves(source)
+        self.update_histograms(source.processed_lightcurves)
 
         sim_det = []
         for i in range(self.get_num_injections()):
-            sim_lcs, sim_pars = self.inject_to_lightcurves(source.lightcurves)
-            sim_det += self.detect_in_lightcurves(sim_lcs, sim_pars)
+            # add simulated events into the lightcurves
+            sim_pars = self.inject_to_lightcurves(source)
+
+            # re-run quality and finder on the simulated data
+            self.process_lightcurves(source, sim_pars)
+
+            # find detections in the simulated data
+            sim_det += self.detect_in_lightcurves(
+                source.simulated_lightcurves, sim_pars
+            )
 
         det = new_det + sim_det
 
-        return
+        return det
 
     def process_lightcurves(self, source, sim=None):
         """
@@ -265,7 +276,7 @@ class Analysis:
         on the source's lightcurves.
         The processed lightcurves are appended to the
         source object (These are saved to disk and database
-        if using save_processed_lightcurves=True)
+        if using commit_processed=True)
 
         Parameters
         ----------
@@ -283,10 +294,9 @@ class Analysis:
         has been processed, e.g., has S/N and quality flags.
         The Lightcurve object will also have has_processed=True.
         """
-        # TODO: finish this
-        pass
+        self.check_lightcurves(source)
 
-    def check_lightcurves(self, lightcurves):
+    def check_lightcurves(self, source, sim=None):
         """
         Apply the Quality object to the lightcurves,
         and add the results in a column in the lightcurve
@@ -295,13 +305,21 @@ class Analysis:
         some threshold could be disqualified, and any
         detections overlapping with such times are rejected.
 
+        This function must be able to re-process lightcurves
+        that already have the quality scores added
+        (e.g., for running it on simulated data).
+
         Parameters
         ----------
-        lightcurves: list of Lightcurve objects
-            Data that needs to be scanned for detections.
+        source: Source object
+            The source to process the lightcurves for.
+            By default, the lightcurves are processed
+            in place using the source's processed_lightcurves.
+            If sim is not None, then the lightcurves
+            used will be the source's simulated_lightcurves.
 
         """
-        for lc in lightcurves:
+        for lc in source.reduced_lightcurves:
             self.checker.check(lc)
 
     def detect_in_lightcurves(self, source, sim_pars=None):
