@@ -248,7 +248,7 @@ class Analysis:
         source.processed_lightcurves = [
             Lightcurve(lc) for lc in source.reduced_lightcurves
         ]
-        self.process_lightcurves(source)
+        self.check_lightcurves(source)
 
         new_det = self.detect_in_lightcurves(source)
         self.update_histograms(source.processed_lightcurves)
@@ -269,32 +269,6 @@ class Analysis:
         det = new_det + sim_det
 
         return det
-
-    def process_lightcurves(self, source, sim=None):
-        """
-        Run quality checks and calculate S/N etc.
-        on the source's lightcurves.
-        The processed lightcurves are appended to the
-        source object (These are saved to disk and database
-        if using commit_processed=True)
-
-        Parameters
-        ----------
-        source: Source object
-            The source to process the lightcurves for.
-        sim: dict or None
-            If not None, then use this as the simulated
-            (ground truth) values to mark the produced
-            lightcurves and detections.
-            Will mark the lightcurves with is_simulated=True.
-
-        Returns
-        -------
-        list of Lightcurve objects with data that
-        has been processed, e.g., has S/N and quality flags.
-        The Lightcurve object will also have has_processed=True.
-        """
-        self.check_lightcurves(source)
 
     def check_lightcurves(self, source, sim=None):
         """
@@ -319,7 +293,12 @@ class Analysis:
             used will be the source's simulated_lightcurves.
 
         """
-        for lc in source.reduced_lightcurves:
+        if sim is None:
+            lightcurves = source.processed_lightcurves
+        else:
+            lightcurves = source.simulated_lightcurves
+
+        for lc in lightcurves:
             self.checker.check(lc)
 
     def detect_in_lightcurves(self, source, sim_pars=None):
@@ -327,6 +306,10 @@ class Analysis:
         Apply the Finder object(s) associated with this
         Analysis, to produce Detection objects based
         on the data in the list of Lightcurves.
+
+        The lightcurve's data may be appended additional
+        columns like "snr", and if such columns exists
+        they will be overwritten.
 
         Parameters
         ----------

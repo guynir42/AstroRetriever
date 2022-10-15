@@ -95,12 +95,20 @@ class Finder:
             The source to get lightcurves from.
             May also use properties of the source
             to determine detections (e.g., magnitude).
-            Will also append processed_lightcurves
-            and in case of a simulated
+            The source must have processed_lightcurves
+            which can contain lightcurves that have already
+            been processed before (so we can reprocess them
+            after injecting simulations).
+            If sim is not None, will instead use the
+            simulated_lightcurves.
+            In either case, the additional information
+            (like "snr" column) will be added directly
+            to the lightcurve dataframes.
 
         sim : dict or None
             The truth values for the injected event
             if this is a simulated lightcurve.
+            If None, assume real data.
 
         Returns
         -------
