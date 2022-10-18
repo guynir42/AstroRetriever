@@ -78,33 +78,59 @@ class Finder:
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)
 
-    def ingest_lightcurves(self, source, sim=None):
+    def process(self, lightcurves, source, sim=None):
         """
-        Ingest a list of lightcurves and produce
-        detections for them.
-        Also, will add some scores to the lightcurve.
-        If sim=None, assume real data, and modify
-        the lightcurve dataframe to add the scores.
-        If sim=dict, assume simulated data
-        so make a copy of the lightcurve dataframes
-        before modifying them.
+        Process the input lightcurves and add columns
+        to the dataframe containing various scores like
+        "snr" or "score" that can later be used to make
+        detections.
+
 
         Parameters
         ----------
-        source : Source object
+        lightcurves: a list of Lightcurve objects
+            The lightcurves to process. Must be able
+            to either add new columns, or overwrite
+            data in existing columns (e.g., when
+            re-calculating scores after injecting
+            simulations).
+        source: Source object
             The source to get lightcurves from.
             May also use properties of the source
-            to determine detections (e.g., magnitude).
-            The source must have processed_lightcurves
-            which can contain lightcurves that have already
-            been processed before (so we can reprocess them
-            after injecting simulations).
-            If sim is not None, will instead use the
-            simulated_lightcurves.
-            In either case, the additional information
-            (like "snr" column) will be added directly
-            to the lightcurve dataframes.
+            to determine scores (e.g., magnitude).
+        sim: dict, optional
+            If sim=None, assume real data,
+            if sim=dict, assume simulated data
+            where the "truth values" are passed
+            in using the dictionary.
 
+        """
+        for lc in lightcurves:
+            # Add some scores to the lightcurve
+            lc.data["snr"] = (
+                lc.data["flux"] - lc.flux_mean_robust
+            ) / self.estimate_flux_noise(lc, source)
+            lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
+
+            # mark indices in the lightcurve where an event was detected
+            if "detected" not in lc.data.columns:
+                lc.data["detected"] = False
+
+    def detect(self, lightcurves, source, sim=None):
+        """
+        Ingest a list of lightcurves and produce
+        detections for them.
+
+        Parameters
+        ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to process. Must have already
+            had been processed (e.g., should have a column
+            in the dataframe called "snr").
+        source : Source object
+            The source from which the lightcurves were taken.
+            May also use properties of the source
+            to determine detections (e.g., magnitude).
         sim : dict or None
             The truth values for the injected event
             if this is a simulated lightcurve.
@@ -119,17 +145,7 @@ class Finder:
 
         detections = []  # List of detections to return
 
-        for lc in source.reduced_lightcurves:
-            # Add some scores to the lightcurve
-            lc.data["snr"] = (
-                lc.data["flux"] - lc.flux_mean_robust
-            ) / self.estimate_flux_noise(lc, source)
-            lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
-
-            # mark indices in the lightcurve where an event was detected
-            if "detected" not in lc.data.columns:
-                lc.data["detected"] = False
-
+        for lc in lightcurves:
             # Find the detections (just look for high S/N)
             for i in range(self.pars.max_det_per_lc):
                 snr = lc.data["snr"].values

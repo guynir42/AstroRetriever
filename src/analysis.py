@@ -51,23 +51,25 @@ class ParsAnalysis(Parameters):
             "simulator_class", "Simulator", str, "Name of the Simulator class"
         )
         # simulator_kwargs = {},  # parameters for the Simulator class
-        self.update_histograms = self.add_par(
-            "update_histograms", True, bool, "Update the histograms on file"
+        self.save_histograms = self.add_par(
+            "save_histograms", True, bool, "Update the histograms on file"
         )
-        # self.save_reduced_lightcurves = self.add_par(
-        #     "save_reduced_lightcurves",
-        #     True,
-        #     bool,
-        #     "Save reduced lightcurves to file and database",
-        # )
-        self.commit_processed = self.add_par(
+
+        self.save_processed = self.add_par(
             "commit_processed",
             True,
             bool,
             "Save and commit processed lightcurves "
             "after finder and quality cuts with a new filename",
         )
-        self.commit_detections = self.add_par(
+        self.save_simulated = self.add_par(
+            "commit_simulated",
+            True,
+            bool,
+            "Save and commit simulated lightcurves "
+            "after finder and quality cuts with a new filename",
+        )
+        self.save_detections = self.add_par(
             "commit_detections", True, bool, "Save detections to database"
         )
 
@@ -83,17 +85,17 @@ class ParsAnalysis(Parameters):
         """
         return "analysis"
 
-    def need_to_commit(self):
+    def need_to_save(self):
         """
         Check if any of the parameters require
         that we save to disk and/or commit anything to database.
         """
 
         ret = False
-        ret |= self.commit_detections
-        ret |= self.save_reduced_lightcurves
-        ret |= self.save_processed_lightcurves
-        ret |= self.update_histograms
+        ret |= self.save_processed
+        ret |= self.save_simulated
+        ret |= self.save_detections
+        ret |= self.save_histograms
 
         return ret
 
@@ -198,20 +200,35 @@ class Analysis:
 
             batch_detections += analysis_func(source)
 
-        if self.pars.commit_processed:
-            pass  # TODO: save lcs after adding S/N and quality flags
+            # get rid of data we don't want saved to the source
+            for dt in self.pars.data_types:
+                if not self.pars.save_processed:
+                    setattr(source, f"processed_{dt}", [])  # clear list
+                if not self.pars.save_simulated:
+                    setattr(source, f"simulated_{dt}", [])  # clear list
 
-            # TODO: update the histogram with this source's data
-
-        # TODO: update the histograms file
-
-        # save the detections to the database
-        if self.pars.commit_detections:
-            with Session() as session:
-                session.add_all(batch_detections)
-                session.commit()
+            if not self.pars.save_detections:
+                source.detections = []
 
         self.detections += batch_detections
+
+        if self.pars.save_histograms:
+            self.save_histograms()
+
+        # save the detections to the database
+        if self.pars.need_to_save():
+            with Session() as session:
+                for source in sources:
+                    session.add(source)
+                    for dt in self.pars.data_types:
+                        for lc in getattr(source, f"processed_{dt}"):
+                            lc.save()
+                        for lc in getattr(source, f"simulated_{dt}"):
+                            lc.save()
+
+                for det in batch_detections:
+                    session.add(det)
+                session.commit()
 
     def analyze_photometry(self, source):
         """
@@ -244,37 +261,39 @@ class Analysis:
         det: list of Detection objects
             The detections found in the data.
         """
-
+        # remove existing lightcurves and make copies of the
+        # "reduced_lightcurves" to use as "processed_lightcurves"
         source.processed_lightcurves = [
             Lightcurve(lc) for lc in source.reduced_lightcurves
         ]
-        self.check_lightcurves(source)
-
-        new_det = self.detect_in_lightcurves(source)
-        self.update_histograms(source.processed_lightcurves)
+        lcs = source.processed_lightcurves
+        self.check_lightcurves(lcs, source)
+        self.process_lightcurves(lcs, source)
+        new_det = self.detect_in_lightcurves(lcs, source)
+        self.update_histograms(lcs, source)
 
         sim_det = []
+        source.simulated_lightcurves = []  # get rid of the old ones
         for i in range(self.get_num_injections()):
             # add simulated events into the lightcurves
-            sim_pars = self.inject_to_lightcurves(source)
+            sim_lcs, sim_pars = self.inject_to_lightcurves(lcs, source, index=i)
 
             # re-run quality and finder on the simulated data
-            self.process_lightcurves(source, sim_pars)
+            self.check_lightcurves(sim_lcs, source, sim_pars)
+            self.process_lightcurves(sim_lcs, source, sim_pars)
 
             # find detections in the simulated data
-            sim_det += self.detect_in_lightcurves(
-                source.simulated_lightcurves, sim_pars
-            )
+            sim_det += self.detect_in_lightcurves(sim_lcs, source, sim_pars)
 
         det = new_det + sim_det
 
         return det
 
-    def check_lightcurves(self, source, sim=None):
+    def check_lightcurves(self, lightcurves, source, sim=None):
         """
         Apply the Quality object to the lightcurves,
-        and add the results in a column in the lightcurve
-        dataframe.
+        and add the results into columns in the lightcurve
+        dataframe (or update existing columns).
         Data that has any quality scores above / below
         some threshold could be disqualified, and any
         detections overlapping with such times are rejected.
@@ -285,6 +304,11 @@ class Analysis:
 
         Parameters
         ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. For regular usage,
+            this would be the "processed_lightcurves".
+            If using simulations (i.e., sim is not None),
+            then this would be the "simulated_lightcurves".
         source: Source object
             The source to process the lightcurves for.
             By default, the lightcurves are processed
@@ -293,15 +317,38 @@ class Analysis:
             used will be the source's simulated_lightcurves.
 
         """
-        if sim is None:
-            lightcurves = source.processed_lightcurves
-        else:
-            lightcurves = source.simulated_lightcurves
+        self.checker.check(lightcurves, source, sim)
 
-        for lc in lightcurves:
-            self.checker.check(lc)
+    def process_lightcurves(self, lightcurves, source, sim=None):
+        """
+        Apply the Finder object to the lightcurves,
+        and add the results into columns in the lightcurve
+        dataframe (or update existing columns).
+        The resulting statistics (e.g., snr) are used
+        to find detections in the lightcurves.
 
-    def detect_in_lightcurves(self, source, sim_pars=None):
+        This function must be able to re-process lightcurves
+        that already have the quality scores added
+        (e.g., for running it on simulated data).
+
+        Parameters
+        ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. For regular usage,
+            this would be the "processed_lightcurves".
+            If using simulations (i.e., sim is not None),
+            then this would be the "simulated_lightcurves".
+        source: Source object
+            The source to process the lightcurves for.
+            By default, the lightcurves are processed
+            in place using the source's processed_lightcurves.
+            If sim is not None, then the lightcurves
+            used will be the source's simulated_lightcurves.
+
+        """
+        self.finder.process(lightcurves, source, sim)
+
+    def detect_in_lightcurves(self, lightcurves, source, sim=None):
         """
         Apply the Finder object(s) associated with this
         Analysis, to produce Detection objects based
@@ -313,9 +360,14 @@ class Analysis:
 
         Parameters
         ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. For regular usage,
+            this would be the "processed_lightcurves".
+            If using simulations (i.e., sim is not None),
+            then this would be the "simulated_lightcurves".
         source: Source object
             The lightcurves for this source are scanned.
-        sim_pars: dict or None
+        sim: dict or None
             If None, assume the data is real.
             If a dict, the data is either simulated,
             or real data with injected fake objects.
@@ -328,9 +380,9 @@ class Analysis:
             The detections found in the data.
 
         """
-        pass
+        return self.finder.find(lightcurves, source, sim)
 
-    def update_histograms(self, lightcurves):
+    def update_histograms(self, lightcurves, source):
         """
         Go over the histograms and update them.
         There are a few histograms that need to be updated.
@@ -353,15 +405,21 @@ class Analysis:
 
         Parameters
         ----------
-        lightcurves
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. These are always
+            going to be the "processed_lightcurves".
+        source: Source object
+            The lightcurves for this source are scanned.
+            Adds the name of the source to the list of source
+            names that were included in the histograms.
 
         Returns
         -------
 
         """
-        pass
+        pass  # TODO: implement this
 
-    def inject_to_lightcurves(self, lightcurves):
+    def inject_to_lightcurves(self, lightcurves, source, index=0):
         """
         Inject a fake source/event into the data.
         The fake source is added to the lightcurves,
@@ -372,16 +430,29 @@ class Analysis:
         ----------
         lightcurves: list of Lightcurve objects
             Data that needs to be scanned for detections.
-
+        source: Source object
+            The source to inject the fake source into.
+            Can use the properties of the source
+            (e.g., magnitude) to determine the exact details
+            of the simulated injected event.
+        index: int
+            Index of the fake source to inject.
+            This is used to keep track of the serial number
+            of the set of lightcurves, in case we are saving
+            lightcurves to file and have multiple, different
+            simulated injections on the same data.
         Returns
         -------
         lightcurves: list of Lightcurve objects
             Data that now contains a fake source.
         sim_pars: dict
             Parameters of the fake source that was injected.
-
         """
-        pass
+        # TODO: implement this
+        sim_lcs = []
+        sim_pars = {}
+
+        return sim_lcs, sim_pars
 
     def get_num_injections(self):
         """
