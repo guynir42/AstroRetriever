@@ -23,7 +23,10 @@ import src.dataset
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
+from src.detection import DetectionInTime
+from src.properties import Properties
 from src.histogram import Histogram
+
 
 basepath = os.path.abspath(os.path.dirname(__file__))
 src.dataset.DATA_ROOT = basepath
@@ -1147,7 +1150,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     # this lightcurve has no outliers:
     lc = lightcurve_factory()
     new_source.reduced_lightcurves.append(lc)
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
     assert len(det) == 0
 
     # this lightcurve has outliers:
@@ -1158,7 +1162,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     std_flux = lc.data.flux.std()
     flare_flux = mean_flux + std_flux * n_sigma
     lc.data.loc[4, "flux"] = flare_flux
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
@@ -1169,7 +1174,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # check for negative detections:
     lc.data.loc[96, "flux"] = mean_flux - std_flux * n_sigma
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 2
     assert det[1].source_id == lc.source_id
@@ -1179,7 +1185,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     # now do not look for negative detections:
     lc.data["detected"] = False  # clear the previous detections
     simple_finder.pars.abs_snr = False
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
     assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
@@ -1192,7 +1199,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc.data.loc[50, "flux"] = flare_flux
 
     new_source.reduced_lightcurves[0] = lc
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
@@ -1203,7 +1211,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc = lightcurve_factory()
     lc.data.loc[10:14, "flux"] = flare_flux
     new_source.reduced_lightcurves[0] = lc
-    det = simple_finder.ingest_lightcurves(new_source)
+    simple_finder.process([lc], new_source)
+    det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
@@ -1211,3 +1220,104 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert lc.data.mjd.iloc[10] < Time(det[0].time_peak).mjd < lc.data.mjd.iloc[15]
     assert np.isclose(Time(det[0].time_start).mjd, lc.data.mjd.iloc[10])
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
+
+
+# @pytest.mark.flaky(reruns=3)
+def test_analysis(analysis, new_source, raw_phot):
+    analysis.pars.save_anything = False
+    obs = VirtualDemoObs(project=analysis.pars.project)
+    new_source.raw_photometry.append(raw_phot)
+
+    # there shouldn't be any detections:
+    obs.reduce(new_source, "photometry")
+    analysis.analyze_sources(new_source)
+    assert new_source.properties is not None
+    assert len(analysis.detections) == 0
+
+    # add a "flare" to the lightcurve:
+    lc = new_source.reduced_lightcurves[0]
+    new_source.reset_analysis()
+    n_sigma = 10
+    std_flux = lc.data.flux.std()
+    flare_flux = std_flux * n_sigma
+    lc.data.loc[4, "flux"] += flare_flux
+    analysis.analyze_sources(new_source)
+
+    assert len(analysis.detections) == 1
+    assert analysis.detections[0].source_name == lc.source_name
+    assert analysis.detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
+    assert (
+        analysis.detections[0].time_peak
+        == Time(lc.data.mjd.iloc[4], format="mjd").datetime
+    )
+    assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
+    assert len(new_source.processed_lightcurves) == 0  # should be empty if not saving
+    assert len(new_source.detections_in_time) == 0  # should be empty if not saving
+
+    # check that nothing is saved
+    with Session() as session:
+        lcs = session.scalars(
+            sa.select(Lightcurve).where(Lightcurve.source_name == lc.source_name)
+        ).all()
+        assert len(lcs) == 0
+        detections = session.scalars(
+            sa.select(DetectionInTime).where(
+                DetectionInTime.source_name == new_source.name
+            )
+        ).all()
+        assert len(detections) == 0
+        properties = session.scalars(
+            sa.select(Properties).where(Properties.source_name == new_source.name)
+        ).all()
+        assert len(properties) == 0
+
+    try:  # now save everything
+        analysis.pars.save_anything = True
+        new_source.reset_analysis()
+        # make sure to save the raw/reduced data first
+        raw_phot.save()
+        for lc in new_source.reduced_lightcurves:
+            lc.save()
+
+        analysis.analyze_sources(new_source)
+        assert len(new_source.detections_in_time) == 1
+        assert new_source.properties is not None
+        assert len(new_source.reduced_lightcurves) == 3
+        assert len(new_source.processed_lightcurves) == 3
+
+        with Session() as session:
+            # check lightcurves
+            lcs = session.scalars(
+                sa.select(Lightcurve).where(
+                    Lightcurve.source_name == new_source.name,
+                    Lightcurve.was_processed == False,
+                )
+            ).all()
+            assert len(lcs) == 3
+            lcs = session.scalars(
+                sa.select(Lightcurve).where(
+                    Lightcurve.source_name == new_source.name,
+                    Lightcurve.was_processed == True,
+                )
+            ).all()
+            assert len(lcs) == 3
+
+            # check detections
+            detections = session.scalars(
+                sa.select(DetectionInTime).where(
+                    DetectionInTime.source_name == new_source.name
+                )
+            ).all()
+            assert len(detections) == 1
+
+            # check properties
+            properties = session.scalars(
+                sa.select(Properties).where(Properties.source_name == new_source.name)
+            ).all()
+            assert len(properties) == 1
+
+    finally:  # remove all generated lightcurves and detections etc.
+        pass
+
+
+# TODO: add test for simulation events

@@ -107,12 +107,12 @@ class Finder:
         """
         for lc in lightcurves:
             # Add some scores to the lightcurve
-            lc.data["snr"] = (
-                lc.data["flux"] - lc.flux_mean_robust
-            ) / self.estimate_flux_noise(lc, source)
+            noise = self.estimate_flux_noise(lc, source)
+            lc.data["snr"] = (lc.data["flux"] - lc.flux_mean_robust) / noise
             lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
 
-            # mark indices in the lightcurve where an event was detected
+            # a column to mark indices in the lightcurve
+            # where an event was detected
             if "detected" not in lc.data.columns:
                 lc.data["detected"] = False
 
@@ -151,11 +151,12 @@ class Finder:
                 snr = lc.data["snr"].values
                 if self.pars.abs_snr:
                     snr = np.abs(snr)
-                mask = (
-                    (lc.data["detected"].values)
-                    | (lc.data["flag"].values)
-                    | (np.isnan(snr))
-                )
+                mask = lc.data["detected"].values
+                mask |= np.isnan(snr)
+                mask |= lc.data[lc.colmap["flag"]].values > 0
+                if "qflag" in lc.data.columns:
+                    mask |= lc.data["qflag"].values > 0
+
                 snr[mask] = 0
 
                 idx = np.argmax(snr)
@@ -251,6 +252,7 @@ class Finder:
             The detection object for this event.
         """
         det = DetectionInTime()
+        det.project = self.pars.project
         det.source = source
         det.raw_data = lightcurve.raw_data
         det.lightcurve = lightcurve

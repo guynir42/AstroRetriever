@@ -1190,17 +1190,21 @@ class RawPhotometry(DatasetMixin, Base):
 
     def make_random_photometry(
         self,
-        number=30,
+        number=100,
         mag_min=15,
         mag_max=20,
-        magerr_min=0.1,
-        magerr_max=0.5,
+        magerr_min=0.05,
+        magerr_max=0.2,
         mjd_min=57000,
         mjd_max=58000,
         oid_min=0,
         oid_max=5,
         filters=["g", "r", "i"],
         exptime=30,
+        ra=None,
+        ra_scatter=0.001,
+        dec=None,
+        dec_scatter=0.001,
     ):
         """
         Make a random photometry dataset,
@@ -1232,6 +1236,20 @@ class RawPhotometry(DatasetMixin, Base):
             Exposure time to generate
             If not given, the photometry points
             will not have an exposure time column.
+        ra: float, optional
+            Right ascension to generate the photometry around.
+            If None, will randomly choose a point in the sky.
+            Should be given in degrees!
+        ra_scatter: float
+            Scatter in right ascension to generate the photometry around.
+            Should be given in degrees!
+        dec: float, optional
+            Declination to generate the photometry around.
+            If None, will randomly choose a point in the sky.
+            Should be given in degrees!
+        dec_scatter: float
+            Scatter in declination to generate the photometry around.
+            Should be given in degrees!
 
         Returns
         -------
@@ -1241,13 +1259,21 @@ class RawPhotometry(DatasetMixin, Base):
         if not isinstance(filters, list):
             raise ValueError("filters must be a list of strings")
 
+        mean_mag = np.random.uniform(mag_min, mag_max)
         filt = np.random.choice(filters, number)
         mjd = np.random.uniform(mjd_min, mjd_max, number)
-        mag = np.random.uniform(mag_min, mag_max, number)
         mag_err = np.random.uniform(magerr_min, magerr_max, number)
+        mag = np.array([np.random.normal(mean_mag, err) for err in mag_err])
         oid = np.random.randint(oid_min, oid_max, number)
         test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, oid=oid)
         df = pd.DataFrame(test_data)
+        if ra is None:
+            ra = np.random.uniform(0, 360)
+        if dec is None:
+            dec = np.random.uniform(-90, 90)
+
+        df["ra"] = ra + np.random.normal(0, ra_scatter, number)
+        df["dec"] = dec + np.random.normal(0, dec_scatter, number)
 
         if exptime:
             df["exptime"] = exptime
@@ -1258,12 +1284,20 @@ class RawPhotometry(DatasetMixin, Base):
 class Lightcurve(DatasetMixin, Base):
 
     __tablename__ = "lightcurves"
+
     source_id = sa.Column(
         sa.Integer,
         sa.ForeignKey("sources.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
         index=True,
         doc="ID of the source this dataset is associated with",
+    )
+
+    source = orm.relationship(
+        "Source",
+        doc="Source associated with this lightcurve dataset",
+        cascade="all",
+        foreign_keys="Lightcurve.source_id",
     )
 
     source_name = association_proxy("source", "name")
@@ -1507,6 +1541,12 @@ class Lightcurve(DatasetMixin, Base):
                     "filekey",
                 ]:
                     continue
+
+                if hasattr(v, "_sa_instance_state"):
+                    # don't deep copy a SA managed object!
+                    setattr(self, k, v)
+                    continue
+
                 setattr(self, k, deepcopy(v))
 
             return
@@ -1538,7 +1578,7 @@ class Lightcurve(DatasetMixin, Base):
                             )
                         return new_filt.replace("<filter>", filt)
 
-                self.data[fcol] = self.data[fcol].map(filter_mapping)
+                self.data.loc[fcol] = self.data[fcol].map(filter_mapping)
 
             filters = self.data[fcol].values
             if not all([f == filters[0] for f in filters]):
@@ -1973,7 +2013,7 @@ Source.raw_photometry = orm.relationship(
     secondary=source_raw_photometry_association,
     back_populates="sources",
     lazy="selectin",
-    cascade="all, delete",
+    cascade="all",
     doc="Raw photometry associated with this source",
 )
 
@@ -1983,7 +2023,7 @@ RawPhotometry.sources = orm.relationship(
     secondary=source_raw_photometry_association,
     back_populates="raw_photometry",
     lazy="selectin",
-    cascade="all, delete",
+    cascade="all",
     doc="Sources associated with this raw photometry",
 )
 
@@ -1994,7 +2034,8 @@ Source.reduced_lightcurves = orm.relationship(
     "Lightcurve.was_processed==False, "
     "Lightcurve.is_simulated==False)",
     back_populates="source",
-    cascade="save-update, merge, refresh-expire, expunge, delete",
+    overlaps="processed_lightcurves, simulated_lightcurves",
+    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
@@ -2011,8 +2052,25 @@ Source.processed_lightcurves = orm.relationship(
     "Lightcurve.was_processed==True, "
     "Lightcurve.is_simulated==False)",
     back_populates="source",
-    overlaps="reduced_lightcurves",
-    cascade="save-update, merge, refresh-expire, expunge, delete",
+    overlaps="reduced_lightcurves, simulated_lightcurves",
+    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
+    lazy="selectin",
+    single_parent=True,
+    passive_deletes=True,
+    doc="Reduced and processed photometric datasets associated with this source",
+)
+
+Source.processed_photometry = add_alias("processed_lightcurves")
+Source.proc_lcs = add_alias("processed_lightcurves")
+
+Source.simulated_lightcurves = orm.relationship(
+    "Lightcurve",
+    primaryjoin="and_(Lightcurve.source_id==Source.id, "
+    "Lightcurve.was_processed==True, "
+    "Lightcurve.is_simulated==True)",
+    back_populates="source",
+    overlaps="reduced_lightcurves, processed_lightcurves",
+    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
@@ -2023,24 +2081,20 @@ Source.processed_photometry = add_alias("processed_lightcurves")
 Source.proc_lcs = add_alias("processed_lightcurves")
 
 
-Lightcurve.source = orm.relationship(
-    "Source",
-    doc="Source associated with this lightcurve dataset",
-    foreign_keys="Lightcurve.source_id",
-)
-
-
-RawPhotometry.lightcurves = orm.relationship(
-    "Lightcurve",
-    back_populates="raw_data",
-    cascade="all",
-    doc="Lightcurves derived from this raw dataset.",
-)
+# TODO: do we want raw photometry to
+#  link back to ALL associated lightcurves?
+#  Maybe add a relationship w/o cascade?
+# RawPhotometry.lightcurves = orm.relationship(
+#     "Lightcurve",
+#     back_populates="raw_data",
+#     cascade="all",
+#     doc="Lightcurves derived from this raw dataset.",
+# )
 
 
 Lightcurve.raw_data = orm.relationship(
     "RawPhotometry",
-    back_populates="lightcurves",
+    # back_populates="lightcurves",
     cascade="all",
     doc="The raw dataset that was used to produce this reduced dataset.",
 )

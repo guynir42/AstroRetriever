@@ -28,9 +28,9 @@ class ParsAnalysis(Parameters):
             "Module where the Quality class is defined",
         )
         self.quality_class = self.add_par(
-            "quality_class", "Quality", str, "Name of the Quality class"
+            "quality_class", "QualityChecker", str, "Name of the quality checker class"
         )
-        # quality_kwargs = {},  # parameters for the Quality class
+
         self.finder_module = self.add_par(
             "finder_module",
             "src.finder",
@@ -40,7 +40,7 @@ class ParsAnalysis(Parameters):
         self.finder_class = self.add_par(
             "finder_class", "Finder", str, "Name of the Finder class"
         )
-        # finder_kwargs = {},  # parameters for the Finder class
+
         self.simulator_module = self.add_par(
             "simulation_module",
             "src.simulator",
@@ -50,9 +50,13 @@ class ParsAnalysis(Parameters):
         self.simulator_class = self.add_par(
             "simulator_class", "Simulator", str, "Name of the Simulator class"
         )
-        # simulator_kwargs = {},  # parameters for the Simulator class
-        self.save_histograms = self.add_par(
-            "save_histograms", True, bool, "Update the histograms on file"
+
+        self.save_anything = self.add_par(
+            "save_anything",
+            True,
+            bool,
+            "Don't save anything to disk or database. "
+            "Override any of the other save parameters. ",
         )
 
         self.save_processed = self.add_par(
@@ -72,6 +76,17 @@ class ParsAnalysis(Parameters):
         self.save_detections = self.add_par(
             "commit_detections", True, bool, "Save detections to database"
         )
+
+        self.save_histograms = self.add_par(
+            "save_histograms", True, bool, "Update the histograms on file"
+        )
+
+        self.histogram_filename = self.add_par(
+            "histogram_filename",
+            "histograms.nc",
+            str,
+            "Filename for the histograms file",
+        )  # TODO: should this be appended a cfg_hash?
 
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
@@ -120,7 +135,7 @@ class Analysis:
        with a specific score like S/N, specific magnitude, etc.).
     5) Simulated datasets and detections (if using injections).
 
-    The Quality object is used to scan the data and assign
+    The QualityChecker object is used to scan the data and assign
     scores on various parameters, that can be used to disqualify
     parts of the data.
     For example, if the individual lightcurve RA/Dec values are
@@ -135,7 +150,7 @@ class Analysis:
 
     A Histogram object can be used to keep track of the number
     of measurements that are lost to each score,
-    so we can fine tune the cut thresholds on the Quality object.
+    so we can fine tune the cut thresholds on the QualityChecker object.
 
     The Simulator is used to inject fake sources into the data,
     which are recovered as Detection objects.
@@ -187,7 +202,9 @@ class Analysis:
                     if not data.is_empty():
                         non_empty += 1
             if non_empty == 0:
-                source.properties = Properties(has_data=False)
+                source.properties = Properties(
+                    has_data=False, project=self.pars.project
+                )
                 continue  # skip sources without data
 
             # what data types go into the analysis?
@@ -202,40 +219,77 @@ class Analysis:
 
             # get rid of data we don't want saved to the source
             for dt in self.pars.data_types:
-                if not self.pars.save_processed:
+                # do we also need to clear these from the raw data relationship?
+                if not self.pars.save_anything or not self.pars.save_processed:
                     setattr(source, f"processed_{dt}", [])  # clear list
-                if not self.pars.save_simulated:
+                if not self.pars.save_anything or not self.pars.save_simulated:
                     setattr(source, f"simulated_{dt}", [])  # clear list
 
-            if not self.pars.save_detections:
-                source.detections = []
+            # TODO: what happens if more than one data type on each det?
+            for det in batch_detections:
+                det.processed_data = None
 
+            # get rid of these new detections if we don't
+            # want to save them to DB (e.g., for debugging)
+            if not self.pars.save_anything or not self.pars.save_detections:
+                source.detections_in_time = []
+                for dt in self.pars.data_types:
+                    getattr(source, f"raw_{dt}").detections_in_time = []
+                # TODO: add other types of detections?
+
+        # this gets appended but never committed
         self.detections += batch_detections
 
-        if self.pars.save_histograms:
-            self.save_histograms()
-
         # save the detections to the database
-        if self.pars.need_to_save():
-            with Session() as session:
-                for source in sources:
-                    session.add(source)
-                    for dt in self.pars.data_types:
-                        for lc in getattr(source, f"processed_{dt}"):
-                            lc.save()
-                        for lc in getattr(source, f"simulated_{dt}"):
-                            lc.save()
+        if self.pars.save_anything and self.pars.need_to_save():
 
-                for det in batch_detections:
-                    session.add(det)
-                session.commit()
+            with Session() as session:
+                try:  # if anything fails, must rollback all
+                    if self.pars.save_histograms:
+                        self.save_histograms()
+
+                    for source in sources:
+                        session.add(source)
+                        for dt in self.pars.data_types:
+                            for data in getattr(source, f"raw_{dt}"):
+                                if data.filename is None:
+                                    raise ValueError(
+                                        f"raw_{dt} (from {data.obs_name}) "
+                                        f"on Source {source.id} has no filename. "
+                                        "Did you forget to save it?"
+                                    )
+                            for i, data in enumerate(getattr(source, f"reduced_{dt}")):
+                                if data.filename is None:
+                                    raise ValueError(
+                                        f"reduced_{dt} (number {i}) on Source {source.id} "
+                                        "has no filename. Did you forget to save it?"
+                                    )
+                            [data.save() for data in getattr(source, f"processed_{dt}")]
+                            [data.save() for data in getattr(source, f"simulated_{dt}")]
+
+                    session.commit()
+                except Exception:
+                    self.restore_histogram_backup()
+                    session.rollback()
+                    for source in sources:
+                        for dt in self.pars.data_types:
+                            [
+                                lc.delete_data_from_disk()
+                                for lc in getattr(source, f"processed_{dt}")
+                            ]
+                            [
+                                lc.delete_data_from_disk()
+                                for lc in getattr(source, f"simulated_{dt}")
+                            ]
+
+                    raise  # finally re-raise the exception
 
     def analyze_photometry(self, source):
         """
         Run the analysis on a list of processed Lightcurve
         objects associated with the given source.
 
-        The processing is done using the Quality and Finder
+        The processing is done using the QualityChecker and Finder
         objects, that generate processed versions of the
         input data (e.g., lightcurves with S/N and quality flags).
 
@@ -244,7 +298,7 @@ class Analysis:
 
         For each source, injection simulations are added using
         the Simulator object. The injected data (e.g., lightcurves)
-        are re-processed using the same Quality and Finder objects,
+        are re-processed using the same QualityChecker and Finder objects,
         that re-apply the same cuts and scores to the injected data.
         Then the Finder looks for detections in those data, and
         outputs them along with the regular detection objects.
@@ -261,15 +315,18 @@ class Analysis:
         det: list of Detection objects
             The detections found in the data.
         """
+        lcs = [Lightcurve(lc) for lc in source.reduced_lightcurves]
         # remove existing lightcurves and make copies of the
         # "reduced_lightcurves" to use as "processed_lightcurves"
-        source.processed_lightcurves = [
-            Lightcurve(lc) for lc in source.reduced_lightcurves
-        ]
-        lcs = source.processed_lightcurves
+        source.processed_lightcurves = lcs
         self.check_lightcurves(lcs, source)
         self.process_lightcurves(lcs, source)
         new_det = self.detect_in_lightcurves(lcs, source)
+        # make sure to mark these as processed
+        [setattr(lc, "was_processed", True) for lc in lcs]
+
+        self.calc_props_from_lightcurves(lcs, source)
+
         self.update_histograms(lcs, source)
 
         sim_det = []
@@ -277,6 +334,7 @@ class Analysis:
         for i in range(self.get_num_injections()):
             # add simulated events into the lightcurves
             sim_lcs, sim_pars = self.inject_to_lightcurves(lcs, source, index=i)
+            [setattr(lc, "was_simulated", True) for lc in sim_lcs]
 
             # re-run quality and finder on the simulated data
             self.check_lightcurves(sim_lcs, source, sim_pars)
@@ -286,12 +344,13 @@ class Analysis:
             sim_det += self.detect_in_lightcurves(sim_lcs, source, sim_pars)
 
         det = new_det + sim_det
+        source.detections_in_time = det
 
         return det
 
     def check_lightcurves(self, lightcurves, source, sim=None):
         """
-        Apply the Quality object to the lightcurves,
+        Apply the QualityChecker object to the lightcurves,
         and add the results into columns in the lightcurve
         dataframe (or update existing columns).
         Data that has any quality scores above / below
@@ -380,7 +439,29 @@ class Analysis:
             The detections found in the data.
 
         """
-        return self.finder.find(lightcurves, source, sim)
+        return self.finder.detect(lightcurves, source, sim)
+
+    def calc_props_from_lightcurves(self, lightcurves, source):
+        """
+        Calculate some Properties on this source
+        based on the lightcurves given.
+        Will generally use processed_lightcurves,
+        because this function is not used for
+        simulated data.
+        The output would be a Properties object
+        that is appended to the source object.
+
+        Parameters
+        ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. For regular usage,
+            this would be the "processed_lightcurves".
+        source: Source object
+            The lightcurves for this source are scanned.
+        """
+        # TODO: calculate best S/N and so on...
+
+        source.properties = Properties(has_data=True, project=self.pars.project)
 
     def update_histograms(self, lightcurves, source):
         """
@@ -465,24 +546,17 @@ class Analysis:
 
         return np.random.poisson(self.pars.num_injections)
 
-    def save_histograms(self, path_to_save, project):
+    def save_histograms(self):
         """
         Save the histograms to a file.
-
-        Parameters
-        ----------
-        path_to_save: str
-            Path to the directory where the histograms
-            should be saved.
-        project: str
-            Name of the project, used to create the filename.
-
         """
         pass
 
-    def commit_detections(self):
+    def restore_histogram_backup(self):
         """
-        Save the detections to the database.
+        Roll back the histograms from a backup file.
+        This is called in case there was a problem
+        saving or committing any data.
         """
         pass
 

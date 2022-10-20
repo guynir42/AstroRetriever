@@ -48,6 +48,7 @@ class Properties(Base):
     props = sa.Column(
         JSONB,
         nullable=False,
+        default={},
         doc="Properties of the source",
     )
 
@@ -68,6 +69,7 @@ Source.properties = orm.relationship(
     cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
     lazy="selectin",
     single_parent=True,
+    uselist=False,
     passive_deletes=True,
     doc="Properties associated with this source",
 )

@@ -309,6 +309,26 @@ class Source(Base, conesearch_alchemy.Point):
 
         return raw_data
 
+    def reset_analysis(self, session=None):
+        """
+        Remove all analysis results from this object,
+        including detections, properties, and processed
+        lightcurves.
+
+        This does not affect the histogram results!
+
+        Parameters
+        ----------
+        session: sqlalchemy session object (optional)
+            If given, will also remove the analysis results
+            from the database.
+        """
+        self.properties = None
+        self.detections_in_time = []
+        for dt in allowed_data_types:
+            setattr(self, f"processed_{dt}", [])
+            setattr(self, f"simulated_{dt}", [])
+
     def plot_photometry(self, ax=None, ftype="mag", ttype="times", **kwargs):
         """
         Plot this source on a given axis.

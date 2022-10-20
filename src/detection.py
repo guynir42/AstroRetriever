@@ -68,7 +68,13 @@ class DetectionMixin:
             foreign_keys=f"{cls.__name__}.source_id",
         )
 
-    source_name = association_proxy("source", "name")
+    # source_name = association_proxy("source", "name")
+    source_name = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Name of the source this detection is associated with",
+    )
 
     simulated = sa.Column(
         sa.Boolean,
@@ -111,6 +117,11 @@ class DetectionMixin:
         doc="Quality cuts values associated with this detection",
     )
 
+    def __setattr__(self, key, value):
+        if key == "source":
+            self.source_name = value.name
+        super().__setattr__(key, value)
+
 
 class DetectionInTime(Base, DetectionMixin):
 
@@ -137,18 +148,18 @@ class DetectionInTime(Base, DetectionMixin):
         doc="Time of the detection (UTC)",
     )
 
-    lightcurve_id = sa.Column(
+    processed_data_id = sa.Column(
         sa.Integer,
         sa.ForeignKey("lightcurves.id"),
         nullable=True,
         index=True,
         doc="ID of the lightcurve this detection is associated with",
     )
-    lightcurve = orm.relationship(
+    processed_data = orm.relationship(
         "Lightcurve",
         back_populates="detections_in_time",
         cascade="all",
-        doc="reduced photometric data in which this detection was found",
+        doc="processed photometric data in which this detection was found",
     )
 
     __table_args__ = (
@@ -179,7 +190,7 @@ RawPhotometry.detections = orm.relationship(
 
 Lightcurve.detections_in_time = orm.relationship(
     "DetectionInTime",
-    back_populates="lightcurve",
+    back_populates="processed_data",
     cascade="all, delete-orphan",
 )
 

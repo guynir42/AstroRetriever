@@ -49,7 +49,7 @@ def raw_phot():
         observatory="demo",
         source_name=str(uuid.uuid4()),
     )
-    data.make_random_photometry(number=30)
+    data.make_random_photometry(number=100)
     yield data
 
     data.delete_data_from_disk()
@@ -67,7 +67,7 @@ def raw_phot_no_exptime():
         observatory="demo",
         source_name=str(uuid.uuid4()),
     )
-    data.make_random_photometry(number=30, exptime=None)
+    data.make_random_photometry(number=100, exptime=None)
     yield data
 
     data.delete_data_from_disk()
@@ -102,8 +102,16 @@ def ztf_project():
 @pytest.fixture
 def simple_finder():
 
-    finder = Finder()
+    finder = Finder(project=str(uuid.uuid4()))
     return finder
+
+
+@pytest.fixture
+def analysis():
+    from src.analysis import Analysis
+
+    analysis = Analysis(project=str(uuid.uuid4()))
+    return analysis
 
 
 @pytest.fixture
