@@ -19,6 +19,7 @@ def new_source():
         name=str(uuid.uuid4()),
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
+        test_only=True,
     )
     yield source
     # with Session() as session:
@@ -33,6 +34,7 @@ def new_source2():
         name=str(uuid.uuid4()),
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
+        test_only=True,
     )
     yield source
     # with Session() as session:
@@ -48,6 +50,7 @@ def raw_phot():
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
+        test_only=True,
     )
     data.make_random_photometry(number=100)
     yield data
@@ -66,6 +69,7 @@ def raw_phot_no_exptime():
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
+        test_only=True,
     )
     data.make_random_photometry(number=100, exptime=None)
     yield data
@@ -138,7 +142,9 @@ def lightcurve_factory():
         test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
-        lc = Lightcurve(data=df, observatory="demo", project="test_project")
+        lc = Lightcurve(
+            data=df, observatory="demo", project="test_project", test_only=True
+        )
 
         return lc
 

@@ -1,5 +1,5 @@
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy import orm, func
 from sqlalchemy.ext.declarative import declared_attr
@@ -11,7 +11,49 @@ from src.dataset import RawPhotometry, Lightcurve
 utcnow = func.timezone("UTC", func.current_timestamp())
 
 
-class DetectionMixin:
+class Detection(Base):
+
+    __tablename__ = "detections"
+
+    # TODO: can we just define separate detection types?
+
+    method = sa.Column(
+        sa.String,
+        nullable=False,
+        default="peak finding",
+        doc="detection method used to find this. ",
+    )
+
+    data_types = sa.Column(
+        ARRAY(sa.String),
+        nullable=False,
+        default=["photometry"],
+        doc="The data types the detection is based on.",
+    )
+
+    source_id = sa.Column(
+        sa.ForeignKey("sources.id"),
+        nullable=False,
+        index=True,
+        doc="ID of the source this detection is associated with",
+    )
+
+    source = orm.relationship(
+        "Source",
+        back_populates="detections",
+        cascade="all",
+        foreign_keys=f"Detections.source_id",
+    )
+
+    # prefer to have this as column so we can still
+    # attach a detection that was removed from a source
+    # source_name = association_proxy("source", "name")
+    source_name = sa.Column(
+        sa.String,
+        nullable=False,
+        index=True,
+        doc="Name of the source this detection is associated with",
+    )
 
     project = sa.Column(
         sa.String, nullable=False, index=True, doc="Project this detection belongs to."
@@ -39,43 +81,6 @@ class DetectionMixin:
         doc="End of time interval relevant to this event (UTC)",
     )
 
-    @classmethod
-    def backref_name(cls):
-        if cls.__name__ == "DetectionInTime":
-            return "detections_in_time"
-        if cls.__name__ == "DetectionInPeriod":
-            return "detections_in_period"
-        if cls.__name__ == "DetectionInImage":
-            return "detections_in_images"
-        if cls.__name__ == "DetectionInSpectrum":
-            return "detections_in_spectra"
-
-    @declared_attr
-    def source_id(cls):
-        return sa.Column(
-            sa.ForeignKey("sources.id"),
-            nullable=False,
-            index=True,
-            doc="ID of the source this detection is associated with",
-        )
-
-    @declared_attr
-    def source(cls):
-        return orm.relationship(
-            "Source",
-            back_populates=cls.backref_name(),
-            cascade="all",
-            foreign_keys=f"{cls.__name__}.source_id",
-        )
-
-    # source_name = association_proxy("source", "name")
-    source_name = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Name of the source this detection is associated with",
-    )
-
     simulated = sa.Column(
         sa.Boolean,
         nullable=False,
@@ -87,6 +92,7 @@ class DetectionMixin:
     sim_pars = sa.Column(
         JSONB,
         nullable=True,
+        index=True,
         doc="Parameters used to simulate this detection",
     )
 
@@ -111,7 +117,15 @@ class DetectionMixin:
         index=True,
     )
 
-    quality_cuts = sa.Column(
+    failed_flag = sa.Column(
+        sa.Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+        doc="Will be true if any of the quality cuts failed to pass. ",
+    )
+
+    quality_values = sa.Column(
         JSONB,
         default={},
         doc="Quality cuts values associated with this detection",
@@ -122,79 +136,164 @@ class DetectionMixin:
             self.source_name = value.name
         super().__setattr__(key, value)
 
-
-class DetectionInTime(Base, DetectionMixin):
-
-    __tablename__ = "detections_in_time"
-
-    raw_data_id = sa.Column(
-        sa.ForeignKey("raw_photometry.id"),
-        nullable=True,
-        index=True,
-        doc="ID of the raw dataset this detection is associated with",
-    )
-
-    raw_data = orm.relationship(
-        "RawPhotometry",
-        back_populates="detections",
-        cascade="all",
-        foreign_keys=f"DetectionInTime.raw_data_id",
-    )
-
-    time_peak = sa.Column(
+    # detections made on lightcurves / photometric data:
+    peak_time = sa.Column(
         sa.DateTime,
-        nullable=False,
+        nullable=True,
         index=True,
         doc="Time of the detection (UTC)",
     )
 
-    processed_data_id = sa.Column(
-        sa.Integer,
-        sa.ForeignKey("lightcurves.id"),
+    peak_start = sa.Column(
+        sa.DateTime,
         nullable=True,
-        index=True,
-        doc="ID of the lightcurve this detection is associated with",
-    )
-    processed_data = orm.relationship(
-        "Lightcurve",
-        back_populates="detections_in_time",
-        cascade="all",
-        doc="processed photometric data in which this detection was found",
+        index=False,
+        doc="Start of the peak (UTC)",
     )
 
-    __table_args__ = (
-        sa.UniqueConstraint("time_peak", "source_id", name="_detection_in_time_uc"),
+    peak_end = sa.Column(
+        sa.DateTime,
+        nullable=True,
+        index=False,
+        doc="End of the peak (UTC)",
     )
+
+    peak_mag = sa.Column(
+        sa.Float, nullable=True, index=True, doc="Magnitude of the detection."
+    )
+
+    peak_dmag = sa.Column(
+        sa.Float,
+        nullable=True,
+        index=True,
+        doc="Magnitude difference of the detection.",
+    )
+
+    raw_photometry_peak_number = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=False,
+        doc="Index of the raw photometry where the brightest peak was detected. ",
+    )
+
+    raw_photometry_data_ranges = sa.Column(
+        JSONB,
+        nullable=True,
+        index=False,
+        doc="For each raw photometry data that is relevant to this detection"
+        "put the data indices that are part of the detection. "
+        "This is a dict keyed on integers (raw photometry index in the"
+        "list attached to this object), with values that are a list of "
+        "integers on the dataframe for each raw photometry. ",
+    )
+
+    reduced_photometry_peak_number = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=False,
+        doc="Index of the reduced photometry where the brightest peak was detected. ",
+    )
+
+    reduced_photometry_data_ranges = sa.Column(
+        JSONB,
+        nullable=True,
+        index=False,
+        doc="For each raw photometry data that is relevant to this detection"
+        "put the data indices that are part of the detection. "
+        "This is a dict keyed on integers (raw photometry index in the"
+        "list attached to this object), with values that are a list of "
+        "integers on the dataframe for each raw photometry. ",
+    )
+
+    # using a matched filter could use saving some parameters:
+    matched_filter_kernel_index = sa.Column(
+        sa.Integer,
+        nullable=True,
+        index=False,
+        doc="Index of the matched filter kernel that was used to detect this. ",
+    )
+    match_filter_bank_name = sa.Column(
+        sa.String,
+        nullable=True,
+        index=False,
+        doc="Name of the matched filter bank that was used to detect this. ",
+    )
+    matched_filter_kernel_props = sa.Column(
+        JSONB,
+        nullable=True,
+        index=False,
+        doc="Properties of the matched filter kernel that was used to detect this. ",
+    )
+
+    # TODO: maybe a unique constraint with simulated too?
+    #  what about non-peak-time detections?
+    # __table_args__ = (
+    #     sa.UniqueConstraint("time_peak", "source_id", name="_detection_in_time_uc"),
+    # )
 
 
 # make sure all the tables exist
-DetectionInTime.metadata.create_all(engine)
+Detection.metadata.create_all(engine)
 
-Source.detections_in_time = orm.relationship(
-    "DetectionInTime",
+# add relationships!
+Source.detections = orm.relationship(
+    "Detection",
     back_populates="source",
     cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
-    doc="Detections associated with lightcurves from this source",
+    doc="Detections associated with this source",
 )
 
-
-RawPhotometry.detections = orm.relationship(
-    "DetectionInTime",
-    back_populates="raw_data",
-    cascade="all, delete-orphan",
+# relationships to photometric datasets
+detection_raw_photometry_association = sa.Table(
+    "detection_raw_photometry_association",
+    Base.metadata,
+    sa.Column(
+        "detection_id",
+        sa.Integer,
+        sa.ForeignKey("detections.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    sa.Column(
+        "raw_photometry_id",
+        sa.Integer,
+        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
-
-Lightcurve.detections_in_time = orm.relationship(
-    "DetectionInTime",
-    back_populates="processed_data",
-    cascade="all, delete-orphan",
+Detection.raw_photometry = orm.relationship(
+    "RawPhotometry",
+    cascade="all",
+    doc="raw photometric data in which this detection was found",
 )
 
+detection_reduced_photometry_association = sa.Table(
+    "detection_reduced_photometry_association",
+    Base.metadata,
+    sa.Column(
+        "detection_id",
+        sa.Integer,
+        sa.ForeignKey("detections.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    sa.Column(
+        "reduced_photometry_id",
+        sa.Integer,
+        sa.ForeignKey("lightcurves.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
-# TODO: Add a DetectionInPeriod class
-# TODO: Add a DetectionInImages class
-# TODO: Add a DetectionInSpectrum class
+Detection.reduced_photometry = orm.relationship(
+    "Lightcurve",
+    cascade="all",
+    doc="reduced or processed or simulated "
+    "photometric data in which this detection was found",
+)
+
+# TODO: add relationships to spectrum datasets
+# TODO: add relationships to periodograms
+# TODO: add relationships to image datasets

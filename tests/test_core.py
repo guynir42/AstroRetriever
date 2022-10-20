@@ -23,7 +23,7 @@ import src.dataset
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
-from src.detection import DetectionInTime
+from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
 
@@ -1261,9 +1261,7 @@ def test_analysis(analysis, new_source, raw_phot):
         ).all()
         assert len(lcs) == 0
         detections = session.scalars(
-            sa.select(DetectionInTime).where(
-                DetectionInTime.source_name == new_source.name
-            )
+            sa.select(Detection).where(Detection.source_name == new_source.name)
         ).all()
         assert len(detections) == 0
         properties = session.scalars(
@@ -1304,9 +1302,7 @@ def test_analysis(analysis, new_source, raw_phot):
 
             # check detections
             detections = session.scalars(
-                sa.select(DetectionInTime).where(
-                    DetectionInTime.source_name == new_source.name
-                )
+                sa.select(Detection).where(Detection.source_name == new_source.name)
             ).all()
             assert len(detections) == 1
 

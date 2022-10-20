@@ -43,7 +43,7 @@ Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 def clear_tables():
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association
-    from src.detection import DetectionInTime
+    from src.detection import Detection
     from src.properties import Properties
 
     try:
@@ -51,7 +51,7 @@ def clear_tables():
     except:
         pass
     try:
-        DetectionInTime.metadata.drop_all(engine)
+        Detection.metadata.drop_all(engine)
     except:
         pass
     try:
@@ -75,12 +75,12 @@ def clear_tables():
 def clear_test_objects():
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve
-    from src.detection import DetectionInTime
+    from src.detection import Detection
     from src.properties import Properties
 
     with Session() as session:
         session.execute(sa.delete(Properties).where(Source.test_only.is_(True)))
-        session.execute(sa.delete(DetectionInTime).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(Detection).where(Source.test_only.is_(True)))
         session.execute(sa.delete(Lightcurve).where(Source.test_only.is_(True)))
         session.execute(sa.delete(RawPhotometry).where(Source.test_only.is_(True)))
         session.execute(sa.delete(Source).where(Source.test_only.is_(True)))

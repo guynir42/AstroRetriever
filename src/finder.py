@@ -4,7 +4,7 @@ import pandas as pd
 from src.parameters import Parameters
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
-from src.detection import DetectionInTime
+from src.detection import Detection
 
 
 class ParsFinder(Parameters):
@@ -28,6 +28,13 @@ class ParsFinder(Parameters):
             True,
             bool,
             "Use absolute S/N for detection (i.e., include negative)",
+        )
+
+        self.remove_failed = self.add_par(
+            "remove_failed",
+            False,
+            bool,
+            "Remove detections that did not pass quality cuts. ",
         )
 
         self._enforce_type_checks = True
@@ -231,7 +238,7 @@ class Finder:
 
     def make_detection(self, peak_idx, lightcurve, source, sim=None):
         """
-        Make a detection object from a lightcurve.
+        Make a Detection object from a lightcurve.
 
         Parameters
         ----------
@@ -251,7 +258,7 @@ class Finder:
         det: Detection object
             The detection object for this event.
         """
-        det = DetectionInTime()
+        det = Detection()
         det.project = self.pars.project
         det.source = source
         det.raw_data = lightcurve.raw_data
