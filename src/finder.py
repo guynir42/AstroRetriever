@@ -160,7 +160,8 @@ class Finder:
                     snr = np.abs(snr)
                 mask = lc.data["detected"].values
                 mask |= np.isnan(snr)
-                mask |= lc.data[lc.colmap["flag"]].values > 0
+                if "flag" in lc.data.columns:
+                    mask |= lc.data[lc.colmap["flag"]].values > 0
                 if "qflag" in lc.data.columns:
                     mask |= lc.data["qflag"].values > 0
 
@@ -264,7 +265,6 @@ class Finder:
         det.raw_data = lightcurve.raw_data
         det.lightcurve = lightcurve
         det.time_peak = lightcurve.times[peak_idx]
-
         det.snr = lightcurve.data.loc[peak_idx, "snr"]
 
         # mark the location of this detection:

@@ -232,10 +232,7 @@ class Analysis:
             # get rid of these new detections if we don't
             # want to save them to DB (e.g., for debugging)
             if not self.pars.save_anything or not self.pars.save_detections:
-                source.detections_in_time = []
-                for dt in self.pars.data_types:
-                    getattr(source, f"raw_{dt}").detections_in_time = []
-                # TODO: add other types of detections?
+                source.detections = []
 
         # this gets appended but never committed
         self.detections += batch_detections
@@ -344,7 +341,7 @@ class Analysis:
             sim_det += self.detect_in_lightcurves(sim_lcs, source, sim_pars)
 
         det = new_det + sim_det
-        source.detections_in_time = det
+        source.detections = det
 
         return det
 

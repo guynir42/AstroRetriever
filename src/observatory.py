@@ -19,7 +19,7 @@ from src.parameters import (
 )
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
-from src.detection import DetectionInTime
+from src.detection import Detection
 
 from src.catalog import Catalog
 from src.histogram import Histogram
@@ -1254,7 +1254,7 @@ class VirtualDemoObs(VirtualObservatory):
             dfs = []
             for f in filters:
                 # new dataframe for each filter, each one with a new index
-                df_new = dataset.data[dataset.data[filt_col] == f]
+                df_new = dataset.data.loc[dataset.data[filt_col] == f, :].copy()
                 df_new.reset_index(drop=True)
 
                 if drop_bad and flag_col is not None:

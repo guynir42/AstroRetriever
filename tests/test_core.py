@@ -690,6 +690,8 @@ def test_filter_mapping(raw_phot):
     obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
 
     lcs = obs.reduce(raw_phot)
+    [print(lc.data._is_view) for lc in lcs]
+    [print(lc.data._is_copy) for lc in lcs]
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
@@ -865,11 +867,15 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
-def test_lightcurve_file_is_auto_deleted(lightcurve_factory):
+def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
+    lc1.source = saved_phot.sources[0]
+    lc1.raw_data = saved_phot
+
     with Session() as session:
         lc1.save()
         session.add(lc1)
+        session.flush()
         session.commit()
 
     # with session closed, check file is there
@@ -883,8 +889,11 @@ def test_lightcurve_file_is_auto_deleted(lightcurve_factory):
     assert not os.path.isfile(lc1.get_fullname())
 
 
-def test_lightcurve_copy_constructor(lightcurve_factory):
+def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
+    lc1.source = saved_phot.sources[0]
+    lc1.raw_data = saved_phot
+
     lc1.altdata = {"exptime": 30.0}
     lc2 = Lightcurve(lc1)
 
@@ -1235,6 +1244,7 @@ def test_analysis(analysis, new_source, raw_phot):
     assert len(analysis.detections) == 0
 
     # add a "flare" to the lightcurve:
+    assert len(new_source.reduced_lightcurves) == 3
     lc = new_source.reduced_lightcurves[0]
     new_source.reset_analysis()
     n_sigma = 10
@@ -1252,7 +1262,7 @@ def test_analysis(analysis, new_source, raw_phot):
     )
     assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
     assert len(new_source.processed_lightcurves) == 0  # should be empty if not saving
-    assert len(new_source.detections_in_time) == 0  # should be empty if not saving
+    assert len(new_source.detections) == 0  # should be empty if not saving
 
     # check that nothing is saved
     with Session() as session:
@@ -1278,7 +1288,7 @@ def test_analysis(analysis, new_source, raw_phot):
             lc.save()
 
         analysis.analyze_sources(new_source)
-        assert len(new_source.detections_in_time) == 1
+        assert len(new_source.detections) == 1
         assert new_source.properties is not None
         assert len(new_source.reduced_lightcurves) == 3
         assert len(new_source.processed_lightcurves) == 3
@@ -1288,14 +1298,14 @@ def test_analysis(analysis, new_source, raw_phot):
             lcs = session.scalars(
                 sa.select(Lightcurve).where(
                     Lightcurve.source_name == new_source.name,
-                    Lightcurve.was_processed == False,
+                    Lightcurve.was_processed.is_(False),
                 )
             ).all()
             assert len(lcs) == 3
             lcs = session.scalars(
                 sa.select(Lightcurve).where(
                     Lightcurve.source_name == new_source.name,
-                    Lightcurve.was_processed == True,
+                    Lightcurve.was_processed.is_(True),
                 )
             ).all()
             assert len(lcs) == 3
@@ -1313,7 +1323,17 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(properties) == 1
 
     finally:  # remove all generated lightcurves and detections etc.
-        pass
+        with Session() as session:
+            for lc in new_source.reduced_lightcurves:
+                lc.delete_data_from_disk()
+                session.add(lc)
+                session.delete(lc)
+            for lc in new_source.processed_lightcurves:
+                lc.delete_data_from_disk()
+                session.add(lc)
+                session.delete(lc)
+
+            session.commit()
 
 
 # TODO: add test for simulation events

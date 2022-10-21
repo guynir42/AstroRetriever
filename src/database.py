@@ -43,7 +43,11 @@ Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 def clear_tables():
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association
-    from src.detection import Detection
+    from src.detection import (
+        Detection,
+        detection_raw_photometry_association,
+        detection_reduced_photometry_association,
+    )
     from src.properties import Properties
 
     try:
@@ -52,6 +56,8 @@ def clear_tables():
         pass
     try:
         Detection.metadata.drop_all(engine)
+        detection_raw_photometry_association.metadata.drop_all(engine)
+        detection_reduced_photometry_association.metadata.drop_all(engine)
     except:
         pass
     try:
@@ -122,6 +128,11 @@ class VO_Base:
         "just debugging code interactively. "
         "Remove such objects using clear_test_objects().",
     )
+
+    def keywords_to_columns(self, input_dict):
+        for k in list(input_dict.keys()):
+            if hasattr(self, k):
+                setattr(self, k, input_dict.pop(k))
 
 
 Base = declarative_base(cls=VO_Base)

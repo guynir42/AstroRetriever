@@ -33,7 +33,6 @@ class Detection(Base):
 
     source_id = sa.Column(
         sa.ForeignKey("sources.id"),
-        nullable=False,
         index=True,
         doc="ID of the source this detection is associated with",
     )
@@ -42,7 +41,7 @@ class Detection(Base):
         "Source",
         back_populates="detections",
         cascade="all",
-        foreign_keys=f"Detections.source_id",
+        foreign_keys="Detection.source_id",
     )
 
     # prefer to have this as column so we can still
@@ -232,9 +231,6 @@ class Detection(Base):
     # )
 
 
-# make sure all the tables exist
-Detection.metadata.create_all(engine)
-
 # add relationships!
 Source.detections = orm.relationship(
     "Detection",
@@ -267,6 +263,7 @@ detection_raw_photometry_association = sa.Table(
 Detection.raw_photometry = orm.relationship(
     "RawPhotometry",
     cascade="all",
+    secondary=detection_raw_photometry_association,
     doc="raw photometric data in which this detection was found",
 )
 
@@ -290,9 +287,15 @@ detection_reduced_photometry_association = sa.Table(
 Detection.reduced_photometry = orm.relationship(
     "Lightcurve",
     cascade="all",
+    secondary=detection_reduced_photometry_association,
     doc="reduced or processed or simulated "
     "photometric data in which this detection was found",
 )
+
+
+# make sure all the tables exist
+Detection.metadata.create_all(engine)
+
 
 # TODO: add relationships to spectrum datasets
 # TODO: add relationships to periodograms

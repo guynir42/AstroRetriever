@@ -210,6 +210,8 @@ class Source(Base, conesearch_alchemy.Point):
                 self.ra * u.deg, self.dec * u.deg
             )
 
+        self.keywords_to_columns(kwargs)
+
         additional_keywords = []
         if any([k not in additional_keywords for k in kwargs.items()]):
             raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -324,7 +326,7 @@ class Source(Base, conesearch_alchemy.Point):
             from the database.
         """
         self.properties = None
-        self.detections_in_time = []
+        self.detections = []
         for dt in allowed_data_types:
             setattr(self, f"processed_{dt}", [])
             setattr(self, f"simulated_{dt}", [])

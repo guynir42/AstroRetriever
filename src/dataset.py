@@ -219,6 +219,8 @@ class DatasetMixin:
             if hasattr(self, k):
                 setattr(self, k, kwargs.pop(k))
 
+        self.keywords_to_columns(kwargs)
+
         additional_keywords = []
         if any([k not in additional_keywords for k in kwargs.items()]):
             raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -1320,8 +1322,7 @@ class Lightcurve(DatasetMixin, Base):
 
     raw_data_id = sa.Column(
         sa.Integer,
-        sa.ForeignKey("raw_photometry.id"),
-        nullable=True,
+        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
         index=True,
         doc="ID of the raw dataset that was used " "to produce this reduced dataset.",
     )
@@ -1555,7 +1556,6 @@ class Lightcurve(DatasetMixin, Base):
             raise ValueError("Lightcurve must be initialized with data")
 
         self.filtmap = None  # get this as possible argument
-
         DatasetMixin.__init__(self, **kwargs)
 
         try:
@@ -1578,7 +1578,7 @@ class Lightcurve(DatasetMixin, Base):
                             )
                         return new_filt.replace("<filter>", filt)
 
-                self.data.loc[fcol] = self.data[fcol].map(filter_mapping)
+                self.data.loc[:, fcol] = self.data.loc[:, fcol].map(filter_mapping)
 
             filters = self.data[fcol].values
             if not all([f == filters[0] for f in filters]):
@@ -1621,12 +1621,14 @@ class Lightcurve(DatasetMixin, Base):
     def __repr__(self):
         string = (
             f"{self.__class__.__name__}("
+            f"id={self.id}, "
             f"source={self.source_name}, "
             f"epochs={self.number}"
         )
         if self.observatory:
             string += f" ({self.observatory.upper()})"
-        # string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
+        if self.mag_mean_robust is not None and self.mag_rms_robust is not None:
+            string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
         string += f", file: {self.filename}"
 
         if self.filekey:
@@ -2007,7 +2009,6 @@ source_raw_photometry_association = sa.Table(
     ),
 )
 
-
 Source.raw_photometry = orm.relationship(
     "RawPhotometry",
     secondary=source_raw_photometry_association,
@@ -2081,13 +2082,17 @@ Source.processed_photometry = add_alias("processed_lightcurves")
 Source.proc_lcs = add_alias("processed_lightcurves")
 
 
-# TODO: do we want raw photometry to
-#  link back to ALL associated lightcurves?
-#  Maybe add a relationship w/o cascade?
+# RawPhotometry does NOT link back to ALL associated lightcurves
+# If we delete a RawPhotometry, it will cascade to delete all
+# the associated Lightcurves using the foreign key's ondelete="CASCADE"
+# (which means postres will delete it for us)
+# but the ORM doesn't know that each RawPhotometry is associated with
+# a lightcurve, and doesn't add or delete them when we do suff with
+# the RawPhotometry object
 # RawPhotometry.lightcurves = orm.relationship(
 #     "Lightcurve",
 #     back_populates="raw_data",
-#     cascade="all",
+#     cascade="delete",  # do not automatically add reduced/processed lightcurves
 #     doc="Lightcurves derived from this raw dataset.",
 # )
 

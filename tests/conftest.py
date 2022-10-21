@@ -82,6 +82,27 @@ def raw_phot_no_exptime():
 
 
 @pytest.fixture
+def saved_phot(new_source):
+    data = RawPhotometry(
+        folder="data_temp",
+        altdata=dict(foo="bar"),
+        observatory="demo",
+        source_name=str(uuid.uuid4()),
+        test_only=True,
+    )
+    data.sources.append(new_source)
+    data.make_random_photometry(number=10)
+    data.save()
+    yield data
+
+    data.delete_data_from_disk()
+    with Session() as session:
+        if data.id:
+            session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
+        session.commit()
+
+
+@pytest.fixture
 def test_project():
     project = Project(name="test_project", catalog_kwargs={"default": "WD"})
     return project
@@ -145,7 +166,6 @@ def lightcurve_factory():
         lc = Lightcurve(
             data=df, observatory="demo", project="test_project", test_only=True
         )
-
         return lc
 
     return __factory
