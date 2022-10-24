@@ -64,7 +64,7 @@ dataset.DATA_ROOT = "/path/to/data/folder"
 
 #### Additional folders:
 
-You may want to generate folders for `catalogs` and `configs` in the root directory.
+You may want to generate folders for `catalogs` and `configs` in the root `virtualobserver` directory.
 These folder may be generated automatically.
 
 ## Architecture
@@ -94,7 +94,7 @@ Examples for storing and retrieving data products:
 - A `Project` object can load a configuration file and store the parameters in memory.
 - A `Catalog` can read FITS or CSV files with a table of sources.
 - Instances of `Source` and `RawPhotometry` and `Lightcurve` are persisted in a postgres database.
-- Data objects like `RawPhotometry` keep track of a filename on disk (in HDF5 or FITS format),
+- Data objects like `RawPhotometry` keep the name and path of a file on disk (in HDF5 or FITS format),
   and load the data from disk when needed.
 - A `Histograms` object is associated with a netCDF file on disk,
   which is loaded into a multidimensional `xarray` when needed.
@@ -102,15 +102,16 @@ Examples for storing and retrieving data products:
 Data that is saved to disk is automatically retrieved
 by `virtualobserver` so that each call to a method like
 `run()` on the project object or `download_all_sources()`
-on the observatory object will continue from where it left off.
+on the observatory object will continue from where it left off,
+skipping the sources and files it has already completed.
 
 ### Data folders
 
 Raw data is downloaded from separate surveys,
 and is saved under the `DATA_ROOT` folder,
-in a separate folder for each observatory
-(observatory names are pushed to upper case
-when used in folder names).
+(by default this is given by the environmental variable `VO_DATA`).
+Under that folder data is saved in a separate folder for each observatory
+(observatory names are pushed to upper case when used in folder names).
 For example, saving data from ZTF will put the raw
 data files into the `DATA_ROOT/ZTF` folder.
 
@@ -148,10 +149,17 @@ into the same file, with redundancy.
 If the name of the source is the same across both catalogs,
 the data will not be saved twice.
 The reason to combine sources by their RA is to make sure
-the source data is spread out across a finite number of files,
-without making any of the files too large to handle.
+the source data is spread out across a manageable number of files,
+without making any of the files too large.
 This allows separate threads to download data for different sources
 and still keep multiple sources organized into a single file.
+
+Note that we always save all raw data for a given source,
+from a given observatory, into a single file, and a single key (HDF5 group).
+This makes it easier to keep track of the raw data, that is potentially
+re-used across multiple projects or versions.
+The data products derived from the raw data (e.g., reduced lightcurves)
+could have multiple keys/groups for the same source, as explained below.
 
 ### Reduced files and other products
 
@@ -163,11 +171,11 @@ making it easier to work with and analyze.
 For example, raw photometry data can be reduced to lightcurves:
 
 ```python
-lcs = obs.reduce(raw_data, to='lcs')
+lcs = obs.reduce(source, data_type="photometry")
 ```
 
 will produce some `Lightcurve` objects,
-possible more than one lightcurve per raw dataset.
+possibly more than one lightcurve per raw dataset.
 This is because the raw data may contain data from multiple filters,
 or from different observing seasons/runs.
 The details of how a `RawPhotometry` object is reduced to a `Lightcurve` object
@@ -184,7 +192,7 @@ If using version control, the folder would be appended the hash of the final con
 as explained below.
 
 The file key for the lightcurve object would be the source name in the catalog,
-appended with `_reduction_XX_of_YY` where `XX` is the number of the reduction,
+appended with `_reduction_XX_of_YY` where `XX` is the number of the reduction (starting at 1),
 out of a total of `YY` reductions.
 The reduction number is just the order the lightcurves were created by the analysis code,
 and do not necessarily reflect the time of observations.
@@ -218,7 +226,7 @@ When disabled, the output folder will just be named
 by the project name, and the content in it could be
 outdated if the code/parameters were changed.
 This is useful for exploratory analysis.
-Note that `virtualobserver` will happily re-use
+Note that `virtualobserver` will quietly re-use
 existing data products even if changes were made
 to the code or parameters, so if version control is
 disabled, the user must be responsible for clearing
@@ -235,54 +243,86 @@ the code or parameters chosen for different projects.
 
 ### Classes:
 
-The module contains several classes:
+The module contains several classes.
+The pipeline classes will have a `Parameters` object so they can be initialized
+and configured by user input or by a config file.
+They generally do not save their internal state, and can be re-initialized
+and quickly continue their download/analysis process from where they left off.
 
 - `Project`: A top level object that handles the configuration parameters for downloading, saving and analyzing data.
   Each project would have a list of observatories, a catalog, and a unique project name that associates all database objects
   with a particular project. After initializing a project, with a given configuration, the object can then download
   any files not yet saved to disk, load files from disk, reduce the data and run analysis.
 - `Parameters`: Keep track of parameters from the user input or from a config file.
-  These objects are attributes of `Project`, `VirtualObservatory` and `Analysis` objects,
+  These objects are attributes of obejcts like `Project`, `VirtualObservatory` or `Analysis` (among others),
   so all the tunable parameters can be maintained for each parent object.
+  Each class that has parameters will usually add a subclass of the `Parameters` class,
+  where specific attibutes are added using the `add_par` method. See for example the `ParsProject` class.
 - `Catalog`: stores a list of objects, each with a name, RA, Dec, and magnitude etc.
+  Has code to load such a list from CSV, FITS or HDF5 files.
 - `VirtualObservatory`: contains methods to download and store images, lightcurves, or other datasets.
   Subclasses of the `VirtualObservatory` class are used to download data from specific surveys.
   An example subclass would be `VirtualZTF` to download and reduce data from the Zwicky Transient Facility
   (<https://www.ztf.caltech.edu/>).
   The observatory objects are also used to reduce data (e.g., from raw photometry to usable lightcurves).
 - `Analysis`: runs some custom pipeline to reduce the data to smaller summary statistics, find interesting events, etc.
+- `QualityChecker`: this object scans the reduced lightcurves and checks that data quality is good.
+  It can be used to flag bad data, or to remove bad data from the analysis. Generally each epoch in a lightcurve is flagged
+  using the `qflag` column, which is `True` for bad data, and `False` if the data is good in that time range.
+- `Finder`: this object scans the reduced lightcurves and calculates scores like S/N, that can be used to make detections.
+  The current implementation performs a simple peak detection in photometry data. Subclasses should implement more sophisticated
+  tools for setting the scores of each lightcurve, make more complicated detection algotithms (e.g., using a matched-filter)
+  or run analysis on other data types like spectra or images.
+  The combination of the `QualityChecker` and `Finder`'s operations on the reduced data (lightcurves or otherwise)
+  is to make "processed" data products. These are used for detections and for parameter estimation.
+  Both classes should be able to run multiple times on the same data (ignoring the previous results)
+  such that they can be applied to the original data once, and to any simulated data with injected events
+  multiple times to test the detection rates, etc.
+- `Simulator`: takes the processed data that is used by the `Finder` detection code and injects a simulated event into it.
+  The `Analysis` object automatically applies this "simulation mode", which produces `Detection` objects marked as "simulated".
+
+The data classes are mapped to rows in the database.
+Each one contains some meta data and some also contain paths to files on disk.
+Data class objects are how we store outputs from the pipeline and quickly query them later.
+
 - `Source`: an entry for a single astronomical object, includes a row from the catalog,
-  associated lightcurves, images, etc., and any analysis results.
+  and links to associated lightcurves, images, etc., and analysis results
+  in the form of a `Properties` object and possibly `Detection` objects.
   Each `Source` can be applied an `Analysis` object, which appends some summary statistics to that object,
   and may find some `Detection` objects.
 - `DatasetMixin`: a base class for various types of data, including images, lightcurves, and other data.
   A `DatasetMixin` has the ability to save data to a file and later retrieve it.
   All astronomical data classes have `times` (a vector of datetime objects) and `mjds`
   (a vector of modified julian dates) as attributes. They all have a filename and if required,
-  will also keep an in-file key for files containing multiple entries (e.g., HDF5 files).
+  will also keep an in-file key for files containing multiple entries (e.g., HDF5 files with groups).
 - `RawPhotometry` is used to store unprocessed photometric data. Inherits from `DatasetMixin`.
   This class is mostly used to store filenames to allow data to be easily saved/loaded for future analysis.
-  There are zero or more `RawPhotometry` objects associated with each `Source`, upt to one per observatory.
+  There are one or more `RawPhotometry` objects associated with each `Source`, one per observatory.
   Raw data is saved once per observatory, and can be reused in different projects (if they share sources).
+  If the source has no data for an observatory, it must still have a `RawPhotometry` object,
+  with `is_empty=True`, and an empty dataframe on disk. This allows `virtualobserver` to check if
+  a source has already been downloaded (even if no data was returned, it still counts as "downloaded").
 - `Lightcurve`: a set of time vs. flux measurements for a single object. Inherits from `DatasetMixin`.
   There are zero or more `Lightcurve` objects for each `Source`.
   Each `Lightcurve` is for a single filter in a single survey, usually for a single observing season/run.
   An `Analysis` applied to a `Source` can, for example, use the lightcurves as the input data.
   There are one or more `Lightcurve` objects associated with each `RawPhotometry` object.
-- `DetectionMixin`: A base class for all sorts of detection objects. The simplest example is given below,
-  which is the `DetectionInTime` object that stores information about a time-local event like a transient.
-  Other subclasses that can be useful are `DetectionInPeriod` or `DetectionInSpectrum`.
-- `DetectionInTime`: a specific point in time for an object, that may have astrophysical significance.
-  These refer back to the relevant data used to produce them.
-  A `Source` can contain zero or more `DetectionsInTime`s.
-- `Simulator`: takes the data that should be input to an `Analysis` object and injects a simulated event into it.
-  Each `Analysis` must be able to run in "simulation mode" that produces `Detection` objects marked as "simulated".
+- `Detection`: A class for all sorts of detection objects. For example, a photometry based search would produce
+  objects that store information about a time-local events like transients.
+  Other detection objects may have attibutes for wavelengths in spectra, for pixel coordinates in images, etc.
+  A `Source` can contain zero or more `Detection`s.
+- `Properties`: A class for storing summary statistics for a `Source`.
+  An `Analysis` applied to a `Source` will produce one such object for each source that was analyzed.
+  It may contain simple statistics like best S/N or more complicated results from, e.g., parameter
+  estimation methods. There are zero or more `Properties` objects associated with each `Source`.
 - `Histogram`: A multidimensional array (in `xarray` format) that saves statistics on the analysis.
   This can be important to maintain a record of, e.g., how many epochs each source was observed,
   so any detections (or null detections) can be translated into rates or upper limits on rates.
   The multiple dimensions of these histograms are used to bin the data along different values
   of the input data like the source magnitude (i.e., having many epochs on faint sources may be less
   useful than having a few epochs on a bright source).
+  NOTE: currently the `Histograms` object does not have an associated row in the database.
+  Instead, the different histograms are saved as netCDF files in the project output folder.
 
 ### Files and directories
 
@@ -297,7 +337,7 @@ The directory structure is as follows:
 Important files in the `src` folder are:
 
 - Each of the following modules contains a single class with a similar name:
-  `analysis.py`, `catalog.py`, `finder.py`, `histograms.py`, `parameters.py`, `project.py`, `quality.py`,
+  `analysis.py`, `catalog.py`, `detection.py`, `finder.py`, `histograms.py`, `parameters.py`, `project.py`,
   `simulator.py`, and `source.py`.
 - `observatory.py` contains the `VirtualObservatory` class, which is a base class for all survey-specific classes.
   It also contains the `VirtualDemoObs` which is an example observatory that can be used for testing data reduction.
@@ -305,8 +345,7 @@ Important files in the `src` folder are:
 - `dataset.py` contains the `DatasetMixin` class, which is a base class for all data types.
   It also contains the `RawPhotometry` class, which is used to store filenames for data that has not yet been reduced,
   and the `Lightcurve` class, which is used to store reduced photometry (lightcurves).
-- `detection.py` contains the `DetectionMixin` class, which is a base class for all detection objects.
-  It also contains the `DetectionInTime` class, which is a specific example of a detection class.
+- `quality.py` contains the `QualityChecker` class, which is used in conjunction with the `Finder` class inside `Analysis`.
 - `ztf.py` contains the `VirtualZTF` class, which is a subclass of `VirtualObservatory`
   and is used to download data from ZTF, and reduce the data into usable products.
 
@@ -320,11 +359,20 @@ Define a project and run the full pipeline:
 from src.project import Project
 proj = Project(
     name="default_test",  # must give a name to each project
-    project_string="my project",  # random parameter example
+    description="my project description",  # optional parameter example
     version_control=False, # whether to use version control on products
     obs_names=["ZTF"],  # must give at least one observatory name
     # parameters to pass to the Analysis object:
-    analysis_kwargs={"analysis_key": "analysis_value"},
+    analysis_kwargs={
+      "num_injections": 3,
+      "finder_kwargs": {  # pass through Analysis into Finder
+        "snr_threshold": 7.5,
+      },
+      "finder_module": "src.finder",  # can choose different module
+      "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
+    },
+    analysis_module="src.analysis",  # replace this with your code path
+    analysis_class="Analysis",  #  replace this with you class name (e.g., MyAnalysis)
     catalog_kwargs={"default": "WD"},  # load the default WD catalog
     # parameters to be passed into each observatory class
     obs_kwargs={'reducer': {'radius': 3, 'gap': 40}},
@@ -335,19 +383,32 @@ proj = Project(
 # download all data for all sources in the catalog
 # and reduce the data (skipping raw and reduced data already on file)
 # and store the results as detection objects in the DB, along with
-# detection stats in the form of histograms array.
+# detection stats in the form of histogram arrays.
 proj.run()
 
 ```
 
 This project will download a Gaia-based FITS file
-with a list of white dwarfs,
-and set up a ZTF observatory with the given credentials.
+with a list of white dwarfs (the default "WD" catalog)
+and set up a ZTF virtual observatory with the given credentials.
 The `run()` method will then backfill data products
 that are missing from the data folder.
 For example, the project will not download raw data that has already
 been downloaded, it will not reduce data that has already been reduced,
-and will not produce analysis results that have already been produced.
+and will not produce analysis results for sources that have already been analyzed.
+
+The results would be that each `Source` in the database
+will have some reduced lightcurve files saved in the project
+output folder, each one reference by a `Lightcurve` object in the database.
+Each `Source` will also have a `Properties` object in the database,
+which marks it as having been analyzed.
+Some `Detections` objects in the database could be created,
+each linked to a specific `Source`.
+Finally, there would be a histograms file containing statistics on the
+data that has been processed so far.
+Optionally, there could be additional `Lightcurve` objects on the DB,
+linking to files in the output folder, that contain processed data
+and simulated data (which is the same as processed, but with injected events).
 
 ### Config files and constructor arguments
 
@@ -357,6 +418,10 @@ To call that file, use the special keywords
 `cfg_file` to specify the file name,
 and the `cfg_key` to specify the key in the file
 to load for into that specific object (a project in this example).
+Most classes will have a default key name already set up,
+so it is usually ok not to specify the `cfg_key` parameter
+(this is done using the `Parameters.get_default_cfg_key()` method,
+which is defined for each subclass of `Parameters`)
 For example, the above code can be written as:
 
 ```python
@@ -370,50 +435,96 @@ the `Parameters` object of the project will try to find a file
 named `configs/<project name>.yaml` and look for a `project` key in it.
 Only if `cfg_file` is specified, the code will raise an error if no such file exists.
 To explicitly avoid loading a config file, use `cfg_file=None`.
+Note that passing arguments to a sub-object (e.g., `Analysis` inside a `Project`)
+the user will pass an `analysis_kwargs` dictionary to the `Project` constructor.
+In the config file, these arguments should be specified under the `analysis` key,
+not under the `project` key.
+If, however, we want to load a different class (using custom code that inherits from `Analysis`),
+the `analysis_module` and `analysis_class` parameters should be specified under the `project` key.
+This is because the module/class must be given to the containing object to be able to construct the sub-objects.
+Only after they are constructed, the sub objects can search for the appropriate key in the config file.
 
 If mixing config file arguments and constructor arguments,
 the constructor arguments override those in the config file.
-If the user changes any of the attributes of the `Parameters` object,
-the new values will be used when calling `run()` on the project.
+If the user changes any of the attributes of the any of `Parameters` objects,
+after the objects are already constructed,
+those new values will be used instead of the previous definitions.
+Note that some classes may require some initialization after parameters are changed.
+
+It is recommended that the user inputs all parameters in one method:
+
+1. using a config YAML file,
+2. using a python script that supplies nested dictionaries to the project constructor,
+3. using a python script that sets attributes on each constructed object.
+
+The last method may require some re-initialization for some objects.
 
 ### Using custom code and arguments
 
-To customize your analysis, two major inputs are used:
-(1) Choosing arguments (parameters) for each object in the pipeline,
-(2) Adding subclasses with custom code.
+The analysis pipeline given as default by `virtualobserver` is rather limited.
+It calculates the S/N and searches for single-epoch detections.
+More complicated analysis can be used by changing the parameters or by adding custom code
+as subclasses where some methods are overwritten.
 
-As an example, initialize a project with an Analysis object:
+As an example, initialize a project with an Analysis object,
+but change the default detection threshold:
 
 ```python
 proj = Project(
     name="default_test",  # must give a name to each project
-    analysis_kwargs={"analysis_key": "analysis_value"},
+    analysis_kwargs={"snr_threshold": 8.5},
 )
 ```
 
 This will create the default `Analysis` object from `analysis.py`,
-and pass it the `analysis_kwargs` dictionary when it is initialized.
-The argument `analysis_key` is stored in the `Analysis` object's `pars` object,
-which is a `Parameters` object (or subclass of it).
+The argument `snr_threshold` is stored in the `Analysis` object's `pars` object,
+which is a `ParsAnalysis` object (a subclass of `Parameters`).
 
 This, however, limits the analysis to code already in the `Analysis` class.
-To subclass it, simple add a new file and class inside of it (that inherits from `Analysis`).
+To subclass it, simply add a new file containing a new class (that inherits from `Analysis`).
 For example, create a new file `my_analysis.py` with the following contents:
 
 ```python
 
 # extensions/my_analysis.py
+from src.parameters import Parameters
 from src.analysis import Analysis
 
-class NewAnalysis(Analysis):
+class ParsMyAnalysis(ParsAnalysis):
+    """
+    Parameters for MyAnalysis class
+    Will have all the parameters already defined in ParsAnalysis,
+    but add another one as an example.
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.pars = Parameters.from_dict(kwargs, "analysis")
-        self.pars.default_values(
-            new_analysis_key="new_analysis_value"
-        )
+
+        # unlock this object to allow new add_par calls
+        self._enforce_no_new_attrs = False
+        self.num_kernels = self.add_par("num_kernels", 10, int, "number of kernels")
+
+        # re-lock this object so users cannot set attributes not already defined
+        self._enforce_no_new_attrs = True
+
+class NewAnalysis(Analysis):
+    """A class to do matched-filter analysis using multiple kernels. """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.pars = ParsMyAnalysis(**kwargs)
+
     # override this part of the analysis
-    def run_lightcurves(self, source):
+    def analyze_photometry(self, source):
+        """
+        Run analysis on lightcurves, overriding
+        the simple analysis code in the base class.
+        This part will probably make use of the
+        `self.pars.num_kernels` parameter.
+        Because the rest of the Analysis class is the same,
+        we don't need to worry about simulations,
+        about making detection objects, etc.
+        If the detection object needs to be modified,
+        we should also override the `make_detection` method.
+        """
         ...
 ```
 
@@ -424,17 +535,32 @@ Initialize the project with the new class:
 ```python
 proj = Project(
     name="default_test",  # must give a name to each project
-    analysis_kwargs={"new_analysis_key": "new_analysis_value"},
+    analysis_kwargs={"num_kernels": 20},
     analysis_module="extensions.my_analysis",
     analysis_class="NewAnalysis",
 )
 ```
+
+### Loading a catalog
+
+Use the default white dwarf (WD) catalog from
+<https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract>.
+
+```python
+from src.catalog import Catalog
+cat = Catalog(default="WD")
+cat.load()
+```
+
+The `load()` method will download the catalog file if it is not already present,
+and read it from memory if it is not already loaded.
 
 ### Downloading data
 
 Use only one of the observatories to download the data:
 
 ```python
+proj = Project(name="default_test", obs_names=["ZTF"])
 obs = proj.observatories["ZTF"]  # can also use observatories[0]
 obs.pars.num_threads_download = 0  # can use higher values for multi-threading
 obs.download_all_sources(0, 1000, save=True)  # grab first 1000 sources in catalog
@@ -451,34 +577,22 @@ Internally, the `VirtualObservatory` superclass will
 take care of database interaction and file creation,
 possibly running multiple threads
 (controlled by the `pars.num_threads_download` parameter).
-Inside this code is a function `fetch_data_from_observatory()`
-That is only implemented in observatory subclasses.
+Inside this code is a function `fetch_data_from_observatory()`,
+an abstract method that is only implemented in observatory subclasses
+(i.e., not on the base class).
 This function gets a `cat_row` dictionary with some
 info on the specific source (name, RA/Dec, magnitude, etc.),
 and additional keyword arguments,
-and produces raw data (generally a dataframe) and an `altdata` dictionary
-with additional information about the data (metadata).
+and produces two values: `data` (generally a `pandas` dataframe)
+and an `altdata` dictionary with additional information about the data (metadata).
 This function calls whatever specific web API is used by the
 specific observatory to download the data.
-
-### Loading a catalog
-
-Use the default white dwarf (WD) catalog from
-<https://ui.adsabs.harvard.edu/abs/2021MNRAS.508.3877G/abstract>.
-
-```python
-from src.catalog import Catalog
-cat = Catalog(default="WD")
-cat.load()
-```
-
-The `load()` method will download the catalog file if it is not already present,
-and read it from memory if it is not already loaded.
+Usually it is enough to only implement this function and the reduction function.
 
 ### Reducing lightcurves
 
 To reduce lightcurves, first define an observatory
-with optional `reducer` parameters or use the inputs directly.
+with optional `reducer` parameters.
 
 ```python
 from src.ztf import VirtualZTF
@@ -497,12 +611,16 @@ from src.dataset import RawPhotometry
 data = RawPhotometry(filename="my_raw_data.h5")
 data.load()
 obs.pars.reducer = {'gap': 60}
-lcs = obs.reduce(data, to='lcs')
+lcs = obs.reduce(data, data_type='photometry')
 ```
 
 This should produce a list of `Lightcurve` objects, one for each filter/season.
 In this case the `gap` parameter is used to split the lightcurve into multiple
 "seasons" if there is a gap of more than 60 days between epochs.
+
+To override the methods that reduce the data,
+usually it is enough to implement the `reduce_photometry()` method
+(or other reduction if the data is imaging or spectroscopy, etc.).
 
 ## Using the data
 
@@ -524,7 +642,7 @@ To get full objects (rather than tuples with specific columns)
 use the `session.scalars()`.
 Inside the `scalars` block, use the `sa.select(Class)` method
 to select from one of the tables of mapped objects
-(mapped classes include `Source`, `RawPhotometry`, `Lightcurve`, `DetectionInTime`, etc).
+(mapped classes include `Source`, `RawPhotometry`, `Lightcurve`, `Detection`, etc).
 Use the `all()` or `first()` methods to get all or the first object.
 To filter the results use the `where()` method on the select statement object.
 
@@ -574,8 +692,8 @@ with Session() as session:
       Source.name == 'J123.1-32.13'
     )
   ).first()
-  data = source.raw_data[0]
-  lcs = obs.reduce(data, to='lcs')
+  data = source.raw_photometry[0]
+  lcs = obs.reduce(data, data_type='photometry')
   for lc in lcs:
     lc.save()
     session.add(lc)
@@ -612,7 +730,7 @@ lc.filekey  # J123.1-32.13_reduction_01_of_03
 
 As long as the datasets are associated with a database object,
 there is no need to know the file name, path or key.
-Simply load the objects from database and use the `data`.
+Simply load the objects from database and use the `data` attribute.
 The dataset objects also have some plotting tools that can
 be used to quickly visualize the data.
 These will lazy load the `data` attribute from disk.
@@ -656,8 +774,9 @@ For each `Source` we use `Analysis` objects to reduce the data to a summary stat
 that is persisted and queryable for all sources.
 The products of the `Analysis` include:
 
+- `Properties` objects, one per source, that store the summary statistics.
+  and let us know the source was already analyzed.
 - `Detection` objects, which can be used to find real or simulated events.
-- Summary statistics on each source, for e.g., prioritizing followup.
 - Some histograms including an estimate of the amount of data of various quality
   that was scanned across all sources in the catalog.
   This is represented by the `Histograms` class.
