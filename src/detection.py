@@ -46,6 +46,8 @@ class Detection(Base):
 
     # prefer to have this as column so we can still
     # attach a detection that was removed from a source
+    # this will also automatically be filled when setting source
+    # instead of this:
     # source_name = association_proxy("source", "name")
     source_name = sa.Column(
         sa.String,
@@ -116,7 +118,7 @@ class Detection(Base):
         index=True,
     )
 
-    failed_flag = sa.Column(
+    quality_flag = sa.Column(
         sa.Boolean,
         nullable=False,
         default=False,
@@ -129,11 +131,6 @@ class Detection(Base):
         default={},
         doc="Quality cuts values associated with this detection",
     )
-
-    def __setattr__(self, key, value):
-        if key == "source":
-            self.source_name = value.name
-        super().__setattr__(key, value)
 
     # detections made on lightcurves / photometric data:
     peak_time = sa.Column(
@@ -161,7 +158,7 @@ class Detection(Base):
         sa.Float, nullable=True, index=True, doc="Magnitude of the detection."
     )
 
-    peak_dmag = sa.Column(
+    peak_mag_diff = sa.Column(
         sa.Float,
         nullable=True,
         index=True,
@@ -229,6 +226,15 @@ class Detection(Base):
     # __table_args__ = (
     #     sa.UniqueConstraint("time_peak", "source_id", name="_detection_in_time_uc"),
     # )
+
+    def __setattr__(self, key, value):
+        """
+        Intercept cases where we set the source,
+        so it will also automatically set the source name.
+        """
+        if key == "source":
+            self.source_name = value.name
+        super().__setattr__(key, value)
 
 
 # add relationships!

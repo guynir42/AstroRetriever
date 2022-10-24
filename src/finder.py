@@ -260,21 +260,48 @@ class Finder:
             The detection object for this event.
         """
         det = Detection()
-        det.project = self.pars.project
+        det.method = "peak finding"
+        det.data_types = self.pars.data_types
         det.source = source
-        det.raw_data = lightcurve.raw_data
-        det.lightcurve = lightcurve
-        det.time_peak = lightcurve.times[peak_idx]
-        det.snr = lightcurve.data.loc[peak_idx, "snr"]
+        det.project = self.pars.project
+        det.cfg_hash = source.cfg_hash
+
+        det.raw_photometry = source.raw_photometry
+        if sim is None:  # real data
+            det.reduced_photometry = source.processed_photometry
+        else:  # simulated data
+            det.reduced_photometry = source.simulated_photometry
 
         # mark the location of this detection:
         det.time_indices = self.get_event_indices(lightcurve)
         lightcurve.data.loc[det.time_indices, "detected"] = True
+
+        # in this case time_start and peak start are the same
         det.time_start = lightcurve.times[np.where(det.time_indices)[0][0]]
         det.time_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
 
         # save simulation values
         det.simulated = sim is not None
         det.sim_pars = sim
+
+        # is this a test run?
+        det.test_only = source.test_only
+
+        # time of peak, snr and so on
+        det.snr = lightcurve.data.loc[peak_idx, "snr"]
+        # can add score and additional_scores if needed
+        det.peak_time = lightcurve.times[peak_idx]
+        det.peak_start = lightcurve.times[np.where(det.time_indices)[0][0]]
+        det.peak_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
+
+        # TODO: add the quality cut values and quality_flag
+
+        det.peak_mag = lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
+        det.peak_mag_diff = (
+            lightcurve.mag_mean_robust
+            - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
+        )
+
+        # can add matched filter here
 
         return det

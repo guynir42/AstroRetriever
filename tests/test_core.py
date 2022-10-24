@@ -1231,7 +1231,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-# @pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(reruns=3)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1264,7 +1264,7 @@ def test_analysis(analysis, new_source, raw_phot):
     assert len(new_source.processed_lightcurves) == 0  # should be empty if not saving
     assert len(new_source.detections) == 0  # should be empty if not saving
 
-    # check that nothing is saved
+    # check that nothing was saved
     with Session() as session:
         lcs = session.scalars(
             sa.select(Lightcurve).where(Lightcurve.source_name == lc.source_name)
@@ -1315,6 +1315,7 @@ def test_analysis(analysis, new_source, raw_phot):
                 sa.select(Detection).where(Detection.source_name == new_source.name)
             ).all()
             assert len(detections) == 1
+            assert detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
 
             # check properties
             properties = session.scalars(
