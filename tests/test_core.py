@@ -431,6 +431,7 @@ def test_add_source_and_data():
             sources = session.scalars(
                 sa.select(Source).where(Source.name == source_name)
             ).first()
+
             assert sources is not None
             assert len(sources.raw_photometry) == 1
             assert sources.raw_photometry[0].filename == filename
@@ -1177,7 +1178,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
-    assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
+    assert det[0].peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
 
     simple_finder.pars.max_det_per_lc = 2
 
@@ -1189,7 +1190,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert len(det) == 2
     assert det[1].source_id == lc.source_id
     assert abs(det[1].snr + n_sigma) < 1.0  # more or less n sigma
-    assert det[1].time_peak == Time(lc.data.mjd.iloc[96], format="mjd").datetime
+    assert det[1].peak_time == Time(lc.data.mjd.iloc[96], format="mjd").datetime
 
     # now do not look for negative detections:
     lc.data["detected"] = False  # clear the previous detections
@@ -1198,7 +1199,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].time_peak == Time(lc.data.mjd.iloc[4], format="mjd").datetime
+    assert det[0].peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
 
     # this lightcurve has bad data:
     lc = lightcurve_factory()
@@ -1214,7 +1215,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
-    assert det[0].time_peak == Time(lc.data.mjd.iloc[50], format="mjd").datetime
+    assert det[0].peak_time == Time(lc.data.mjd.iloc[50], format="mjd").datetime
 
     # this lightcurve has an outlier with five epochs
     lc = lightcurve_factory()
@@ -1226,7 +1227,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert len(det) == 1
     assert det[0].source_id == lc.source_id
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
-    assert lc.data.mjd.iloc[10] < Time(det[0].time_peak).mjd < lc.data.mjd.iloc[15]
+    assert lc.data.mjd.iloc[10] < Time(det[0].peak_time).mjd < lc.data.mjd.iloc[15]
     assert np.isclose(Time(det[0].time_start).mjd, lc.data.mjd.iloc[10])
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
@@ -1257,7 +1258,7 @@ def test_analysis(analysis, new_source, raw_phot):
     assert analysis.detections[0].source_name == lc.source_name
     assert analysis.detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
     assert (
-        analysis.detections[0].time_peak
+        analysis.detections[0].peak_time
         == Time(lc.data.mjd.iloc[4], format="mjd").datetime
     )
     assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
