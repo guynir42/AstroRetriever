@@ -54,6 +54,7 @@ class ParsObservatory(Parameters):
         self.obs_name = self.add_par(
             "obs_name", obs_name.upper(), str, "Name of the observatory."
         )
+        self._cfg_sub_key = self.obs_name
 
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
@@ -91,21 +92,17 @@ class ParsObservatory(Parameters):
         self.overwrite_files = self.add_par(
             "overwrite_files", True, bool, "Overwrite existing files"
         )
-        self.save_ra_minutes = (
-            self.add_par(
-                "save_ra_minutes",
-                False,
-                bool,
-                "Save RA in minutes in addition to hours",
-            ),
+        self.save_ra_minutes = self.add_par(
+            "save_ra_minutes",
+            False,
+            bool,
+            "Save RA in minutes in addition to hours",
         )
-        self.save_ra_seconds = (
-            self.add_par(
-                "save_ra_seconds",
-                False,
-                bool,
-                "Save RA in seconds in addition to hours and minutes",
-            ),
+        self.save_ra_seconds = self.add_par(
+            "save_ra_seconds",
+            False,
+            bool,
+            "Save RA in seconds in addition to hours and minutes",
         )
         self.filekey_prefix = self.add_par(
             "filekey_prefix",

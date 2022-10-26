@@ -167,6 +167,22 @@ class Parameters:
             "Set to True to lock the object from further changes. ",
         )
 
+        self._cfg_key = self.add_par(
+            "_cfg_key",
+            None,
+            (None, str),
+            "The key to use when loading the parameters from a YAML file. "
+            "This is also the key that will be used when writing the parameters "
+            "to the output config file. ",
+        )
+        self._cfg_sub_key = self.add_par(
+            "_cfg_sub_key",
+            None,
+            (None, str),
+            "The sub-key to use when loading the parameters from a YAML file. "
+            "E.g., the observatory name under observatories. ",
+        )
+
     def __contains__(self, key):
         return hasattr(self, key)
 
@@ -293,13 +309,14 @@ class Parameters:
         dict
             The combined config dictionary using the values
             from file (if loaded) and the input values
-            that override any keys from file.
+            that override any keys from the file.
         """
 
         # check if need to load from disk
         (cfg_file, cfg_key, explicit) = self.extract_cfg_file_and_key(inputs)
 
         config = self.load(cfg_file, cfg_key, raise_if_missing=explicit)
+        self._cfg_key = cfg_key
         # apply the input kwargs (override config file)
         if "demo_boolean" in config:
             print(f'config["demo_boolean"] = {config["demo_boolean"]}')
@@ -584,6 +601,70 @@ class Parameters:
         max_length = max(len(n) for n in names)
         for n, d in zip(names, desc):
             print(f"{n:>{max_length}}{d}")
+
+    def to_dict(self, hidden=False):
+        """
+        Convert parameters to a dictionary.
+        Only get the parameters that were defined
+        using the add_par method.
+
+        Parameters
+        ----------
+        hidden: bool
+            If True, include hidden parameters.
+            By default, does not include hidden parameters.
+
+        Returns
+        -------
+        output: dict
+            A dictionary with the parameters.
+        """
+        output = {}
+        for k in self.__defaultpars__.keys():
+            if hidden or not k.startswith("_"):
+                output[k] = self[k]
+
+        return output
+
+    def compare(self, other, hidden=False, ignore=None, verbose=False):
+        """
+        Check that all parameters are the same between
+        two Parameter objects. Will only check those parameters
+        that were added using the add_par() method.
+        By default, ignores hidden parameters even if they were
+        added using add_par().
+
+        Parameters
+        ----------
+        other: Parameters object
+            The other Parameters object to compare to.
+        hidden: bool
+            If True, include hidden parameters.
+            By default, does not include hidden parameters.
+        verbose: bool
+            If True, print the differences between the two
+            Parameter objects.
+
+        Returns
+        -------
+        same: bool
+            True if all parameters are the same.
+
+        """
+        if ignore is None:
+            ignore = []
+
+        same = True
+        for k in self.__defaultpars__.keys():
+            if k in ignore:
+                continue
+            if hidden or not k.startswith("_") and self[k] != other[k]:
+                same = False
+                if not verbose:
+                    break
+                print(f'Par "{k}" is different: {self[k]} vs {other[k]}')
+
+        return same
 
     @staticmethod
     def get_default_cfg_key(cls):
