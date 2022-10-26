@@ -73,19 +73,6 @@ class ParsProject(Parameters):
             "Hash of the names in the catalog for this project.",
         )
 
-        # each observatory name can be given its own, specific keyword arguments
-        # for obs_name in self.obs_names:
-        #     setattr(
-        #         self,
-        #         obs_name,
-        #         self.add_par(
-        #             obs_name,
-        #             {},
-        #             dict,
-        #             f"Keyword arguments to pass to the {obs_name.upper()} observatory",
-        #         ),
-        #     )
-
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 

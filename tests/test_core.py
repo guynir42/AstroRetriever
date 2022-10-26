@@ -93,28 +93,33 @@ def test_project_user_inputs():
 
     proj = Project(
         name="default_test",
-        obs_names=["ZTF"],
+        obs_names=["demo", "ZTF"],
         analysis_kwargs={"num_injections": 3},
         obs_kwargs={
             "reducer": {"reducer_key": "reducer_value"},
             "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
+            "DEMO": {"reducer": {"reducer_key": "reducer_value2"}},
         },
         catalog_kwargs={"default": "test"},
     )
 
     # check the project parameters are loaded correctly
-    assert proj.pars.obs_names == ("ZTF",)
+    assert proj.pars.obs_names == ["DEMO", "ZTF"]
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
     assert "ztf" in [obs.name for obs in proj.observatories]
-    assert isinstance(proj.observatories[0], VirtualZTF)
+    assert isinstance(proj.observatories[1], VirtualZTF)
     # check that observatories can be referenced using (case-insensitive) strings
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"], VirtualZTF)
-    assert isinstance(proj.observatories[0]._credentials, dict)
-    assert proj.observatories[0]._credentials["username"] == "guy"
-    assert proj.observatories[0]._credentials["password"] == "12345"
+    assert isinstance(proj.observatories["ZTF"]._credentials, dict)
+    assert proj.observatories["ztf"]._credentials["username"] == "guy"
+    assert proj.observatories["ztf"]._credentials["password"] == "12345"
+
+    # check the reducer was overriden in the demo observatory
+    assert proj.observatories["ztf"].pars.reducer["reducer_key"] == "reducer_value"
+    assert proj.observatories["demo"].pars.reducer["reducer_key"] == "reducer_value2"
 
 
 def test_project_config_file(data_dir):
