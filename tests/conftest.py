@@ -1,3 +1,4 @@
+import os
 import uuid
 import numpy as np
 import pandas as pd
@@ -11,6 +12,14 @@ from src.source import Source
 from src.project import Project
 from src.dataset import RawPhotometry, Lightcurve
 from src.finder import Finder
+import src.database
+
+
+@pytest.fixture(scope="session", autouse=True)
+def data_dir():
+    basepath = os.path.abspath(os.path.dirname(__file__))
+    src.database.DATA_ROOT = basepath
+    return basepath
 
 
 @pytest.fixture

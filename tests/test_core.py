@@ -19,7 +19,6 @@ from src.ztf import VirtualZTF
 
 from src.database import Session
 from src.source import Source, DEFAULT_PROJECT
-import src.dataset
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
@@ -28,14 +27,10 @@ from src.properties import Properties
 from src.histogram import Histogram
 
 
-basepath = os.path.abspath(os.path.dirname(__file__))
-src.dataset.DATA_ROOT = basepath
-
-
-def test_load_save_parameters():
+def test_load_save_parameters(data_dir):
 
     filename = "parameters_test.yaml"
-    filename = os.path.abspath(os.path.join(basepath, filename))
+    filename = os.path.abspath(os.path.join(data_dir, filename))
 
     # write an example parameters file
     with open(filename, "w") as file:
@@ -89,7 +84,7 @@ def test_load_save_parameters():
 
 def test_default_project():
     proj = Project("default_test", catalog_kwargs={"default": "test"})
-    assert proj.pars.obs_names == ("DEMO",)
+    assert proj.pars.obs_names == ["DEMO"]
     assert "demo" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)
 
@@ -98,31 +93,42 @@ def test_project_user_inputs():
 
     proj = Project(
         name="default_test",
-        obs_names=["ZTF"],
+        obs_names=["demo", "ZTF"],
         analysis_kwargs={"num_injections": 3},
         obs_kwargs={
             "reducer": {"reducer_key": "reducer_value"},
             "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
+            "DEMO": {"reducer": {"reducer_key": "reducer_value2"}},
         },
         catalog_kwargs={"default": "test"},
     )
 
     # check the project parameters are loaded correctly
-    assert proj.pars.obs_names == ("ZTF",)
+    assert set(proj.pars.obs_names) == {"DEMO", "ZTF"}
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
     assert "ztf" in [obs.name for obs in proj.observatories]
-    assert isinstance(proj.observatories[0], VirtualZTF)
+    idx = None
+    for i, item in enumerate(proj.observatories):
+        if isinstance(item, VirtualZTF):
+            idx = i
+            break
+    assert idx is not None
+    assert isinstance(proj.observatories[idx], VirtualZTF)
     # check that observatories can be referenced using (case-insensitive) strings
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"], VirtualZTF)
-    assert isinstance(proj.observatories[0]._credentials, dict)
-    assert proj.observatories[0]._credentials["username"] == "guy"
-    assert proj.observatories[0]._credentials["password"] == "12345"
+    assert isinstance(proj.observatories["ZTF"]._credentials, dict)
+    assert proj.observatories["ztf"]._credentials["username"] == "guy"
+    assert proj.observatories["ztf"]._credentials["password"] == "12345"
+
+    # check the reducer was overriden in the demo observatory
+    assert proj.observatories["ztf"].pars.reducer["reducer_key"] == "reducer_value"
+    assert proj.observatories["demo"].pars.reducer["reducer_key"] == "reducer_value2"
 
 
-def test_project_config_file():
+def test_project_config_file(data_dir):
     project_str1 = str(uuid.uuid4())
     project_str2 = str(uuid.uuid4())
 
@@ -131,7 +137,6 @@ def test_project_config_file():
             "description": project_str1,  # random string
             "obs_names": ["demo", "ztf"],  # list of observatory names
         },
-        "catalog": {"default": "test"},  # catalog definitions
         "observatories": {  # general instructions to pass to observatories
             "reducer": {  # should be overriden by observatory reducer
                 "reducer_key": "project_reduction",
@@ -143,7 +148,7 @@ def test_project_config_file():
             "ztf": {
                 "credentials": {
                     "filename": os.path.abspath(
-                        os.path.join(basepath, "passwords_test.yaml")
+                        os.path.join(data_dir, "passwords_test.yaml")
                     ),
                 },
                 "reducer": {
@@ -151,13 +156,14 @@ def test_project_config_file():
                 },
             },
         },
+        "catalog": {"default": "test"},  # catalog definitions
         "analysis": {
             "num_injections": 2.5,
         },
     }
 
     # make config and passwords file
-    configs_folder = os.path.abspath(os.path.join(basepath, "../configs"))
+    configs_folder = os.path.abspath(os.path.join(data_dir, "../configs"))
 
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
@@ -223,17 +229,48 @@ def test_project_config_file():
         os.remove(data["observatories"]["ztf"]["credentials"]["filename"])
 
 
-def test_version_control():
+def test_version_control(data_dir):
     proj = Project(
-        "default_test", version_control=True, catalog_kwargs={"default": "test"}
+        "test_project",
+        obs_names=["demo", "ztf"],
+        version_control=True,
+        catalog_kwargs={"default": "test"},
+        analysis_kwargs={"num_injections": 3},
     )
     assert isinstance(proj.pars.git_hash, str)
-    print(f"current git hash is: {proj.pars.git_hash}")
+
+    try:  # cleanup config files at the end
+        output_filename = None
+
+        # save the config file
+        proj.save_config()
+        output_filename = os.path.join(data_dir, proj.output_folder, "config.yaml")
+
+        assert os.path.basename(proj.output_folder) == "TEST_PROJECT_" + proj.cfg_hash
+        assert os.path.isfile(output_filename)
+
+        # load a new Project with the output config file, and check that all
+        # parameters on both lists are the same.
+        list1 = proj.pars.get_pars_list(proj)
+
+        proj2 = Project("test_project", cfg_file=output_filename)
+        list2 = proj2.pars.get_pars_list(proj2)
+        assert len(list1) == len(list2)
+
+        for p1, p2 in zip(list1, list2):
+            assert p1.compare(p2, ignore=["cfg_file"], verbose=True)
+    finally:  # cleanup
+        if output_filename is not None:
+            if os.path.isfile(output_filename):
+                os.remove(output_filename)
+            folder = os.path.dirname(output_filename)
+            if os.path.isdir(folder):
+                os.rmdir(folder)
 
 
-def test_catalog():
+def test_catalog(data_dir):
     filename = "test_catalog.csv"
-    fullname = os.path.abspath(os.path.join(basepath, "../catalogs", filename))
+    fullname = os.path.abspath(os.path.join(data_dir, "../catalogs", filename))
 
     try:
         Catalog.make_test_catalog(filename=filename, number=10)
@@ -253,9 +290,9 @@ def test_catalog():
         assert not os.path.isfile(fullname)
 
 
-def test_catalog_hdf5():
+def test_catalog_hdf5(data_dir):
     filename = "test_catalog.h5"
-    fullname = os.path.abspath(os.path.join(basepath, "../catalogs", filename))
+    fullname = os.path.abspath(os.path.join(data_dir, "../catalogs", filename))
 
     try:
         Catalog.make_test_catalog(filename=filename, number=10)
@@ -339,7 +376,7 @@ def test_observatory_filename_conventions(test_project):
     assert data.filekey == f"{data.type}_{name}"
 
 
-def test_add_source_and_data():
+def test_add_source_and_data(data_dir):
     fullname = ""
     try:  # at end, delete the temp file
 
@@ -417,7 +454,7 @@ def test_add_source_and_data():
 
             # try to recover the data
             filename = new_data.filename
-            fullname = os.path.join(basepath, "data_temp", filename)
+            fullname = os.path.join(data_dir, "data_temp", filename)
 
             with pd.HDFStore(fullname) as store:
                 key = store.keys()[0]
@@ -702,7 +739,7 @@ def test_filter_mapping(raw_phot):
     assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
 
 
-def test_data_file_paths(raw_phot):
+def test_data_file_paths(raw_phot, data_dir):
     try:  # at end, delete the temp files
         raw_phot.save(overwrite=True)
         assert raw_phot.filename is not None
@@ -719,21 +756,21 @@ def test_data_file_paths(raw_phot):
     raw_phot.filename = "test.h5"
     assert raw_phot.folder is None
     assert raw_phot.filename == "test.h5"
-    assert raw_phot.get_fullname() == os.path.join(basepath, "DEMO/test.h5")
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "DEMO/test.h5")
 
     # no folder is given, but has observatory name to use as default
     raw_phot.observatory = "ztf"
-    assert raw_phot.get_fullname() == os.path.join(basepath, "ZTF/test.h5")
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/test.h5")
 
     # give the folder explicitly, will override the default
     raw_phot.folder = "test"
-    assert raw_phot.get_fullname() == os.path.join(basepath, "test/test.h5")
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "test/test.h5")
 
     # adding a path to filename puts that path into "folder"
     raw_phot.folder = None
     raw_phot.filename = "path/to/test/test.h5"
     assert raw_phot.folder == "path/to/test"
-    assert raw_phot.get_fullname() == os.path.join(basepath, "path/to/test/test.h5")
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "path/to/test/test.h5")
 
     # an absolute path in "folder" will ignore DATA_ROOT
     raw_phot.folder = None

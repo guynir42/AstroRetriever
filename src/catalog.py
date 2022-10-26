@@ -26,9 +26,11 @@ class ParsCatalog(Parameters):
     def __init__(self, **kwargs):
         super().__init__()
         self.catalog_name = self.add_par(
-            "catalog_name", None, str, "Name of the catalog"
+            "catalog_name", None, (None, str), "Name of the catalog"
         )
-        self.filename = self.add_par("filename", None, str, "Name of the catalog file")
+        self.filename = self.add_par(
+            "filename", None, (None, str), "Name of the catalog file"
+        )
         self.name_column = self.add_par(
             "name_column", "name", str, "Name of the column with source names"
         )
@@ -52,7 +54,7 @@ class ParsCatalog(Parameters):
         )
 
         self.alias_column = self.add_par(
-            "alias_column", None, str, "Name of the column with source aliases"
+            "alias_column", None, (None, str), "Name of the column with source aliases"
         )
 
         # use default configurations to quickly setup pars
@@ -60,9 +62,14 @@ class ParsCatalog(Parameters):
             "default", None, (None, str), "Apply a default configuration"
         )
 
-        self.url = self.add_par("url", None, str, "URL to download the catalog file")
+        self.url = self.add_par(
+            "url", None, (None, str), "URL to download the catalog file"
+        )
         self.reference = self.add_par(
-            "reference", None, str, "Reference for the catalog for citations, etc"
+            "reference",
+            None,
+            (None, str),
+            "Reference for the catalog for citations, etc",
         )
 
         # numpy arrays are faster to read from FITS files because they are big-endian.

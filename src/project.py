@@ -4,12 +4,15 @@ import json
 import yaml
 import hashlib
 import git
+from collections import OrderedDict
 
 import sqlalchemy as sa
 
-from src.database import Session, DATA_ROOT
+import src.database
+from src.database import Session
 from src.parameters import Parameters, normalize_data_types
 from src.catalog import Catalog
+from src.observatory import ParsObservatory
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
@@ -23,8 +26,8 @@ class ParsProject(Parameters):
         self.obs_names = self.add_par(
             "obs_names",
             ("demo"),
-            (str, list, set, tuple),
-            "List/tuple/set of observatory names or one name",
+            (str, list),
+            "List of observatory names or one name",
         )
 
         self.description = self.add_par("description", "", str, "Project description")
@@ -70,19 +73,6 @@ class ParsProject(Parameters):
             "Hash of the names in the catalog for this project.",
         )
 
-        # each observatory name can be given its own, specific keyword arguments
-        for obs_name in self.obs_names:
-            setattr(
-                self,
-                obs_name,
-                self.add_par(
-                    obs_name,
-                    {},
-                    dict,
-                    f"Keyword arguments to pass to the {obs_name.upper()} observatory",
-                ),
-            )
-
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
@@ -114,10 +104,9 @@ class ParsProject(Parameters):
             upper_obs.append(obs.upper())
 
         # cast the list into a set to make each name unique
-        names = set(upper_obs)
+        names = list(set(upper_obs))
 
-        # set the obs_names as a tuple to make it immutable
-        super().__setattr__("obs_names", tuple(names))
+        super().__setattr__("obs_names", names)
 
     def __setattr__(self, key, value):
         if key in ("vc", "version_control"):
@@ -134,6 +123,113 @@ class ParsProject(Parameters):
         Get the default key to use when loading a config file.
         """
         return "project"
+
+    @staticmethod
+    def get_pars_list(project_obj, verbose=False):
+        """
+        Get a list of Parameters objects for all
+        the objects in the given project.
+
+        Parameters
+        ----------
+        project_obj: ParsProject
+            The project object to get the list of parameters for.
+        verbose: bool
+            Whether to print the names of the objects as they are found.
+
+        Returns
+        -------
+        pars_list: list
+            List of Parameters objects.
+        """
+        pars_list = []
+        ParsProject.update_pars_list(project_obj, pars_list, verbose=verbose)
+        ParsProject.order_pars_list(pars_list, verbose=verbose)
+
+        return pars_list
+
+    @staticmethod
+    def update_pars_list(obj, pars_list, object_list=None, verbose=False):
+        """
+        Recursively get the parameter objects from
+        all sub-objects of the given object.
+        Will not re-add the same parameter object
+        if it is already in the list.
+
+        Parameters
+        ----------
+        obj: any type
+            object to search for parameters
+        pars_list: list of Parameter objects
+            list of parameter objects that can
+            be turned into an output YAML file.
+        object_list: list
+            list of objects that have already been
+            searched for parameters. This is used
+            to avoid infinite recursion.
+        verbose: bool
+            print out the objects that are being
+            searched for parameters. Default is False.
+        """
+
+        if (
+            not hasattr(obj, "__dict__")
+            or callable(obj)
+            or type(obj).__module__ == "builtins"
+        ):
+            return
+
+        if object_list is None:
+            object_list = []
+
+        if obj in object_list:
+            return
+        else:
+            object_list.append(obj)
+
+        if verbose:
+            print(f"scanning a {type(obj)} object...")
+        if isinstance(obj, Parameters) and obj not in pars_list:
+            pars_list.append(obj)
+            return
+
+        if verbose:
+            print("go over items...")
+        # if object itself is not a Parameters object,
+        # maybe one of its attributes is
+        for k, v in obj.__dict__.items():
+            if hasattr(v, "__iter__") and not isinstance(v, str):
+                if verbose:
+                    print(f"loading an iterable: {k}")
+                for item in v:
+                    ParsProject.update_pars_list(item, pars_list, object_list)
+            elif isinstance(v, dict):
+                if verbose:
+                    print(f"loading a dict: {k}")
+                for item in v.values():
+                    ParsProject.update_pars_list(item, pars_list, object_list)
+            else:
+                if verbose:
+                    print(f"loading a single object: {k}")
+                ParsProject.update_pars_list(v, pars_list, object_list)
+
+    @staticmethod
+    def order_pars_list(pars_list, verbose=False):
+        """
+        Reorder a list of Parameter objects such that
+        ParsProject is first, then all observatories
+        (in alphabetical order) then all other objects
+        in alphabetical order of their class name.
+        """
+        pars_list.sort(key=lambda x: x.__class__.__name__)
+        pars_list.sort(key=lambda x: isinstance(x, ParsObservatory), reverse=True)
+        pars_list.sort(
+            key=lambda x: x.__class__.__name__ == "ParsProject", reverse=True
+        )
+
+        if verbose:
+            names_list = [p.__class__.__name__ for p in pars_list]
+            print(names_list)
 
 
 class Project:
@@ -470,9 +566,22 @@ class Project:
         If not, will just set cfg_hash=""
         """
 
-        # TODO: pick up all the config keys from all the objects
+        # pick up all the config keys from all the objects
+        pars_list = self.pars.get_pars_list(self)
         cfg_dict = {}
+
+        for pars in pars_list:
+            if pars._cfg_key is None:
+                continue
+            if pars._cfg_sub_key is None:
+                cfg_dict[pars._cfg_key] = pars.to_dict(hidden=False)
+            else:
+                if pars._cfg_key not in cfg_dict:
+                    cfg_dict[pars._cfg_key] = {}
+                cfg_dict[pars._cfg_key][pars._cfg_sub_key] = pars.to_dict(hidden=False)
+
         cfg_json = json.dumps(cfg_dict)
+
         if self.pars.version_control:
             self.cfg_hash = hashlib.sha256(
                 "".join(cfg_json).encode("utf-8")
@@ -483,8 +592,8 @@ class Project:
         self.setup_output_folder()
 
         # write the config file to disk
-        with open("config.yaml", "w") as f:
-            yaml.dump(cfg_dict, f)
+        with open(os.path.join(self.output_folder, "config.yaml"), "w") as f:
+            yaml.dump(cfg_dict, f, sort_keys=False)
 
     def setup_output_folder(self):
         """
@@ -501,10 +610,8 @@ class Project:
         all DB objects and is appended to the output folder name.
 
         """
-
         self.output_folder = self.name.upper()
 
-        # TODO: collect all parameter objects from sub-objects
         # and produce a massive config dictionary
         # translate that into a yaml file in memory
         # get that file's hash
@@ -513,7 +620,7 @@ class Project:
         if self.pars.version_control:
             self.output_folder += f"_{self.cfg_hash}"
 
-        self.output_folder = os.path.join(DATA_ROOT, self.output_folder)
+        self.output_folder = os.path.join(src.database.DATA_ROOT, self.output_folder)
 
         # create the output folder
         if not os.path.exists(self.output_folder):
