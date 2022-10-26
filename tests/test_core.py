@@ -109,7 +109,16 @@ def test_project_user_inputs():
 
     # check the observatory was loaded correctly
     assert "ztf" in [obs.name for obs in proj.observatories]
-    assert isinstance(proj.observatories[1], VirtualZTF)
+    idx = next(
+        (
+            i
+            for i, item in enumerate(proj.observatories)
+            if isinstance(item, VirtualZTF)
+        ),
+        -1,
+    )
+    assert idx >= 0
+    assert isinstance(proj.observatories[idx], VirtualZTF)
     # check that observatories can be referenced using (case-insensitive) strings
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"], VirtualZTF)
