@@ -84,7 +84,7 @@ def test_load_save_parameters(data_dir):
 
 def test_default_project():
     proj = Project("default_test", catalog_kwargs={"default": "test"})
-    assert proj.pars.obs_names == ("DEMO",)
+    assert proj.pars.obs_names == ["DEMO"]
     assert "demo" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)
 
@@ -104,7 +104,7 @@ def test_project_user_inputs():
     )
 
     # check the project parameters are loaded correctly
-    assert proj.pars.obs_names == ["DEMO", "ZTF"]
+    assert set(proj.pars.obs_names) == {"DEMO", "ZTF"}
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
