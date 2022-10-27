@@ -266,18 +266,6 @@ class Finder:
         det.project = self.pars.project
         det.cfg_hash = source.cfg_hash
 
-        det.raw_photometry = source.raw_photometry
-        if sim is None:  # real data
-            det.reduced_photometry = source.processed_photometry
-        else:  # simulated data
-            det.reduced_photometry = source.simulated_photometry
-
-        det.raw_photometry.sort(key=lambda x: x.time_start)
-        det.reduced_photometry.sort(key=lambda x: x.time_start)
-        # mark the location of this detection:
-        det.time_indices = self.get_event_indices(lightcurve)
-        lightcurve.data.loc[det.time_indices, "detected"] = True
-
         # in this case time_start and peak start are the same
         det.time_start = lightcurve.times[np.where(det.time_indices)[0][0]]
         det.time_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
@@ -296,13 +284,35 @@ class Finder:
         det.peak_start = lightcurve.times[np.where(det.time_indices)[0][0]]
         det.peak_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
 
-        # TODO: add the quality cut values and quality_flag
-
         det.peak_mag = lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         det.peak_mag_diff = (
             lightcurve.mag_mean_robust
             - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         )
+        if sim is None:  # real data
+            det.reduced_photometry = source.processed_photometry
+        else:  # simulated data
+            det.reduced_photometry = source.simulated_photometry
+
+        det.raw_photometry = source.raw_photometry
+        det.raw_photometry.sort(key=lambda x: x.time_start)
+        det.reduced_photometry.sort(key=lambda x: x.time_start)
+
+        # TODO: add the quality cut values and quality_flag
+
+        # mark the location of this detection:
+        det.time_indices = self.get_event_indices(lightcurve)
+        lightcurve.data.loc[det.time_indices, "detected"] = True
+
+        # save the time range of the event for the specific lightcurve
+        idx = det.reduced_photometry.index(lightcurve)
+        det.time_ranges[idx] = det.time_indices
+        det.reduced_photometry_peak_number = idx
+
+        raw_phot = lightcurve.raw_data
+        idx = det.raw_photometry.index(raw_phot)
+        det.raw_time_ranges[idx] = det.time_indices
+        det.raw_photometry_peak_number = idx
 
         # can add matched filter here
 
