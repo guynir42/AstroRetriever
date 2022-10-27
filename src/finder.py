@@ -84,6 +84,7 @@ class Finder:
 
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)
+        self.checker = None
 
     def process(self, lightcurves, source, sim=None):
         """
@@ -298,20 +299,36 @@ class Finder:
         det.raw_photometry.sort(key=lambda x: x.time_start)
         det.reduced_photometry.sort(key=lambda x: x.time_start)
 
-        # TODO: add the quality cut values and quality_flag
+        time_indices = self.get_event_indices(lightcurve)
+
+        # add the quality cut values and quality_flag
+        if self.checker is not None:
+            thresholds = self.checker.get_quality_columns_thresholds()
+            two_sided = self.checker.get_quality_columns_two_sided()
+            for col in thresholds.keys():
+                if two_sided[col]:
+                    worst_val = np.max(
+                        np.abs(lightcurve.data.loc[time_indices, col].values)
+                    )
+                else:
+                    worst_val = np.max(lightcurve.data[time_indices, col].values)
+                det.quality_cut_values[col] = worst_val
+
+            det.quality_flag = lightcurve.data.loc[time_indices, "qflag"].values.max()
 
         # mark the location of this detection:
-        det.time_indices = self.get_event_indices(lightcurve)
+        det.time_indices = time_indices
         lightcurve.data.loc[det.time_indices, "detected"] = True
 
         # save the time range of the event for the specific lightcurve
         idx = det.reduced_photometry.index(lightcurve)
-        det.time_ranges[idx] = det.time_indices
+        det.time_ranges[idx] = time_indices
         det.reduced_photometry_peak_number = idx
 
         raw_phot = lightcurve.raw_data
         idx = det.raw_photometry.index(raw_phot)
-        det.raw_time_ranges[idx] = det.time_indices
+        # TODO: figure out how to supply the time range in the raw data
+        # det.raw_time_ranges[idx] = time_indices
         det.raw_photometry_peak_number = idx
 
         # can add matched filter here
