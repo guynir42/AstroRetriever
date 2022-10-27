@@ -263,7 +263,10 @@ class Finder:
             The detection object for this event.
         """
         time_indices = self.get_event_indices(lightcurve)
-        qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
+        if "qflag" in lightcurve.data.columns:
+            qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
+        else:
+            qflag = False
 
         if self.pars.remove_failed and qflag > 0:
             return None
@@ -332,7 +335,10 @@ class Finder:
         det.reduced_photometry_peak_number = idx
 
         raw_phot = lightcurve.raw_data
-        idx = det.raw_photometry.index(raw_phot)
+        if raw_phot in det.raw_photometry:
+            idx = det.raw_photometry.index(raw_phot)
+        else:
+            idx = None
         # TODO: figure out how to supply the time range in the raw data
         # det.raw_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
         det.raw_photometry_peak_number = idx

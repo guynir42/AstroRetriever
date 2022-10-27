@@ -1210,6 +1210,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     std_flux = lc.data.flux.std()
     flare_flux = mean_flux + std_flux * n_sigma
     lc.data.loc[4, "flux"] = flare_flux
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
@@ -1247,6 +1249,9 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc.data.loc[50, "flux"] = flare_flux
 
     new_source.reduced_lightcurves[0] = lc
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
+    simple_finder.process([lc], new_source)
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
@@ -1259,6 +1264,9 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc = lightcurve_factory()
     lc.data.loc[10:14, "flux"] = flare_flux
     new_source.reduced_lightcurves[0] = lc
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
+    simple_finder.process([lc], new_source)
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
