@@ -3,6 +3,7 @@ import yaml
 import time
 import uuid
 import pytest
+import datetime
 from pprint import pprint
 
 import numpy as np
@@ -1269,7 +1270,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(reruns=3)
+# @pytest.mark.flaky(reruns=3)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1355,11 +1356,32 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(detections) == 1
             assert detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
 
+            lcs = detections[0].reduced_photometry
+            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+
             # check properties
             properties = session.scalars(
                 sa.select(Properties).where(Properties.source_name == new_source.name)
             ).all()
             assert len(properties) == 1
+
+            # manually set the first lightcurve time_start to be after the others
+            detections[0].reduced_photometry[0].time_start = datetime.datetime.utcnow()
+
+            session.add(detections[0])
+            session.commit()
+            # now close the session and start a new one
+
+        with Session() as session:
+            detections = session.scalars(
+                sa.select(Detection).where(Detection.source_name == new_source.name)
+            ).all()
+            lcs = detections[0].reduced_photometry
+
+            assert len(lcs) == 3  # still three
+            # order should be different (loaded sorted by time_start)
+            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+            assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
     finally:  # remove all generated lightcurves and detections etc.
         with Session() as session:

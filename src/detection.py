@@ -270,6 +270,7 @@ Detection.raw_photometry = orm.relationship(
     "RawPhotometry",
     cascade="all",
     secondary=detection_raw_photometry_association,
+    order_by="RawPhotometry.time_start",
     doc="raw photometric data in which this detection was found",
 )
 
@@ -294,6 +295,7 @@ Detection.reduced_photometry = orm.relationship(
     "Lightcurve",
     cascade="all",
     secondary=detection_reduced_photometry_association,
+    order_by="Lightcurve.time_start",
     doc="reduced or processed or simulated "
     "photometric data in which this detection was found",
 )

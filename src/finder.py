@@ -272,6 +272,8 @@ class Finder:
         else:  # simulated data
             det.reduced_photometry = source.simulated_photometry
 
+        det.raw_photometry.sort(key=lambda x: x.time_start)
+        det.reduced_photometry.sort(key=lambda x: x.time_start)
         # mark the location of this detection:
         det.time_indices = self.get_event_indices(lightcurve)
         lightcurve.data.loc[det.time_indices, "detected"] = True

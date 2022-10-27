@@ -29,7 +29,7 @@ from src.source import Source
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
 
-from src.database import DATA_ROOT
+import src.database
 
 PHOT_ZP = 23.9
 LOG_BASES = np.log(10) / 2.5
@@ -331,7 +331,7 @@ class DatasetMixin:
         if os.path.isabs(f):
             return f
         else:
-            return os.path.join(DATA_ROOT, f)
+            return os.path.join(src.database.DATA_ROOT, f)
 
     def get_fullname(self):
         """
@@ -1059,8 +1059,8 @@ class DatasetMixin:
         if value is None:
             self._folder = None
             return
-        if value.startswith(DATA_ROOT):  # relative to root
-            self._folder = value[len(DATA_ROOT) + 1 :]
+        if value.startswith(src.database.DATA_ROOT):  # relative to root
+            self._folder = value[len(src.database.DATA_ROOT) + 1 :]
         else:
             self._folder = value
 
@@ -2015,6 +2015,7 @@ Source.raw_photometry = orm.relationship(
     back_populates="sources",
     lazy="selectin",
     cascade="all",
+    order_by="RawPhotometry.time_start",
     doc="Raw photometry associated with this source",
 )
 
@@ -2040,6 +2041,7 @@ Source.reduced_lightcurves = orm.relationship(
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
+    order_by="Lightcurve.time_start",
     doc="Reduced photometric datasets associated with this source",
 )
 
@@ -2058,6 +2060,7 @@ Source.processed_lightcurves = orm.relationship(
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
+    order_by="Lightcurve.time_start",
     doc="Reduced and processed photometric datasets associated with this source",
 )
 
@@ -2075,6 +2078,7 @@ Source.simulated_lightcurves = orm.relationship(
     lazy="selectin",
     single_parent=True,
     passive_deletes=True,
+    order_by="Lightcurve.time_start",
     doc="Reduced and simulated photometric datasets associated with this source",
 )
 
