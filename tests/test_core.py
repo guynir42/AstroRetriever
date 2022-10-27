@@ -3,6 +3,7 @@ import yaml
 import time
 import uuid
 import pytest
+import datetime
 from pprint import pprint
 
 import numpy as np
@@ -1209,6 +1210,8 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     std_flux = lc.data.flux.std()
     flare_flux = mean_flux + std_flux * n_sigma
     lc.data.loc[4, "flux"] = flare_flux
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
@@ -1246,6 +1249,9 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc.data.loc[50, "flux"] = flare_flux
 
     new_source.reduced_lightcurves[0] = lc
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
+    simple_finder.process([lc], new_source)
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
@@ -1258,6 +1264,9 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     lc = lightcurve_factory()
     lc.data.loc[10:14, "flux"] = flare_flux
     new_source.reduced_lightcurves[0] = lc
+    lc = Lightcurve(lc)
+    new_source.processed_lightcurves = [lc]
+    simple_finder.process([lc], new_source)
     simple_finder.process([lc], new_source)
     det = simple_finder.detect([lc], new_source)
 
@@ -1355,11 +1364,32 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(detections) == 1
             assert detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
 
+            lcs = detections[0].reduced_photometry
+            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+
             # check properties
             properties = session.scalars(
                 sa.select(Properties).where(Properties.source_name == new_source.name)
             ).all()
             assert len(properties) == 1
+
+            # manually set the first lightcurve time_start to be after the others
+            detections[0].reduced_photometry[0].time_start = datetime.datetime.utcnow()
+
+            session.add(detections[0])
+            session.commit()
+            # now close the session and start a new one
+
+        with Session() as session:
+            detections = session.scalars(
+                sa.select(Detection).where(Detection.source_name == new_source.name)
+            ).all()
+            lcs = detections[0].reduced_photometry
+
+            assert len(lcs) == 3  # still three
+            # order should be different (loaded sorted by time_start)
+            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+            assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
     finally:  # remove all generated lightcurves and detections etc.
         with Session() as session:
@@ -1373,6 +1403,75 @@ def test_analysis(analysis, new_source, raw_phot):
                 session.delete(lc)
 
             session.commit()
+
+
+@pytest.mark.flaky(reruns=3)
+def test_quality_checks(analysis, new_source, raw_phot):
+    analysis.pars.save_anything = False
+    obs = VirtualDemoObs(project=analysis.pars.project)
+    new_source.raw_photometry.append(raw_phot)
+    obs.reduce(new_source, "photometry")
+
+    # add a "flare" to the lightcurve:
+    assert len(new_source.reduced_lightcurves) == 3
+    lc = new_source.reduced_lightcurves[0]
+    std_flux = lc.data.flux.std()
+    lc.data.loc[8, "flux"] += std_flux * 12
+    lc.data["flag"] = False
+    lc.colmap["flag"] = "flag"
+    lc.data.loc[8, "flag"] = True
+
+    # look for the events, removing bad quality data
+    analysis.finder.pars.remove_failed = True
+    analysis.analyze_sources(new_source)
+    assert len(analysis.detections) == 0
+
+    # now replace the flag with a big offset
+    lc.data.loc[8, "flag"] = False
+    lc.data.dec = 0.0
+    mean_ra = lc.data.ra.mean()
+    std_ra = np.std(np.abs(lc.data.ra - mean_ra))
+    lc.data.loc[8, "ra"] = mean_ra + 10 * std_ra
+    new_source.reset_analysis()
+    analysis.analyze_sources(new_source)
+    assert len(analysis.detections) == 0
+
+    # now lets keep and flag bad events
+    analysis.finder.pars.remove_failed = False
+    new_source.reset_analysis()
+    analysis.analyze_sources(new_source)
+    assert len(analysis.detections) == 1
+    det = analysis.detections[0]
+    assert det.source_name == lc.source_name
+    assert det.snr - 12 < 2.0  # no more than the S/N we put in
+    assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
+    assert det.quality_flag == 1
+    assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset
+
+    # what happens if the peak has two measurements?
+    lc.data["flag"] = False
+    lc.data.loc[7, "flux"] += std_flux * 8  # add width to the flare
+    lc.data.loc[9, "flux"] += std_flux * 8  # add width to the flare
+    lc.data.loc[9, "ra"] = lc.data.loc[8, "ra"]  # the edge of the flare now has offset
+    lc.data.loc[8, "ra"] = mean_ra  # the peak of the flare now has no offset
+
+    analysis.detections = []
+    new_source.reset_analysis()
+    analysis.analyze_sources(new_source)
+
+    assert len(analysis.detections) == 1
+    det = analysis.detections[0]
+    assert det.snr - 12 < 2.0  # no more than the S/N we put in
+    assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
+    assert (
+        det.reduced_photometry[0].data.loc[9, "qflag"] == 1
+    )  # flagged because of offset
+    assert det.reduced_photometry[0].data.loc[9, "offset"] > 2  # this one has an offset
+    assert det.reduced_photometry[0].data.loc[8, "qflag"] == 0  # unflagged
+    assert det.reduced_photometry[0].data.loc[8, "offset"] < 2  # no offset
+
+    assert det.quality_flag == 1  # still flagged, even though the peak is not
+    assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset
 
 
 # TODO: add test for simulation events

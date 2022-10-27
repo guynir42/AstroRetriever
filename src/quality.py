@@ -76,6 +76,28 @@ class QualityChecker:
                 y = dec
 
                 offset = np.sqrt(x**2 + y**2)
-                offset_norm = (offset - np.mean(offset)) / np.std(offset)
+                scatter = np.median(np.abs(offset - np.median(offset)))
+                offset_norm = (offset - np.median(offset)) / scatter
+
                 lc.data["offset"] = offset_norm
-                lc.data["qflag"] |= np.abs(offset_norm) > self.pars.offset_threshold
+                lc.data["qflag"] |= np.abs(offset_norm) >= self.pars.offset_threshold
+
+    def get_quality_columns_thresholds(self):
+        """
+        Return a dictionary of column names containing
+        the threshold values of the quality checks.
+        Any value equal or larger than the threshold
+        will cause the qflag to be True.
+        For boolean quality checks, the threshold is 1.0,
+        which evaluates to True if the value is True.
+        """
+        return {"offset": self.pars.offset_threshold}
+
+    @staticmethod
+    def get_quality_columns_two_sided():
+        """
+        Return a dictionary of booleans indicating whether
+        the quality checks are two-sided (True)
+        or single sided (False).
+        """
+        return {"offset": True}

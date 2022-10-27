@@ -44,11 +44,9 @@ class Detection(Base):
         foreign_keys="Detection.source_id",
     )
 
-    # prefer to have this as column so we can still
-    # attach a detection that was removed from a source
-    # this will also automatically be filled when setting source
-    # instead of this:
-    # source_name = association_proxy("source", "name")
+    # prefer to have this as column (not association_proxy) so
+    # we can still attach a detection that was removed from a source.
+    # automatically filled when setting source:
     source_name = sa.Column(
         sa.String,
         nullable=False,
@@ -194,11 +192,11 @@ class Detection(Base):
         JSONB,
         nullable=True,
         index=False,
-        doc="For each raw photometry data that is relevant to this detection"
+        doc="For each reduced photometry data that is relevant to this detection"
         "put the data indices that are part of the detection. "
-        "This is a dict keyed on integers (raw photometry index in the"
+        "This is a dict keyed on integers (reduced photometry index in the"
         "list attached to this object), with values that are a list of "
-        "integers on the dataframe for each raw photometry. ",
+        "integers on the dataframe for each reduced photometry. ",
     )
 
     # using a matched filter could use saving some parameters:
@@ -270,6 +268,7 @@ Detection.raw_photometry = orm.relationship(
     "RawPhotometry",
     cascade="all",
     secondary=detection_raw_photometry_association,
+    order_by="RawPhotometry.time_start",
     doc="raw photometric data in which this detection was found",
 )
 
@@ -294,6 +293,7 @@ Detection.reduced_photometry = orm.relationship(
     "Lightcurve",
     cascade="all",
     secondary=detection_reduced_photometry_association,
+    order_by="Lightcurve.time_start",
     doc="reduced or processed or simulated "
     "photometric data in which this detection was found",
 )

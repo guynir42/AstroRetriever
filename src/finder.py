@@ -84,6 +84,7 @@ class Finder:
 
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)
+        self.checker = None
 
     def process(self, lightcurves, source, sim=None):
         """
@@ -162,7 +163,7 @@ class Finder:
                 mask |= np.isnan(snr)
                 if "flag" in lc.data.columns:
                     mask |= lc.data[lc.colmap["flag"]].values > 0
-                if "qflag" in lc.data.columns:
+                if self.pars.remove_failed and "qflag" in lc.data.columns:
                     mask |= lc.data["qflag"].values > 0
 
                 snr[mask] = 0
@@ -171,7 +172,9 @@ class Finder:
                 mx = snr[idx]
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
-                    detections.append(self.make_detection(idx, lc, source, sim))
+                    det = self.make_detection(idx, lc, source, sim)
+                    if det:
+                        detections.append(det)
                 else:
                     break
 
@@ -235,7 +238,7 @@ class Finder:
         else:
             thresh = self.pars.snr_threshold
 
-        return lightcurve.data["snr"].values > thresh
+        return list(np.where(lightcurve.data["snr"].values > thresh)[0])
 
     def make_detection(self, peak_idx, lightcurve, source, sim=None):
         """
@@ -259,6 +262,15 @@ class Finder:
         det: Detection object
             The detection object for this event.
         """
+        time_indices = self.get_event_indices(lightcurve)
+        if "qflag" in lightcurve.data.columns:
+            qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
+        else:
+            qflag = False
+
+        if self.pars.remove_failed and qflag > 0:
+            return None
+
         det = Detection()
         det.method = "peak finding"
         det.data_types = self.pars.data_types
@@ -266,19 +278,9 @@ class Finder:
         det.project = self.pars.project
         det.cfg_hash = source.cfg_hash
 
-        det.raw_photometry = source.raw_photometry
-        if sim is None:  # real data
-            det.reduced_photometry = source.processed_photometry
-        else:  # simulated data
-            det.reduced_photometry = source.simulated_photometry
-
-        # mark the location of this detection:
-        det.time_indices = self.get_event_indices(lightcurve)
-        lightcurve.data.loc[det.time_indices, "detected"] = True
-
         # in this case time_start and peak start are the same
-        det.time_start = lightcurve.times[np.where(det.time_indices)[0][0]]
-        det.time_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
+        det.time_start = lightcurve.times[time_indices[0]]
+        det.time_end = lightcurve.times[time_indices[-1]]
 
         # save simulation values
         det.simulated = sim is not None
@@ -291,16 +293,55 @@ class Finder:
         det.snr = lightcurve.data.loc[peak_idx, "snr"]
         # can add score and additional_scores if needed
         det.peak_time = lightcurve.times[peak_idx]
-        det.peak_start = lightcurve.times[np.where(det.time_indices)[0][0]]
-        det.peak_end = lightcurve.times[np.where(det.time_indices)[0][-1]]
-
-        # TODO: add the quality cut values and quality_flag
+        det.peak_start = lightcurve.times[np.where(time_indices)[0][0]]
+        det.peak_end = lightcurve.times[np.where(time_indices)[0][-1]]
 
         det.peak_mag = lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         det.peak_mag_diff = (
             lightcurve.mag_mean_robust
             - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         )
+        if sim is None:  # real data
+            det.reduced_photometry = source.processed_photometry
+        else:  # simulated data
+            det.reduced_photometry = source.simulated_photometry
+
+        det.raw_photometry = source.raw_photometry
+        det.raw_photometry.sort(key=lambda x: x.time_start)
+        det.reduced_photometry.sort(key=lambda x: x.time_start)
+
+        # add the quality cut values and quality_flag
+        det.quality_values = {}
+        if self.checker is not None:
+            thresholds = self.checker.get_quality_columns_thresholds()
+            two_sided = self.checker.get_quality_columns_two_sided()
+            for col in thresholds.keys():
+                if two_sided[col]:
+                    worst_val = np.max(
+                        np.abs(lightcurve.data.loc[time_indices, col].values)
+                    )
+                else:
+                    worst_val = np.max(lightcurve.data[time_indices, col].values)
+                det.quality_values[col] = worst_val
+
+            det.quality_flag = qflag
+
+        # mark the location of this detection:
+        lightcurve.data.loc[time_indices, "detected"] = True
+
+        # save the time range of the event for the specific lightcurve
+        idx = det.reduced_photometry.index(lightcurve)
+        det.reduced_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
+        det.reduced_photometry_peak_number = idx
+
+        raw_phot = lightcurve.raw_data
+        if raw_phot in det.raw_photometry:
+            idx = det.raw_photometry.index(raw_phot)
+        else:
+            idx = None
+        # TODO: figure out how to supply the time range in the raw data
+        # det.raw_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
+        det.raw_photometry_peak_number = idx
 
         # can add matched filter here
 

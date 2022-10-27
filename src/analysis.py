@@ -170,8 +170,9 @@ class Analysis:
         self.good_scores = Histogram()
         # self.extra_scores = []  # an optional list of extra Histogram objects
         self.quality_values = Histogram()
-        self.finder = self.pars.get_class("finder", **finder_kwargs)
         self.checker = self.pars.get_class("quality", **quality_kwargs)
+        self.finder = self.pars.get_class("finder", **finder_kwargs)
+        self.finder.checker = self.checker  # link to this here, too
         self.sim = self.pars.get_class("simulator", **simulator_kwargs)
         # self.threshold = None  # Threshold object
         # self.extra_thresholds = []  # list of Threshold objects
@@ -251,7 +252,7 @@ class Analysis:
                             for data in getattr(source, f"raw_{dt}"):
                                 if data.filename is None:
                                     raise ValueError(
-                                        f"raw_{dt} (from {data.obs_name}) "
+                                        f"raw_{dt} (from {data.observatory}) "
                                         f"on Source {source.id} has no filename. "
                                         "Did you forget to save it?"
                                     )
