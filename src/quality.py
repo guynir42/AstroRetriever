@@ -76,7 +76,9 @@ class QualityChecker:
                 y = dec
 
                 offset = np.sqrt(x**2 + y**2)
-                offset_norm = (offset - np.mean(offset)) / np.std(offset)
+                scatter = np.median(np.abs(offset - np.median(offset)))
+                offset_norm = (offset - np.median(offset)) / scatter
+
                 lc.data["offset"] = offset_norm
                 lc.data["qflag"] |= np.abs(offset_norm) >= self.pars.offset_threshold
 

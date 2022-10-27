@@ -252,7 +252,7 @@ class Analysis:
                             for data in getattr(source, f"raw_{dt}"):
                                 if data.filename is None:
                                     raise ValueError(
-                                        f"raw_{dt} (from {data.obs_name}) "
+                                        f"raw_{dt} (from {data.observatory}) "
                                         f"on Source {source.id} has no filename. "
                                         "Did you forget to save it?"
                                     )

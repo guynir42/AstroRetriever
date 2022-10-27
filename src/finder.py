@@ -163,7 +163,7 @@ class Finder:
                 mask |= np.isnan(snr)
                 if "flag" in lc.data.columns:
                     mask |= lc.data[lc.colmap["flag"]].values > 0
-                if "qflag" in lc.data.columns:
+                if self.pars.remove_failed and "qflag" in lc.data.columns:
                     mask |= lc.data["qflag"].values > 0
 
                 snr[mask] = 0
@@ -172,7 +172,9 @@ class Finder:
                 mx = snr[idx]
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
-                    detections.append(self.make_detection(idx, lc, source, sim))
+                    det = self.make_detection(idx, lc, source, sim)
+                    if det:
+                        detections.append(det)
                 else:
                     break
 
@@ -260,14 +262,18 @@ class Finder:
         det: Detection object
             The detection object for this event.
         """
+        time_indices = self.get_event_indices(lightcurve)
+        qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
+
+        if self.pars.remove_failed and qflag > 0:
+            return None
+
         det = Detection()
         det.method = "peak finding"
         det.data_types = self.pars.data_types
         det.source = source
         det.project = self.pars.project
         det.cfg_hash = source.cfg_hash
-
-        time_indices = self.get_event_indices(lightcurve)
 
         # in this case time_start and peak start are the same
         det.time_start = lightcurve.times[time_indices[0]]
@@ -315,7 +321,7 @@ class Finder:
                     worst_val = np.max(lightcurve.data[time_indices, col].values)
                 det.quality_values[col] = worst_val
 
-            det.quality_flag = lightcurve.data.loc[time_indices, "qflag"].values.max()
+            det.quality_flag = qflag
 
         # mark the location of this detection:
         lightcurve.data.loc[time_indices, "detected"] = True
@@ -328,7 +334,7 @@ class Finder:
         raw_phot = lightcurve.raw_data
         idx = det.raw_photometry.index(raw_phot)
         # TODO: figure out how to supply the time range in the raw data
-        # det.raw_photometry_data_ranges = {idx: time_indices}
+        # det.raw_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
         det.raw_photometry_peak_number = idx
 
         # can add matched filter here

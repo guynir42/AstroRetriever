@@ -2082,8 +2082,8 @@ Source.simulated_lightcurves = orm.relationship(
     doc="Reduced and simulated photometric datasets associated with this source",
 )
 
-Source.processed_photometry = add_alias("processed_lightcurves")
-Source.proc_lcs = add_alias("processed_lightcurves")
+Source.simulated_photometry = add_alias("simulated_lightcurves")
+Source.sim_lcs = add_alias("simulated_lightcurves")
 
 
 # RawPhotometry does NOT link back to ALL associated lightcurves
