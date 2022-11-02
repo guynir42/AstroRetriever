@@ -357,7 +357,7 @@ def test_observatory_filename_conventions(test_project):
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
-    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
+    assert data.filename == f'DEMO_photometry_{cat_row["name"]}.h5'
 
     # try it again with higher numbers in the catalog
     num = np.random.randint(100000, 101000)
@@ -370,7 +370,7 @@ def test_observatory_filename_conventions(test_project):
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
-    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
+    assert data.filename == f'DEMO_photometry_{cat_row["name"]}.h5'
 
     # test the key conventions:
     data.invent_filekey(source_name=name)

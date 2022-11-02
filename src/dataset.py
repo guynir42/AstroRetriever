@@ -81,6 +81,7 @@ class DatasetMixin:
     This can be reduced into a Lightcurve
     object using a reducer function
     from the correct observatory object.
+    from the correct observatory object.
 
     """
 
@@ -454,7 +455,28 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    def invent_filename(self, ra_deg=None, ra_minute=None, ra_second=None):
+    def get_source_name(self):
+        """
+        Get the name of the source as a string.
+
+        """
+        if hasattr(self, "source") and self.source is not None:
+            source_name = self.source.name
+        elif hasattr(self, "sources") and len(self.sources) > 0:
+            source_name = self.sources[0].name
+
+        if source_name is not None:
+            if isinstance(source_name, bytes):
+                source_name = source_name.decode("utf-8")
+
+            if not isinstance(source_name, str):
+                raise TypeError("source name must be a string")
+
+        return source_name
+
+    def invent_filename(
+        self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
+    ):
 
         """
         Generate a filename with some pre-defined format
@@ -497,6 +519,12 @@ class DatasetMixin:
 
         Parameters
         ----------
+        source_name : str, optional
+            Name of the source to use in the filename.
+            If not given, will try to get the name from
+            the "source" attribute, or the first source
+            in the "sources" attribute.
+            If still not given, will use a random string.
         ra_deg : int, optional
             The integer degree of the right ascension of the source.
             If given as float, will just use floor(ra_deg).
@@ -523,6 +551,10 @@ class DatasetMixin:
             else:
                 self.filename = basename + "_reduced"
         else:
+            if source_name is None:
+                source_name = self.get_source_name()
+            if source_name is None:
+                source_name = self.random_string()
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
                 raise ValueError(
@@ -537,19 +569,19 @@ class DatasetMixin:
 
                 if ra_minute is not None:
                     ra = int(ra_minute)
-                    binning += f"_{ra:02d}"
+                    binning += f"d{ra:02d}m"
 
                     if ra_second is not None:
                         ra = int(ra_second)
-                        binning += f"_{ra:02d}"
+                        binning += f"{ra:02d}s"
 
             else:
                 binning = self.random_string(15)
 
             # add prefix using the type of data and observatory
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
-            data_type = self.type if self.type is not None else "Data_"
-            self.filename = f"{obs}_{data_type}_{binning}"
+            data_type = self.type if self.type is not None else "data"
+            self.filename = os.path.join(binning, f"{obs}_{data_type}_{source_name}")
 
         # add extension
         self.filename += self.guess_extension()
@@ -593,7 +625,7 @@ class DatasetMixin:
             if isinstance(source_name, str):
                 self.filekey = source_name
             else:
-                raise TypeError("source must be a string")
+                raise TypeError("source name must be a string")
         else:
             self.filekey = self.random_string(8)
 
@@ -673,7 +705,10 @@ class DatasetMixin:
         # if no filename/key are given, make them up
         if self.filename is None:
             self.invent_filename(
-                ra_deg=ra_deg, ra_minute=ra_minute, ra_second=ra_second
+                source_name=source_name,
+                ra_deg=ra_deg,
+                ra_minute=ra_minute,
+                ra_second=ra_second,
             )
 
         # for any of the formats where we need an in-file key:

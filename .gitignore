@@ -2,6 +2,7 @@
 *credentials.yaml*
 catalogs/*
 tests/data_temp/*
+scripts/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
