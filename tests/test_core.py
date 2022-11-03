@@ -487,6 +487,8 @@ def test_add_source_and_data(data_dir):
     finally:
         if os.path.isfile(fullname):
             os.remove(fullname)
+            if os.path.isdir(os.path.dirname(fullname)):
+                os.rmdir(os.path.dirname(fullname))
     with pytest.raises(FileNotFoundError):
         with open(fullname) as file:
             pass
@@ -813,6 +815,10 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
     finally:
         raw_phot.delete_data_from_disk()
         assert not os.path.isfile(raw_phot.get_fullname())
+        filename = lcs[0].get_fullname()
+        for lc in lcs:
+            lc.delete_data_from_disk()
+        assert not os.path.isfile(filename)
 
 
 def test_reducer_with_outliers(test_project, new_source):
@@ -1022,16 +1028,15 @@ def test_demo_observatory_save_downloaded(test_project):
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        pass
-        # for d in obs.datasets:
-        #     d.delete_data_from_disk()
-        #
-        # assert not os.path.isfile(obs.datasets[0].get_fullname())
-        #
-        # with Session() as session:
-        #     for d in obs.datasets:
-        #         session.delete(d)
-        #     session.commit()
+        for d in obs.datasets:
+            d.delete_data_from_disk()
+
+        assert not os.path.isfile(obs.datasets[0].get_fullname())
+
+        with Session() as session:
+            for d in obs.datasets:
+                session.delete(d)
+            session.commit()
 
 
 @pytest.mark.flaky(reruns=3)
