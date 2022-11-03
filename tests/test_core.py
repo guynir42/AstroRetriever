@@ -1022,17 +1022,16 @@ def test_demo_observatory_save_downloaded(test_project):
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
-            d.delete_data_from_disk()
-
-        assert not os.path.isfile(obs.datasets[0].get_fullname())
-        if len(os.listdir(os.path.dirname(obs.datasets[0].get_fullname()))) == 0:
-            os.rmdir(os.path.dirname(obs.datasets[0].get_fullname()))
-
-        with Session() as session:
-            for d in obs.datasets:
-                session.delete(d)
-            session.commit()
+        pass
+        # for d in obs.datasets:
+        #     d.delete_data_from_disk()
+        #
+        # assert not os.path.isfile(obs.datasets[0].get_fullname())
+        #
+        # with Session() as session:
+        #     for d in obs.datasets:
+        #         session.delete(d)
+        #     session.commit()
 
 
 @pytest.mark.flaky(reruns=3)

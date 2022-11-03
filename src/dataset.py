@@ -801,11 +801,17 @@ class DatasetMixin:
     def save_netcdf(self, overwrite):
         pass
 
-    def delete_data_from_disk(self):
+    def delete_data_from_disk(self, remove_folders=True):
         """
         Delete the data from disk, if it exists.
         If the format is hdf5, will delete the key from the file.
         If there are no more keys in the file, will delete the file.
+
+        Parameters
+        ----------
+        remove_folders: bool
+            If True, will remove any folders that were created
+            by this object, if they are empty.
         """
         if self.check_file_exists():
             need_to_delete = False
@@ -824,8 +830,11 @@ class DatasetMixin:
             if need_to_delete:
                 os.remove(self.get_fullname())
 
-                # TODO: delete the folder if empty?
-                #  maybe add a parameter to do that?
+                # delete the folder if empty
+                if remove_folders:
+                    path = os.path.dirname(self.get_fullname())
+                    if len(os.listdir(path)) == 0:
+                        os.rmdir(path)
 
     def find_colmap(self, data):
         """
