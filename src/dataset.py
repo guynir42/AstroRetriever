@@ -108,18 +108,21 @@ class DatasetMixin:
     )
 
     # saving the data to file
-    _filename = sa.Column(
+    filename = sa.Column(
         sa.String,
         nullable=False,
         index=True,
-        doc="Filename of the dataset, including path, relative to the DATA_ROOT",
+        doc="Filename of the dataset, including relative path, "
+        "that may be appended to the folder attribute. ",
     )
 
-    _folder = sa.Column(
+    folder = sa.Column(
         sa.String,
         nullable=True,
         doc="Folder where this dataset is stored. "
-        "If relative path, it is relative to DATA_ROOT. ",
+        "If relative path, it is relative to DATA_ROOT. "
+        "If given as absolute path that overlaps with DATA_ROOT, "
+        "it will be converted to a relative path, so it is portable. ",
     )
 
     filekey = sa.Column(
@@ -239,6 +242,21 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         # TODO: figure out the series identifier and object
+
+    def __setattr__(self, key, value):
+        if key == "filename":
+            if isinstance(value, str) and os.path.isabs(value):
+                raise ValueError("Filename must be a relative path, not absolute")
+        elif key == "folder":
+            # if given as absolute path that overlaps with DATA_ROOT,
+            # convert to relative path, so it is portable
+            if isinstance(value, str) and os.path.isabs(value):
+                if value.startswith(src.database.DATA_ROOT):
+                    value = value[len(src.database.DATA_ROOT) :]
+                    if value.startswith("/"):
+                        value = value[1:]
+
+        super().__setattr__(key, value)
 
     @orm.reconstructor
     def init_on_load(self):
@@ -464,6 +482,8 @@ class DatasetMixin:
             source_name = self.source.name
         elif hasattr(self, "sources") and len(self.sources) > 0:
             source_name = self.sources[0].name
+        else:
+            source_name = None
 
         if source_name is not None:
             if isinstance(source_name, bytes):
@@ -1042,62 +1062,6 @@ class DatasetMixin:
 
     def plot_cutouts(self, ax=None, **kwargs):
         pass
-
-    @property
-    def filename(self):
-        return self._filename
-
-    @filename.setter
-    def filename(self, value):
-        """
-        The filename ALWAYS refers to the file without path.
-        The path should be determined by "folder" and "DATA_ROOT".
-        If given a full path to a file, the path is removed.
-        If that path is DATA_ROOT/<some_folder> it will assign
-        <some_folder> to self.folder.
-        If it doesn't fit that but has an absolute path,
-        that gets saved in self.folder, which overrides
-        the value of DATA_ROOT
-        (this is not great, as the data could move around
-        and leave the "folder" property fixed in the DB).
-        """
-        if value is None:
-            self._filename = None
-            return
-
-        (path, filename) = os.path.split(value)
-        self._filename = filename
-        if path:
-            self.folder = path
-
-    @property
-    def folder(self):
-        return self._folder
-
-    @folder.setter
-    def folder(self, value):
-        """
-        Use the folder to find the file under DATA_ROOT.
-        If given as a relative path, or an absolute path
-        that starts with DATA_ROOT, it will be saved
-        relative to DATA_ROOT.
-        If it is an absolute path different than
-        DATA_ROOT, it will be saved as is.
-        This is not great, as the data could move around
-        and leave the "folder" property fixed in the DB.
-        If you want to deliberately make the folder an
-        absolute path with the current value of DATA_ROOT,
-        set src.dataset.DATA_ROOT to something else,
-        assign the absolute path to "folder" and then
-        change back DATA_ROOT to the original value.
-        """
-        if value is None:
-            self._folder = None
-            return
-        if value.startswith(src.database.DATA_ROOT):  # relative to root
-            self._folder = value[len(src.database.DATA_ROOT) + 1 :]
-        else:
-            self._folder = value
 
     @property
     def data(self):
