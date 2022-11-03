@@ -293,8 +293,8 @@ class Finder:
         det.snr = lightcurve.data.loc[peak_idx, "snr"]
         # can add score and additional_scores if needed
         det.peak_time = lightcurve.times[peak_idx]
-        det.peak_start = lightcurve.times[np.where(time_indices)[0][0]]
-        det.peak_end = lightcurve.times[np.where(time_indices)[0][-1]]
+        det.peak_start = lightcurve.times[time_indices[0]]
+        det.peak_end = lightcurve.times[time_indices[-1]]
 
         det.peak_mag = lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         det.peak_mag_diff = (

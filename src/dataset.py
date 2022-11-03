@@ -81,6 +81,7 @@ class DatasetMixin:
     This can be reduced into a Lightcurve
     object using a reducer function
     from the correct observatory object.
+    from the correct observatory object.
 
     """
 
@@ -107,18 +108,21 @@ class DatasetMixin:
     )
 
     # saving the data to file
-    _filename = sa.Column(
+    filename = sa.Column(
         sa.String,
         nullable=False,
         index=True,
-        doc="Filename of the dataset, including path, relative to the DATA_ROOT",
+        doc="Filename of the dataset, including relative path, "
+        "that may be appended to the folder attribute. ",
     )
 
-    _folder = sa.Column(
+    folder = sa.Column(
         sa.String,
         nullable=True,
         doc="Folder where this dataset is stored. "
-        "If relative path, it is relative to DATA_ROOT. ",
+        "If relative path, it is relative to DATA_ROOT. "
+        "If given as absolute path that overlaps with DATA_ROOT, "
+        "it will be converted to a relative path, so it is portable. ",
     )
 
     filekey = sa.Column(
@@ -238,6 +242,21 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         # TODO: figure out the series identifier and object
+
+    def __setattr__(self, key, value):
+        if key == "filename":
+            if isinstance(value, str) and os.path.isabs(value):
+                raise ValueError("Filename must be a relative path, not absolute")
+        elif key == "folder":
+            # if given as absolute path that overlaps with DATA_ROOT,
+            # convert to relative path, so it is portable
+            if isinstance(value, str) and os.path.isabs(value):
+                if value.startswith(src.database.DATA_ROOT):
+                    value = value[len(src.database.DATA_ROOT) :]
+                    if value.startswith("/"):
+                        value = value[1:]
+
+        super().__setattr__(key, value)
 
     @orm.reconstructor
     def init_on_load(self):
@@ -454,7 +473,30 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    def invent_filename(self, ra_deg=None, ra_minute=None, ra_second=None):
+    def get_source_name(self):
+        """
+        Get the name of the source as a string.
+
+        """
+        if hasattr(self, "source") and self.source is not None:
+            source_name = self.source.name
+        elif hasattr(self, "sources") and len(self.sources) > 0:
+            source_name = self.sources[0].name
+        else:
+            source_name = None
+
+        if source_name is not None:
+            if isinstance(source_name, bytes):
+                source_name = source_name.decode("utf-8")
+
+            if not isinstance(source_name, str):
+                raise TypeError("source name must be a string")
+
+        return source_name
+
+    def invent_filename(
+        self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
+    ):
 
         """
         Generate a filename with some pre-defined format
@@ -497,6 +539,12 @@ class DatasetMixin:
 
         Parameters
         ----------
+        source_name : str, optional
+            Name of the source to use in the filename.
+            If not given, will try to get the name from
+            the "source" attribute, or the first source
+            in the "sources" attribute.
+            If still not given, will use a random string.
         ra_deg : int, optional
             The integer degree of the right ascension of the source.
             If given as float, will just use floor(ra_deg).
@@ -523,6 +571,10 @@ class DatasetMixin:
             else:
                 self.filename = basename + "_reduced"
         else:
+            if source_name is None:
+                source_name = self.get_source_name()
+            if source_name is None:
+                source_name = self.random_string()
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
                 raise ValueError(
@@ -537,19 +589,19 @@ class DatasetMixin:
 
                 if ra_minute is not None:
                     ra = int(ra_minute)
-                    binning += f"_{ra:02d}"
+                    binning += f"d{ra:02d}m"
 
                     if ra_second is not None:
                         ra = int(ra_second)
-                        binning += f"_{ra:02d}"
+                        binning += f"{ra:02d}s"
 
             else:
                 binning = self.random_string(15)
 
             # add prefix using the type of data and observatory
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
-            data_type = self.type if self.type is not None else "Data_"
-            self.filename = f"{obs}_{data_type}_{binning}"
+            data_type = self.type if self.type is not None else "data"
+            self.filename = os.path.join(binning, f"{obs}_{data_type}_{source_name}")
 
         # add extension
         self.filename += self.guess_extension()
@@ -593,7 +645,7 @@ class DatasetMixin:
             if isinstance(source_name, str):
                 self.filekey = source_name
             else:
-                raise TypeError("source must be a string")
+                raise TypeError("source name must be a string")
         else:
             self.filekey = self.random_string(8)
 
@@ -673,7 +725,10 @@ class DatasetMixin:
         # if no filename/key are given, make them up
         if self.filename is None:
             self.invent_filename(
-                ra_deg=ra_deg, ra_minute=ra_minute, ra_second=ra_second
+                source_name=source_name,
+                ra_deg=ra_deg,
+                ra_minute=ra_minute,
+                ra_second=ra_second,
             )
 
         # for any of the formats where we need an in-file key:
@@ -746,11 +801,17 @@ class DatasetMixin:
     def save_netcdf(self, overwrite):
         pass
 
-    def delete_data_from_disk(self):
+    def delete_data_from_disk(self, remove_folders=True):
         """
         Delete the data from disk, if it exists.
         If the format is hdf5, will delete the key from the file.
         If there are no more keys in the file, will delete the file.
+
+        Parameters
+        ----------
+        remove_folders: bool
+            If True, will remove any folders that were created
+            by this object, if they are empty.
         """
         if self.check_file_exists():
             need_to_delete = False
@@ -769,8 +830,11 @@ class DatasetMixin:
             if need_to_delete:
                 os.remove(self.get_fullname())
 
-                # TODO: delete the folder if empty?
-                #  maybe add a parameter to do that?
+                # delete the folder if empty
+                if remove_folders:
+                    path = os.path.dirname(self.get_fullname())
+                    if len(os.listdir(path)) == 0:
+                        os.rmdir(path)
 
     def find_colmap(self, data):
         """
@@ -1007,62 +1071,6 @@ class DatasetMixin:
 
     def plot_cutouts(self, ax=None, **kwargs):
         pass
-
-    @property
-    def filename(self):
-        return self._filename
-
-    @filename.setter
-    def filename(self, value):
-        """
-        The filename ALWAYS refers to the file without path.
-        The path should be determined by "folder" and "DATA_ROOT".
-        If given a full path to a file, the path is removed.
-        If that path is DATA_ROOT/<some_folder> it will assign
-        <some_folder> to self.folder.
-        If it doesn't fit that but has an absolute path,
-        that gets saved in self.folder, which overrides
-        the value of DATA_ROOT
-        (this is not great, as the data could move around
-        and leave the "folder" property fixed in the DB).
-        """
-        if value is None:
-            self._filename = None
-            return
-
-        (path, filename) = os.path.split(value)
-        self._filename = filename
-        if path:
-            self.folder = path
-
-    @property
-    def folder(self):
-        return self._folder
-
-    @folder.setter
-    def folder(self, value):
-        """
-        Use the folder to find the file under DATA_ROOT.
-        If given as a relative path, or an absolute path
-        that starts with DATA_ROOT, it will be saved
-        relative to DATA_ROOT.
-        If it is an absolute path different than
-        DATA_ROOT, it will be saved as is.
-        This is not great, as the data could move around
-        and leave the "folder" property fixed in the DB.
-        If you want to deliberately make the folder an
-        absolute path with the current value of DATA_ROOT,
-        set src.dataset.DATA_ROOT to something else,
-        assign the absolute path to "folder" and then
-        change back DATA_ROOT to the original value.
-        """
-        if value is None:
-            self._folder = None
-            return
-        if value.startswith(src.database.DATA_ROOT):  # relative to root
-            self._folder = value[len(src.database.DATA_ROOT) + 1 :]
-        else:
-            self._folder = value
 
     @property
     def data(self):

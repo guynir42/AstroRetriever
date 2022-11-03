@@ -357,7 +357,10 @@ def test_observatory_filename_conventions(test_project):
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
-    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
+    assert (
+        data.filename
+        == f'RA{int(cat_row["ra"]):02d}/DEMO_photometry_{cat_row["name"]}.h5'
+    )
 
     # try it again with higher numbers in the catalog
     num = np.random.randint(100000, 101000)
@@ -370,7 +373,10 @@ def test_observatory_filename_conventions(test_project):
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
-    assert data.filename == f'DEMO_photometry_RA{int(cat_row["ra"])}.h5'
+    assert (
+        data.filename
+        == f'RA{int(cat_row["ra"]):02d}/DEMO_photometry_{cat_row["name"]}.h5'
+    )
 
     # test the key conventions:
     data.invent_filekey(source_name=name)
@@ -457,7 +463,7 @@ def test_add_source_and_data(data_dir):
             filename = new_data.filename
             fullname = os.path.join(data_dir, "data_temp", filename)
 
-            with pd.HDFStore(fullname) as store:
+            with pd.HDFStore(fullname, "r") as store:
                 key = store.keys()[0]
                 df_from_file = store.get(key)
                 assert df_from_file.equals(df)
@@ -686,8 +692,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         # session.execute(sa.delete(Source).where(Source.name == source_id))
         session.delete(new_source)
         session.commit()
-        for lc in new_source.reduced_lightcurves:
-            print(lc.source)
+
         data = session.scalars(
             sa.select(RawPhotometry).where(
                 RawPhotometry.filekey == raw_phot_no_exptime.filekey
@@ -770,13 +775,12 @@ def test_data_file_paths(raw_phot, data_dir):
     # adding a path to filename puts that path into "folder"
     raw_phot.folder = None
     raw_phot.filename = "path/to/test/test.h5"
-    assert raw_phot.folder == "path/to/test"
-    assert raw_phot.get_fullname() == os.path.join(data_dir, "path/to/test/test.h5")
+
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/path/to/test/test.h5")
 
     # an absolute path in "folder" will ignore DATA_ROOT
-    raw_phot.folder = None
-    raw_phot.filename = "/path/to/test/test.h5"
-    assert raw_phot.folder == "/path/to/test"
+    raw_phot.folder = "/path"
+    raw_phot.filename = "to/test/test.h5"
     assert raw_phot.get_fullname() == "/path/to/test/test.h5"
 
 
@@ -1018,17 +1022,16 @@ def test_demo_observatory_save_downloaded(test_project):
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
-            d.delete_data_from_disk()
-
-        assert not os.path.isfile(obs.datasets[0].get_fullname())
-        if len(os.listdir(os.path.dirname(obs.datasets[0].get_fullname()))) == 0:
-            os.rmdir(os.path.dirname(obs.datasets[0].get_fullname()))
-
-        with Session() as session:
-            for d in obs.datasets:
-                session.delete(d)
-            session.commit()
+        pass
+        # for d in obs.datasets:
+        #     d.delete_data_from_disk()
+        #
+        # assert not os.path.isfile(obs.datasets[0].get_fullname())
+        #
+        # with Session() as session:
+        #     for d in obs.datasets:
+        #         session.delete(d)
+        #     session.commit()
 
 
 @pytest.mark.flaky(reruns=3)
