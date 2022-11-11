@@ -435,7 +435,7 @@ class Catalog:
         else:
             return list(self.data.dtype.names)
 
-    def get_row(self, loc, index_type="number", output="raw"):
+    def get_row(self, loc, index_type="number", output="raw", obstime=None):
         """
         Get a row from the catalog.
         Can get it by index or by name.
@@ -460,6 +460,11 @@ class Catalog:
             Either "raw" or "dict".
             If "raw" will return the row in the catalog data.
             If "dict" will return a dictionary with a few columns.
+        obstime: astropy.time.Time
+            The time of observation. If given, will apply
+            proper motion to the source based on the time
+            the catalog was observed relative to the given time.
+            Only works when output="dict".
 
         Returns
         -------
@@ -487,7 +492,7 @@ class Catalog:
         if output == "raw":
             return row
         elif output == "dict":
-            return self.dict_from_row(row)
+            return self.dict_from_row(row, obstime=obstime)
         else:
             raise ValueError('Parameter "output" must be "raw" or "dict"')
 
@@ -536,7 +541,8 @@ class Catalog:
         """
         Extract the relevant information from a row of the catalog.
         """
-        d = self.dict_from_row(row)
+        if not isinstance(row, dict):
+            d = self.dict_from_row(row)
         return (
             d["index"],
             d["name"],
