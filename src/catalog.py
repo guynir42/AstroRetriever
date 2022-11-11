@@ -88,7 +88,7 @@ class ParsCatalog(Parameters):
         self.catalog_observation_year = self.add_par(
             "catalog_observation_year",
             2000,
-            (None, str),
+            (None, str, int),
             "Time of observation for the catalog, for proper motion correction",
         )
 
@@ -177,6 +177,7 @@ class ParsCatalog(Parameters):
             self.mag_column = "phot_g_mean_mag"
             self.mag_error_column = "phot_g_mean_mag_error"
             self.mag_filter_name = "Gaia_G"
+            self.catalog_observation_year = 2016.5
 
 
 class Catalog:
@@ -513,7 +514,7 @@ class Catalog:
         name = self.name_to_string(row[self.pars.name_column])
         ra = float(row[self.pars.ra_column])
         dec = float(row[self.pars.dec_column])
-        ra, dec = self.convert_coords(ra, dec, row, obstime)
+        ra, dec = self.convert_coords(row, obstime)
 
         mag = float(row[self.pars.mag_column])
         if "mag_err_column" in self.pars:
@@ -585,7 +586,7 @@ class Catalog:
             dec=dec * u.deg,
             frame=self.pars.coord_frame_data,
             obstime=Time(
-                "2016.0", format="jyear", scale="tdb"
+                self.pars.catalog_observation_year, format="jyear", scale="tdb"
             ),  # reference epoch for Gaia DR3
             pm_ra_cosdec=pm_ra * u.mas / u.yr,
             pm_dec=pm_dec * u.mas / u.yr,
