@@ -7,10 +7,9 @@ import hashlib
 from datetime import datetime, timezone
 import dateutil.parser
 from astropy.table import Table
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, Distance
 import astropy.units as u
 from astropy.time import Time
-
 
 import numpy as np
 import pandas as pd
@@ -40,6 +39,25 @@ class ParsCatalog(Parameters):
         self.dec_column = self.add_par(
             "dec_column", "dec", str, "Name of the column with source declination"
         )
+        self.pm_ra_column = self.add_par(
+            "pm_ra_column",
+            "pmra",
+            str,
+            "Name of the column with source proper motion "
+            "in right ascension (times cos declination)",
+        )
+        self.pm_dec_column = self.add_par(
+            "pm_dec_column",
+            "pmdec",
+            str,
+            "Name of the column with source proper motion in declination",
+        )
+        self.parallax_column = self.add_par(
+            "parallax_column",
+            "parallax",
+            str,
+            "Name of the column with source parallax",
+        )
         self.mag_column = self.add_par(
             "mag_column", "mag", str, "Name of the column with source magnitude"
         )
@@ -51,6 +69,27 @@ class ParsCatalog(Parameters):
         )
         self.mag_filter_name = self.add_par(
             "mag_filter_name", "R", str, "Name of the filter for the magnitude column"
+        )
+
+        self.coord_frame_data = self.add_par(
+            "coord_frame_data",
+            "icrs",
+            (None, str),
+            "Coordinate frame of the catalog's raw data",
+        )
+
+        self.coord_frame_output = self.add_par(
+            "coord_frame_output",
+            "icrs",
+            (None, str),
+            "Coordinate frame for outputting cat_row, etc.",
+        )
+
+        self.catalog_observation_year = self.add_par(
+            "catalog_observation_year",
+            2000,
+            (None, str),
+            "Time of observation for the catalog, for proper motion correction",
         )
 
         self.alias_column = self.add_par(
@@ -452,14 +491,25 @@ class Catalog:
         else:
             raise ValueError('Parameter "output" must be "raw" or "dict"')
 
-    def dict_from_row(self, row):
+    def dict_from_row(self, row, obstime=None):
         """
         Extract the relevant information from a row of the catalog as a dictionary.
+
+        Parameters
+        ----------
+        row: pandas Series or numpy array
+            The row of the catalog, without any processing.
+        obstime: astropy Time object
+            The time of the observation to use for calculating
+            the apparent coordinates for the required survey
+            using proper motion of the source.
         """
         index = self.get_index_from_name(row[self.pars.name_column])
         name = self.name_to_string(row[self.pars.name_column])
         ra = float(row[self.pars.ra_column])
         dec = float(row[self.pars.dec_column])
+        ra, dec = self.convert_coords(ra, dec, row, obstime)
+
         mag = float(row[self.pars.mag_column])
         if "mag_err_column" in self.pars:
             mag_err = float(row[self.pars.mag_err_column])
@@ -497,6 +547,53 @@ class Catalog:
             d["filter_name"],
             d["alias"],
         )
+
+    def convert_coords(self, row, obstime=None):
+        """
+        Convert the coordinates from the catalog's epoch
+        (default J2000) to the output coordinate epoch.
+        TODO: This should also accept date to propagate the
+              coordinates using proper motion info.
+
+        Parameters
+        ----------
+        row: pandas Series or numpy array
+            The row in the catalog data.
+        obstime: astropy Time (optional)
+            The time of observation to propagate the coordinates
+            using proper motion.
+            If not given, will not apply proper motion.
+
+        Returns
+        -------
+        float, float
+            The RA and Dec of the object in the output epoch.
+        """
+        ra = row[self.pars.ra_column]
+        dec = row[self.pars.dec_column]
+        pm_ra = row[self.pars.pm_ra_column] if self.pars.pm_ra_column else 0.0
+        pm_dec = row[self.pars.pm_dec_column] if self.pars.pm_dec_column else 0.0
+
+        coords = SkyCoord(
+            ra=ra * u.deg,
+            dec=dec * u.deg,
+            frame=self.pars.coord_frame_data,
+            obstime=Time(
+                "2016.0", format="jyear", scale="tdb"
+            ),  # reference epoch for Gaia DR3
+            pm_ra_cosdec=pm_ra * u.mas / u.yr,
+            pm_dec=pm_dec * u.mas / u.yr,
+            distance=Distance(parallax=row[self.pars.parallax_column] * u.mas),
+        )
+        if obstime is not None:
+            coords = coords.apply_space_motion(new_obstime=obstime)
+
+        if self.pars.coord_frame_data != self.pars.coord_frame_output:
+            coords.transform_to(
+                self.pars.coord_frame_output
+            )  # TODO: what about equinox?
+
+        return coords.ra.value, coords.dec.value
 
     @staticmethod
     def make_test_catalog(filename=None, number=10, fmt=None):
