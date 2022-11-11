@@ -75,7 +75,7 @@ class ParsObservatory(Parameters):
         self.observation_time = self.add_par(
             "observation_time",
             None,
-            (None, str),
+            (None, str, int, float),
             "Time of observation. Used to propagate catalog coordinates"
             "to the time this observatory took the data using the source"
             "proper motion. Should be given as julian year format, e.g., 2018.3",
@@ -479,11 +479,6 @@ class VirtualObservatory:
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = []
             obstime = self.pars.observation_time
-            obstime = (
-                Time(obstime, format="jyear", scale="tdb")
-                if obstime is not None
-                else None
-            )
             for i in range(start, stop):
                 cat_row = self.catalog.get_row(
                     loc=i, index_type="number", output="dict", obstime=obstime

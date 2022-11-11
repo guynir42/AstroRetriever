@@ -88,7 +88,7 @@ class ParsCatalog(Parameters):
         self.catalog_observation_year = self.add_par(
             "catalog_observation_year",
             2000,
-            (None, str, int),
+            (None, str, int, float),
             "Time of observation for the catalog, for proper motion correction",
         )
 
@@ -593,6 +593,8 @@ class Catalog:
             distance=Distance(parallax=row[self.pars.parallax_column] * u.mas),
         )
         if obstime is not None:
+            if isinstance(obstime, (str, int, float)):
+                obstime = Time(obstime, format="jyear", scale="tdb")
             coords = coords.apply_space_motion(new_obstime=obstime)
 
         if self.pars.coord_frame_data != self.pars.coord_frame_output:
