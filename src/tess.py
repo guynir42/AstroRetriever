@@ -10,12 +10,12 @@ import warnings
 from timeit import default_timer as timer
 
 from astroquery.mast import Observations, Catalogs
-import astropy.table import Table
+from astropy.table import Table
+import astropy.io.fits as fits
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
 from src.dataset import DatasetMixin, RawData, Lightcurve
-from src.catalog import Catalog
 
 class ParsObsTESS(ParsObservatory):
 
@@ -356,7 +356,7 @@ class VirtualTESS(VirtualObservatory):
                 print(f"Making query request, attempt {tries}/10 ...")
                 ret = query_fn(**kwargs)
                 return ret
-            except ReadTimeoutError as e:
+            except TimeoutError as e:
                 # print(e)
                 print(f"Request timed out.")
 
