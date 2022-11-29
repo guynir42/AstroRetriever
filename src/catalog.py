@@ -541,10 +541,10 @@ class Catalog:
         )
 
         if self.pars.pm_ra_column is not None:
-            output.update(pmra=float(row[self.pars.pmra_column]))
+            output.update(pmra=float(row[self.pars.pm_ra_column]))
 
         if self.pars.pm_dec_column is not None:
-            output.update(pmra=float(row[self.pars.pmdec_column]))
+            output.update(pmra=float(row[self.pars.pm_dec_column]))
 
         return output
 
