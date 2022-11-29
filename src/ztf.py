@@ -24,6 +24,36 @@ class ParsObsZTF(ParsObservatory):
 
         super().__init__("ztf")
 
+        self.minimal_declination = self.add_par(
+            "minimal_declination",
+            -30.0,
+            float,
+            "Minimal declination for downloading ZTF observations",
+        )
+
+        self.limiting_magnitude = self.add_par(
+            "limiting_magnitude",
+            20.5,
+            float,
+            "Limiting magnitude for downloading ZTF observations",
+        )
+
+        self.faint_magnitude_difference = self.add_par(
+            "faint_magnitude_difference",
+            1.0,
+            (None, float),
+            "Maximum magnitude difference between catalog magnitude "
+            "and median measured magnitude, above which that oid is not saved",
+        )
+
+        self.bright_magnitude_difference = self.add_par(
+            "bright_magnitude_difference",
+            1.0,
+            (None, float),
+            "Maximum magnitude difference between catalog magnitude "
+            "and median measured magnitude, below which that oid is not saved",
+        )
+
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
@@ -49,6 +79,64 @@ class VirtualZTF(VirtualObservatory):
 
         self.pars = ParsObsZTF(**kwargs)
         super().__init__(name="ztf")
+
+    def fetch_data_from_observatory(self, cat_row, verbose=False):
+        """
+        Fetch data from the ZTF archive for a given source.
+
+        Parameters
+        ----------
+        cat_row: dict like
+            A row in the catalog for a specific source.
+            In general, this row should contain the following keys:
+            name, ra, dec, mag, filter_name (saying which band the mag is in).
+        verbose: bool, optional
+            If True, will print out some information about the
+            data that is being fetched or simulated.
+
+        Returns
+        -------
+        data : pandas.DataFrame or other data structure
+            Raw data from the observatory, to be put into a RawPhotometry object.
+        altdata: dict
+            Additional data to be stored in the RawPhotometry object.
+
+        """
+
+        if verbose:
+            print(
+                f'Fetching data from ZTF observatory for source {cat_row["cat_index"]}'
+            )
+
+        if (
+            cat_row["dec"] < self.pars.minimal_declination
+            or cat_row["mag"] > self.pars.limiting_magnitude
+        ):
+            data = pd.DataFrame([])
+            altdata = {}
+        else:
+            # get a big enough radius to fit high proper motion stars
+            pmra = cat_row.get("pmra", 0)
+            pmdec = cat_row.get("pmdec", 0)
+            pm = np.sqrt(pmra**2 + pmdec**2)
+
+            radius = 2 + (0.003 * pm)  # arcsec
+            new_query = lightcurve.LCQuery.from_position(
+                cat_row["ra"], cat_row["dec"], radius
+            )
+            data = new_query.data
+
+            if (
+                self.pars.faint_magnitude_difference is not None
+                and self.pars.bright_magnitude_difference is not None
+            ):
+                # filter out objects that are too faint or too bright
+                # compared to the catalog magnitude
+                short_table = data.groupby("oid").mean("mag")["mag"]
+
+            altdata = {}  # TODO: is there anything we want to put here?
+
+        return data, altdata
 
     # TODO: these specific parameters should live in the Parameters object
     #  we should do that when splitting it into a separate Reducer class
@@ -307,6 +395,25 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
 
 
 if __name__ == "__main__":
-    pass
-    # res = ztf_forced_photometry(280.0, -45.2, 2458231.891227, 2458345.025359)
-    # print(res.content)
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    matplotlib.use("qt5agg")
+
+    ztf = VirtualZTF(project="test")
+
+    cat_row = {
+        "cat_index": 6,
+        "name": "2873304808599755520",
+        "ra": 359.9944299296063,
+        "dec": 30.27293792274067,
+        "mag": 18.81524658203125,
+        "mag_err": None,
+        "mag_filter": "Gaia_G",
+        "alias": None,
+    }
+
+    data, altdata = ztf.fetch_data_from_observatory(cat_row, verbose=True)
+
+    plt.plot(data["mjd"], data["mag"], "o")

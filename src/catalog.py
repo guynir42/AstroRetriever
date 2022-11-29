@@ -177,6 +177,8 @@ class ParsCatalog(Parameters):
             self.mag_column = "phot_g_mean_mag"
             self.mag_error_column = "phot_g_mean_mag_error"
             self.mag_filter_name = "Gaia_G"
+            self.pm_ra_column = "pmra"
+            self.pm_dec_column = "pmdec"
             self.catalog_observation_year = 2016.5
 
 
@@ -527,7 +529,7 @@ class Catalog:
         else:
             alias = None
 
-        return dict(
+        output = dict(
             cat_index=index,
             name=name,
             ra=ra,
@@ -537,6 +539,14 @@ class Catalog:
             mag_filter=filter_name,
             alias=alias,
         )
+
+        if self.pars.pm_ra_column is not None:
+            output.update(pmra=float(row[self.pars.pmra_column]))
+
+        if self.pars.pm_dec_column is not None:
+            output.update(pmra=float(row[self.pars.pmdec_column]))
+
+        return output
 
     def values_from_row(self, row):
         """
