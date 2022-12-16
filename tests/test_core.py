@@ -989,7 +989,7 @@ def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
                 session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_demo_observatory_download_time(test_project):
     test_project.catalog.make_test_catalog()
     test_project.catalog.load()
@@ -1040,7 +1040,7 @@ def test_demo_observatory_save_downloaded(test_project):
             session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_histogram():
 
     h = Histogram()
@@ -1201,7 +1201,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(reruns=5)
+@pytest.mark.flaky(max_runs=5)
 def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # this lightcurve has no outliers:
@@ -1287,7 +1287,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1414,7 +1414,7 @@ def test_analysis(analysis, new_source, raw_phot):
             session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
