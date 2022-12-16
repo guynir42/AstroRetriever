@@ -550,6 +550,7 @@ class VirtualObservatory:
             ).first()
             if source is None:
                 source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
+                source.cat_row = cat_row  # save the raw catalog row as well
 
             new_data = []
             for dt in self.pars.data_types:

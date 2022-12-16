@@ -66,7 +66,7 @@ def test_ztf_download(ztf_project, wd_cat):
 
             metadata = store.get_storer(key).attrs["altdata"]
             assert isinstance(metadata, dict)
-            assert len(metadata) == 0
+            assert s.cat_row == metadata
 
 
 def test_ztf_reduction(ztf_project, new_source):
