@@ -1455,7 +1455,7 @@ def test_quality_checks(analysis, new_source, raw_phot):
     assert det.snr - 12 < 2.0  # no more than the S/N we put in
     assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
     assert det.quality_flag == 1
-    assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset
+    assert abs(det.quality_values["offset"] - 10) < 3  # approximately 10 sigma offset
 
     # what happens if the peak has two measurements?
     lc.data["flag"] = False

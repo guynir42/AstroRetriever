@@ -590,6 +590,7 @@ class VirtualObservatory:
                     data, altdata = self.fetch_data_from_observatory(
                         cat_row, **fetch_args
                     )
+                    altdata.update(cat_row)  # TODO: can we get the full catalog row?
                     raw_data = data_class(
                         data=data,
                         altdata=altdata,

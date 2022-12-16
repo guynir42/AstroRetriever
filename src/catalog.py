@@ -572,8 +572,7 @@ class Catalog:
         """
         index = self.get_index_from_name(row[self.pars.name_column])
         name = self.name_to_string(row[self.pars.name_column])
-        ra = float(row[self.pars.ra_column])
-        dec = float(row[self.pars.dec_column])
+
         ra, dec = self.convert_coords(row, obstime)
 
         mag = float(row[self.pars.mag_column])
