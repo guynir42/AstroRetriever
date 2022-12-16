@@ -13,6 +13,7 @@ from astropy.time import Time
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from src.utils import OnClose
 from src.parameters import Parameters
 from src.project import Project
 from src.observatory import VirtualDemoObs
@@ -988,7 +989,7 @@ def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
                 session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_demo_observatory_download_time(test_project):
     test_project.catalog.make_test_catalog()
     test_project.catalog.load()
@@ -1039,7 +1040,7 @@ def test_demo_observatory_save_downloaded(test_project):
             session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_histogram():
 
     h = Histogram()
@@ -1200,7 +1201,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(reruns=5)
+@pytest.mark.flaky(max_runs=5)
 def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # this lightcurve has no outliers:
@@ -1286,7 +1287,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1413,7 +1414,7 @@ def test_analysis(analysis, new_source, raw_phot):
             session.commit()
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1454,7 +1455,7 @@ def test_quality_checks(analysis, new_source, raw_phot):
     assert det.snr - 12 < 2.0  # no more than the S/N we put in
     assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
     assert det.quality_flag == 1
-    assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset
+    assert abs(det.quality_values["offset"] - 10) < 3  # approximately 10 sigma offset
 
     # what happens if the peak has two measurements?
     lc.data["flag"] = False
@@ -1483,3 +1484,22 @@ def test_quality_checks(analysis, new_source, raw_phot):
 
 
 # TODO: add test for simulation events
+
+
+def test_on_close_utility():
+    a = []
+    b = []
+
+    def append_to_list(a, b, clear_a_at_end=False):
+        if clear_a_at_end:
+            _ = OnClose(lambda: a.clear())
+        a.append(1)
+        b.append(a[0])
+
+    append_to_list(a, b)
+    assert a == [1]
+    assert b == [1]
+
+    append_to_list(a, b, clear_a_at_end=True)
+    assert a == []
+    assert b == [1, 1]

@@ -1,12 +1,9 @@
 import os
-import glob
+import yaml
 import requests
 from datetime import datetime
 import numpy as np
 import pandas as pd
-import sqlalchemy as sa
-
-from timeit import default_timer as timer
 
 from ztfquery import lightcurve
 
@@ -23,6 +20,43 @@ class ParsObsZTF(ParsObservatory):
     def __init__(self, **kwargs):
 
         super().__init__("ztf")
+
+        self.minimal_declination = self.add_par(
+            "minimal_declination",
+            -30.0,
+            float,
+            "Minimal declination for downloading ZTF observations",
+        )
+
+        self.cone_search_radius = self.add_par(
+            "cone_search_radius",
+            2.0,
+            float,
+            "Radius of cone search for ZTF observations",
+        )
+
+        self.limiting_magnitude = self.add_par(
+            "limiting_magnitude",
+            20.5,
+            float,
+            "Limiting magnitude for downloading ZTF observations",
+        )
+
+        self.faint_magnitude_difference = self.add_par(
+            "faint_magnitude_difference",
+            1.0,
+            (None, float),
+            "Maximum magnitude difference between catalog magnitude "
+            "and median measured magnitude, above which that oid is not saved",
+        )
+
+        self.bright_magnitude_difference = self.add_par(
+            "bright_magnitude_difference",
+            1.0,
+            (None, float),
+            "Maximum magnitude difference between catalog magnitude "
+            "and median measured magnitude, below which that oid is not saved",
+        )
 
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
@@ -49,6 +83,64 @@ class VirtualZTF(VirtualObservatory):
 
         self.pars = ParsObsZTF(**kwargs)
         super().__init__(name="ztf")
+
+    def fetch_data_from_observatory(self, cat_row, verbose=False):
+        """
+        Fetch data from the ZTF archive for a given source.
+
+        Parameters
+        ----------
+        cat_row: dict like
+            A row in the catalog for a specific source.
+            In general, this row should contain the following keys:
+            name, ra, dec, mag, filter_name (saying which band the mag is in).
+        verbose: bool, optional
+            If True, will print out some information about the
+            data that is being fetched or simulated.
+
+        Returns
+        -------
+        data : pandas.DataFrame or other data structure
+            Raw data from the observatory, to be put into a RawPhotometry object.
+        altdata: dict
+            Additional data to be stored in the RawPhotometry object.
+
+        """
+
+        if verbose:
+            print(
+                f'Fetching data from ZTF observatory for source {cat_row["cat_index"]}'
+            )
+
+        if (
+            cat_row["dec"] < self.pars.minimal_declination
+            or cat_row["mag"] > self.pars.limiting_magnitude
+        ):
+            data = pd.DataFrame([])
+            altdata = {}
+        else:
+            # get a big enough radius to fit high proper motion stars
+            pmra = cat_row.get("pmra", 0)
+            pmdec = cat_row.get("pmdec", 0)
+            pm = np.sqrt(pmra**2 + pmdec**2)
+
+            radius = self.pars.cone_search_radius + (0.003 * pm)  # arcsec
+            new_query = lightcurve.LCQuery.from_position(
+                cat_row["ra"], cat_row["dec"], radius, auth=self.get_credentials()
+            )
+            data = new_query.data
+
+            if (
+                self.pars.faint_magnitude_difference is not None
+                and self.pars.bright_magnitude_difference is not None
+            ):
+                # filter out objects that are too faint or too bright
+                # compared to the catalog magnitude
+                short_table = data.groupby("oid").mean("mag")["mag"]
+
+            altdata = {}  # TODO: is there anything we want to put here?
+
+        return data, altdata
 
     # TODO: these specific parameters should live in the Parameters object
     #  we should do that when splitting it into a separate Reducer class
@@ -117,7 +209,9 @@ class VirtualZTF(VirtualObservatory):
         allowed_dataclasses = pd.DataFrame
 
         if not isinstance(dataset, RawPhotometry):
-            raise ValueError(f"Expected RawPhotometry object, got {type(d)} instead.")
+            raise ValueError(
+                f"Expected RawPhotometry object, got {type(dataset)} instead."
+            )
         if not isinstance(dataset.data, allowed_dataclasses):
             raise ValueError(
                 f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
@@ -223,6 +317,31 @@ class VirtualZTF(VirtualObservatory):
 
         return new_datasets
 
+    @staticmethod
+    def get_credentials():
+        """Get the username/password for ZTF downloading"""
+
+        username = os.getenv("ZTF_USERNAME")
+        password = os.getenv("ZTF_PASSWORD")
+
+        if username is None or password is None:
+            basepath = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+            try:
+                with open(os.path.join(basepath, "credentials.yaml")) as f:
+                    creds = yaml.safe_load(f)
+                    username = creds["ztf"]["username"]
+                    password = creds["ztf"]["password"]
+            except Exception:
+                pass
+
+        if username is None or password is None:
+            raise ValueError(
+                "ZTF_USERNAME and ZTF_PASSWORD environment variables "
+                "must be set to download ZTF data."
+            )
+
+        return username, password
+
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
     """
@@ -307,6 +426,52 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
 
 
 if __name__ == "__main__":
-    pass
-    # res = ztf_forced_photometry(280.0, -45.2, 2458231.891227, 2458345.025359)
-    # print(res.content)
+
+    from src.catalog import Catalog
+    import src.database
+
+    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    matplotlib.use("qt5agg")
+
+    ztf = VirtualZTF(project="test")
+
+    # c0 = Catalog(default='wd')
+    # c0.load()
+    # idx = (c0.data['phot_g_mean_mag'] < 18) & (c0.data['dec'] > 0)
+    # idx = np.where(idx)[0][:5]
+    # c = c0.make_smaller_catalog(idx)
+    #
+    # # download the lightcurve:
+    # ztf.catalog = c
+    # ztf.download_all_sources()
+
+    cat_row = {
+        "cat_index": 6,
+        "name": "2873304808599755520",
+        "ra": 359.9944299296063,
+        "dec": 30.27293792274067,
+        "mag": 18.81524658203125,
+        "mag_err": None,
+        "mag_filter": "Gaia_G",
+        "alias": None,
+    }
+
+    cat_row = {
+        "cat_index": 553834,
+        "name": "4068499305485306240",
+        "ra": 267.3988352699508,
+        "dec": -23.9174116183762,
+        "mag": 15.364676475524902,
+        "mag_err": None,
+        "mag_filter": "Gaia_G",
+        "alias": None,
+    }
+
+    ztf.pars.cone_search_radius = 10
+    data, altdata = ztf.fetch_data_from_observatory(cat_row, verbose=True)
+    data2 = data[data["filtercode"] == "zg"]
+    plt.plot(data2["mjd"], data2["mag"], "o")

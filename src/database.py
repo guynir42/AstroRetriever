@@ -40,6 +40,15 @@ if not database_exists(engine.url):
 Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 
+class CloseSession:
+    def __init__(self, session=None):
+        self.session = session
+
+    def __del__(self):
+        if self.session is not None:
+            self.session.close()
+
+
 def clear_tables():
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association

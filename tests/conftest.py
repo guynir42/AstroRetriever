@@ -8,6 +8,7 @@ import pytest
 import sqlalchemy as sa
 
 from src.database import Session
+from src.catalog import Catalog
 from src.source import Source
 from src.project import Project
 from src.dataset import RawPhotometry, Lightcurve
@@ -20,6 +21,13 @@ def data_dir():
     basepath = os.path.abspath(os.path.dirname(__file__))
     src.database.DATA_ROOT = basepath
     return basepath
+
+
+@pytest.fixture(scope="session")
+def wd_cat():
+    c = Catalog(default="wd")
+    c.load()
+    return c
 
 
 @pytest.fixture
