@@ -576,9 +576,8 @@ class VirtualObservatory:
                     except KeyError as e:
                         if "No object named" in str(e):
                             # This does not exist in the file
-                            session.delete(
-                                raw_data
-                            )  # TODO: is delete the right thing to do?
+                            session.delete(raw_data)
+                            # TODO: is delete the right thing to do?
                             raw_data = None
                         else:
                             raise e
@@ -607,6 +606,16 @@ class VirtualObservatory:
                     [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
                 ):
                     getattr(source, f"raw_{dt}").append(raw_data)
+
+                # here we explicitely set all relational collections
+                # to an empty list, so they are accessible (and empty)
+                # even if the source is no longer attached to the DB.
+                for name in ["reduced", "processed", "simulated"]:
+                    if len(getattr(source, f"{name}_{dt}")) == 0:
+                        setattr(source, f"{name}_{dt}", [])
+                if len(source.detections) == 0:
+                    source.detections = []
+                # add more collections here...
 
             # unless debugging, you'd want to save this data
             if save:

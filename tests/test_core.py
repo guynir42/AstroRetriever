@@ -13,6 +13,7 @@ from astropy.time import Time
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from src.utils import OnClose
 from src.parameters import Parameters
 from src.project import Project
 from src.observatory import VirtualDemoObs
@@ -1483,3 +1484,22 @@ def test_quality_checks(analysis, new_source, raw_phot):
 
 
 # TODO: add test for simulation events
+
+
+def test_on_close_utility():
+    a = []
+    b = []
+
+    def append_to_list(a, b, clear_a_at_end=False):
+        if clear_a_at_end:
+            _ = OnClose(lambda: a.clear())
+        a.append(1)
+        b.append(a[0])
+
+    append_to_list(a, b)
+    assert a == [1]
+    assert b == [1]
+
+    append_to_list(a, b, clear_a_at_end=True)
+    assert a == []
+    assert b == [1, 1]

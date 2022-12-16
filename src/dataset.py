@@ -453,7 +453,7 @@ class DatasetMixin:
             if self.data is None:
                 raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
             # load metadata
-            if store.get_storer(key).attrs:
+            if store.get_storer(key).attrs and "altdata" in store.get_storer(key).attrs:
                 self.altdata = store.get_storer(key).attrs["altdata"]
 
     def load_fits(self):
@@ -652,11 +652,11 @@ class DatasetMixin:
         # add the type of data
         self.filekey = f"{self.type}_{self.filekey}"
 
-        if prefix is not None:
+        if prefix:
             if prefix.endswith("_"):  # remove trailing underscore
                 prefix = prefix[:-1]
             self.filekey = f"{prefix}_{self.filekey}"
-        if suffix is not None:
+        if suffix:
             if suffix.startswith("_"):  # remove leading underscore
                 suffix = suffix[1:]
             self.filekey = f"{self.filekey}_{suffix}"
@@ -779,7 +779,11 @@ class DatasetMixin:
 
                     store.put(self.filekey, self.data)
                     if self.altdata:
-                        store.get_storer(self.filekey).attrs["altdata"] = self.altdata
+                        altdata_to_write = self.altdata
+                    else:
+                        altdata_to_write = {}
+                    store.get_storer(self.filekey).attrs["altdata"] = altdata_to_write
+
             elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:
                     f.create_dataset(self.filekey, data=self.data)

@@ -31,6 +31,13 @@ class ParsObsZTF(ParsObservatory):
             "Minimal declination for downloading ZTF observations",
         )
 
+        self.cone_search_radius = self.add_par(
+            "cone_search_radius",
+            2.0,
+            float,
+            "Radius of cone search for ZTF observations",
+        )
+
         self.limiting_magnitude = self.add_par(
             "limiting_magnitude",
             20.5,
@@ -120,7 +127,7 @@ class VirtualZTF(VirtualObservatory):
             pmdec = cat_row.get("pmdec", 0)
             pm = np.sqrt(pmra**2 + pmdec**2)
 
-            radius = 2 + (0.003 * pm)  # arcsec
+            radius = self.pars.cone_search_radius + (0.003 * pm)  # arcsec
             new_query = lightcurve.LCQuery.from_position(
                 cat_row["ra"], cat_row["dec"], radius
             )
@@ -396,12 +403,27 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
 
 if __name__ == "__main__":
 
+    from src.catalog import Catalog
+    import src.database
+
+    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
+
     import matplotlib
     import matplotlib.pyplot as plt
 
     matplotlib.use("qt5agg")
 
     ztf = VirtualZTF(project="test")
+
+    # c0 = Catalog(default='wd')
+    # c0.load()
+    # idx = (c0.data['phot_g_mean_mag'] < 18) & (c0.data['dec'] > 0)
+    # idx = np.where(idx)[0][:5]
+    # c = c0.make_smaller_catalog(idx)
+    #
+    # # download the lightcurve:
+    # ztf.catalog = c
+    # ztf.download_all_sources()
 
     cat_row = {
         "cat_index": 6,
@@ -414,6 +436,18 @@ if __name__ == "__main__":
         "alias": None,
     }
 
-    data, altdata = ztf.fetch_data_from_observatory(cat_row, verbose=True)
+    cat_row = {
+        "cat_index": 553834,
+        "name": "4068499305485306240",
+        "ra": 267.3988352699508,
+        "dec": -23.9174116183762,
+        "mag": 15.364676475524902,
+        "mag_err": None,
+        "mag_filter": "Gaia_G",
+        "alias": None,
+    }
 
-    plt.plot(data["mjd"], data["mag"], "o")
+    ztf.pars.cone_search_radius = 10
+    data, altdata = ztf.fetch_data_from_observatory(cat_row, verbose=True)
+    data2 = data[data["filtercode"] == "zg"]
+    plt.plot(data2["mjd"], data2["mag"], "o")

@@ -1,4 +1,5 @@
 import os
+import copy
 import yaml
 
 from src.database import DATA_ROOT
@@ -255,6 +256,8 @@ class Parameters:
         if not isinstance(par_types, tuple):
             par_types = (par_types,)
         par_types = tuple(type(pt) if pt is None else pt for pt in par_types)
+        if float in par_types:
+            par_types += (int,)
         self.__typecheck__[name] = par_types
         self.__docstrings__[name] = docstring
         self.__defaultpars__[name] = default
@@ -492,6 +495,12 @@ class Parameters:
         with open(filename, "w") as file:
             outputs = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
             yaml.dump(outputs, file, default_flow_style=False)
+
+    def copy(self):
+        """
+        Create a copy of the parameters.
+        """
+        return copy.deepcopy(self)
 
     def get_data_path(self):
         """

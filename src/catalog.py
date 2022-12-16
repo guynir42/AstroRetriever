@@ -181,6 +181,12 @@ class ParsCatalog(Parameters):
             self.pm_dec_column = "pmdec"
             self.catalog_observation_year = 2016.5
 
+    def __setattr__(self, key, value):
+        if key in ("name", "cat_name"):
+            super().__setattr__("catalog_name", value)
+        else:
+            super().__setattr__(key, value)
+
 
 class Catalog:
     def __init__(self, **kwargs):
@@ -353,6 +359,36 @@ class Catalog:
             if os.path.isfile(downloaded_filename):
                 os.remove(downloaded_filename)
 
+    def make_smaller_catalog(self, idx):
+        """
+        Get a copy of this catalog object,
+        but with only the rows specified by idx.
+        The name of the catalog will be appended
+        with "_small".
+
+        Parameters
+        ----------
+        idx: array-like
+            Any indexing array that can be used to select
+            some rows of the underlying "data" member.
+            Could be logical or integer indexing.
+            For example, it could be all stars with
+            magnitude brighter than 16:
+            idx = c.data['phot_g_mean_mag'] < 16.0
+            c2 = c.make_smaller_catalog(idx)
+
+        Returns
+        -------
+        Catalog
+            A copy of this catalog object,
+            but with only the rows specified by idx.
+        """
+        c = Catalog(name=self.pars.catalog_name + "_small")
+        c.pars = self.pars.copy()
+        c.data = self.get_data_slice(idx)
+
+        return c
+
     @staticmethod
     def check_sanitizer(input_str):
         return SANITIZE_RE.sub("", input_str)
@@ -438,6 +474,31 @@ class Catalog:
         else:
             return list(self.data.dtype.names)
 
+    def get_data_slice(self, idx):
+        """
+        Get a slice of the raw data using indexing
+        array idx. If the catalog is a pandas DataFrame,
+        then the slice will be a DataFrame, using .iloc.
+        Otherwise, just index into the data array.
+
+        Parameters
+        ----------
+        idx: array-like or integer
+            The indexing array or integer to use to slice the data.
+
+        Returns
+        -------
+        pandas.DataFrame or numpy.ndarray
+            The slice of the data.
+        """
+
+        if isinstance(self.data, pd.DataFrame):
+            new_data = self.data.iloc[idx]
+        else:
+            new_data = self.data[idx]
+
+        return new_data
+
     def get_row(self, loc, index_type="number", output="raw", obstime=None):
         """
         Get a row from the catalog.
@@ -481,16 +542,13 @@ class Catalog:
             raise ValueError("Catalog is empty.")
 
         if index_type == "number":
-            index = int(loc)
+            idx = int(loc)
         elif index_type == "name":
-            index = int([self.get_index_from_name(loc)])
+            idx = int([self.get_index_from_name(loc)])
         else:
             raise ValueError('index_type must be "number" or "name"')
 
-        if isinstance(self.data, pd.DataFrame):
-            row = self.data.iloc[index]
-        else:
-            row = self.data[index]
+        row = self.get_data_slice(idx)
 
         if output == "raw":
             return row

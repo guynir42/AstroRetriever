@@ -13,7 +13,7 @@ import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
 
-from src.database import Base, Session, engine
+from src.database import Base, Session, CloseSession, engine
 from src.catalog import Catalog
 from src.parameters import (
     allowed_data_types,
@@ -212,8 +212,9 @@ class Source(Base, conesearch_alchemy.Point):
 
         self.keywords_to_columns(kwargs)
 
-        additional_keywords = []
-        if any([k not in additional_keywords for k in kwargs.items()]):
+        # extra info from the cat_row that is not saved to the Source:
+        additional_keywords = ["pmra", "pmdec"]
+        if any([k not in additional_keywords for k in kwargs.keys()]):
             raise ValueError(f"Unknown keyword arguments: {kwargs}")
 
     def __repr__(self):
@@ -388,6 +389,25 @@ class Source(Base, conesearch_alchemy.Point):
 
         sources = session.scalars(stmt).first()
         return sources is not None
+
+    def remove_from_database_and_disk(self, session=None, remove_raw_data=False):
+        """
+        Remove this source from the database and from disk.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+        if remove_raw_data:
+            for rp in self.raw_photometry:
+                # maybe add an autodelete for RawPhotometry?
+                rp.remove_from_disk()
+                session.delete(rp)
+        for lc in self.lightcurves:
+            lc.remove_from_disk()
+            session.delete(lc)
+        session.delete(self)
+        session.commit()
 
 
 # make sure the table exists
