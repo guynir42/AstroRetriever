@@ -1,12 +1,9 @@
 import os
-import glob
+import yaml
 import requests
 from datetime import datetime
 import numpy as np
 import pandas as pd
-import sqlalchemy as sa
-
-from timeit import default_timer as timer
 
 from ztfquery import lightcurve
 
@@ -129,7 +126,7 @@ class VirtualZTF(VirtualObservatory):
 
             radius = self.pars.cone_search_radius + (0.003 * pm)  # arcsec
             new_query = lightcurve.LCQuery.from_position(
-                cat_row["ra"], cat_row["dec"], radius
+                cat_row["ra"], cat_row["dec"], radius, auth=self.get_credentials()
             )
             data = new_query.data
 
@@ -212,7 +209,9 @@ class VirtualZTF(VirtualObservatory):
         allowed_dataclasses = pd.DataFrame
 
         if not isinstance(dataset, RawPhotometry):
-            raise ValueError(f"Expected RawPhotometry object, got {type(d)} instead.")
+            raise ValueError(
+                f"Expected RawPhotometry object, got {type(dataset)} instead."
+            )
         if not isinstance(dataset.data, allowed_dataclasses):
             raise ValueError(
                 f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
@@ -317,6 +316,31 @@ class VirtualZTF(VirtualObservatory):
                 new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets
+
+    @staticmethod
+    def get_credentials():
+        """Get the username/password for ZTF downloading"""
+
+        username = os.getenv("ZTF_USERNAME")
+        password = os.getenv("ZTF_PASSWORD")
+
+        if username is None or password is None:
+            basepath = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+            try:
+                with open(os.path.join(basepath, "credentials.yaml")) as f:
+                    creds = yaml.safe_load(f)
+                    username = creds["ztf"]["username"]
+                    password = creds["ztf"]["password"]
+            except Exception:
+                pass
+
+        if username is None or password is None:
+            raise ValueError(
+                "ZTF_USERNAME and ZTF_PASSWORD environment variables "
+                "must be set to download ZTF data."
+            )
+
+        return username, password
 
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
