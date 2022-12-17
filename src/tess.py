@@ -26,22 +26,36 @@ class ParsObsTESS(ParsObservatory):
 
         super().__init__("tess")
 
-        # TODO: figure out dstArcSec threshold for flagging close stars
-        self.dst_threshold = self.add_par(
-            "dst_threshold",
+        self.distance_thresh = self.add_par(
+            "distance_thresh",
             10.0, 
             float, 
             "Distance threshold in arcseconds for flagging "
             "close stars while querying TIC."
         )
 
-        # TODO: figure out mag diff threshold for flagging similar stars
-        self.magdiff_threshold = self.add_par(
-            "magdiff_threshold",
-            0.5, 
+        self.magdiff_thresh = self.add_par(
+            "magdiff_thresh",
+            0.75, 
             float, 
             "Magnitude difference threshold for flagging "
             "similar stars while querying TIC."
+        )
+
+        self.cat_qry_radius = self.add_par(
+            "cat_qry_radius",
+            0.01,
+            float,
+            "Radius in degrees for cone search for MAST Catalogs query."
+            "This query is to find the TESS ID for given source."
+        )
+
+        self.obs_qry_radius = self.add_par(
+            "obs_qry_radius",
+            0.1,
+            float,
+            "Radius in degrees for cone search for MAST Observations query."
+            "This query is to find data from TIC for given source."
         )
 
         self._enforce_type_checks = True
@@ -89,9 +103,6 @@ class VirtualTESS(VirtualObservatory):
         self,
         cat_row,
         verbose=0,
-        cat_qry_rad=0.01,
-        obs_qry_rad=0.1
-        # TODO: figure out optimal radii for queries
     ):
         """
         Fetch data from TESS for a given source.
@@ -107,12 +118,6 @@ class VirtualTESS(VirtualObservatory):
             A row in the catalog for a specific source.
             In general, this row should contain the following keys:
             name, ra, dec, mag, filter_name (saying which band the mag is in).
-        cat_qry_rad: float
-            Radius in degrees for cone search for MAST Catalogs query.
-            This query is to find the TESS ID for given source.
-        obs_qry_rad: float
-            Radius in degrees for cone search for MAST Observations query.
-            This query is to find data from TIC corresponding to given source.
 
         Returns
         -------
@@ -137,7 +142,7 @@ class VirtualTESS(VirtualObservatory):
         cat_params = {
             'coordinates': coord_str,
             'catalog': 'TIC',
-            'radius': cat_qry_rad
+            'radius': self.pars.cat_qry_radius
         }
         catalog_data = self._try_query(Catalogs.query_region, cat_params)
         if len(catalog_data) == 0:
@@ -150,47 +155,40 @@ class VirtualTESS(VirtualObservatory):
         # what if we're not using a GAIA cat_row? -> doesn't matter
 
         cat_data_mags = np.array(catalog_data['GAIAmag'])
-        close_mags = np.where(
-            ~np.isnan(cat_data_mags) and \
-            abs(cat_data_mags - mag) < self.pars.magdiff_threshold
+        close_mags = np.logical_and(
+            ~np.isnan(cat_data_mags),
+            abs(cat_data_mags - mag) < self.pars.magdiff_thresh
         )
-        if len(close_mags) == 0:
+        if not any(close_mags):
             self._print("No objects found within mag difference "
                         "threshold for TIC query.", verbose)
             return pd.DataFrame()
 
-        cat_data_dsts = np.array(catalog_data['dstArcSec'])
-        close_dsts = np.where(
-            ~np.isnan(cat_data_dsts) and \
-            cat_data_dsts < self.pars.dst_threshold
+        cat_data_dists = np.array(catalog_data['dstArcSec'])
+        close_dsts = np.logical_and(
+            ~np.isnan(cat_data_dists),
+            cat_data_dists < self.pars.distance_thresh
         )
-        if len(close_dsts) == 0:
+        if any(close_dsts):
             self._print("No objects found within distance "
                         "threshold for TIC query.", verbose)
             return pd.DataFrame()
 
-        # close_mags_and_dsts = 0
-        # for i in range(len(catalog_data)):
-        #     gm = catalog_data['GAIAmag'][i]
-        #     dst = catalog_data['dstArcSec'][i]
-        #     if np.isnan(gm) or np.isnan(dst):
-        #         continue
-        #     if abs(gm - mag) < self.pars.magdiff_threshold and \
-        #                  dst < self.pars.dst_threshold:
-        #         close_mags_and_dsts += 1
-
-        close_mags_and_dsts = np.intersect1d(close_mags, close_dsts)
+        close_mags_and_dsts = np.logical_and(close_mags, close_dsts)
+        cand_count = 0
+        for b in close_mags_and_dsts:
+            if b: cand_count += 1
         # if there are multiple likely candidates, throw warning
-        if len(close_mags_and_dsts) > 1:
+        if cand_count > 1:
             warnings.warn(f"Multiple ({close_mags}) sources with similar "
                             "magnitudes in cone search. "
                             "Might select incorrect source.")
 
-        candidate = np.nanargmin(cat_data_dsts)
-        tess_name = 'TIC ' + catalog_data['ID'][candidate]
+        candidate_idx = np.nanargmin(cat_data_dists)
+        tess_name = 'TIC ' + catalog_data['ID'][candidate_idx]
         obs_params = {
             'objectname': tess_name,
-            'radius': obs_qry_rad,
+            'radius': self.pars.obs_qry_radius,
             'obs_collection': 'TESS',
         }
         data_query = self._try_query(Observations.query_criteria, obs_params)
@@ -211,6 +209,21 @@ class VirtualTESS(VirtualObservatory):
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
+        header_attributes_to_save = [
+            'TICVER',
+            'RA_OBJ',
+            'DEC_OBJ',
+            'PMRA',
+            'PMDEC',
+            'TESSMAG',
+            'TEFF',
+            'LOGG',
+            'MH',
+            'RADIUS',
+            'CRMITEN',
+            'CRSPOC',
+            'CRBLKSZ',
+        ]
         df_list = []
         altdata = {}
         altdata['source mag'] = mag
@@ -228,32 +241,9 @@ class VirtualTESS(VirtualObservatory):
                 # TODO: what if below attributes have diff values
                 # over all lightcurve files? save all?
                 # right now we only save values for first file
-                if 'TICVER' not in altdata:
-                    altdata['TICVER'] = hdul[0].header['TICVER']
-                if 'RA_OBJ' not in altdata:
-                    altdata['RA_OBJ'] = hdul[0].header['RA_OBJ']
-                if 'DEC_OBJ' not in altdata:
-                    altdata['DEC_OBJ'] = hdul[0].header['DEC_OBJ']
-                if 'PMRA' not in altdata:
-                    altdata['PMRA'] = hdul[0].header['PMRA']
-                if 'PMDEC' not in altdata:
-                    altdata['PMDEC'] = hdul[0].header['PMDEC']
-                if 'TESSMAG' not in altdata:
-                    altdata['TESSMAG'] = hdul[0].header['TESSMAG']
-                if 'TEFF' not in altdata:
-                    altdata['TEFF'] = hdul[0].header['TEFF']
-                if 'LOGG' not in altdata:
-                    altdata['LOGG'] = hdul[0].header['LOGG']
-                if 'MH' not in altdata:
-                    altdata['MH'] = hdul[0].header['MH']
-                if 'RADIUS' not in altdata:
-                    altdata['RADIUS'] = hdul[0].header['RADIUS']
-                if 'CRMITEN' not in altdata:
-                    altdata['CRMITEN'] = hdul[0].header['CRMITEN']
-                if 'CRSPOC' not in altdata:
-                    altdata['CRSPOC'] = hdul[0].header['CRSPOC']
-                if 'CRBLKSZ' not in altdata:
-                    altdata['CRBLKSZ'] = hdul[0].header['CRBLKSZ']
+                for attribute in header_attributes_to_save:
+                    if attribute not in altdata:
+                        altdata[attribute] = hdul[0].header[attribute]
                 if 'lightcurve columns' not in altdata:
                     altdata['lightcurve columns'] = str(hdul[1].data.columns)
                 if 'aperture matrix' not in altdata:
@@ -287,11 +277,13 @@ class VirtualTESS(VirtualObservatory):
                 ret = query_fn(**params)
                 return ret
             except TimeoutError as e:
-                # print(e)
                 self._print(f"Request timed out.", verbose)
 
         raise TimeoutError(f"Too many timeouts from query request.")
         
     def _print(self, msg, verbose):
+        """
+        Verbose print helper.
+        """
         if verbose > 0:
             print(msg)
