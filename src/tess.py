@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 import warnings
+import socket
 
 from timeit import default_timer as timer
 
@@ -15,7 +16,8 @@ import astropy.io.fits as fits
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
-from src.dataset import DatasetMixin, RawData, Lightcurve
+from src.catalog import Catalog
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 
 class ParsObsTESS(ParsObservatory):
 
@@ -137,6 +139,9 @@ class VirtualTESS(VirtualObservatory):
             # TESS can't see stars fainter than 15 mag
             self._print(f"Magnitude of {mag} is too faint for TESS.", verbose)
             return pd.DataFrame()
+        
+        # DELETE
+        print(f"{name} \t {mag} \t {ra} \t {dec}")
 
         coord_str = str(ra) + ' ' + str(dec)
         cat_params = {
@@ -144,7 +149,7 @@ class VirtualTESS(VirtualObservatory):
             'catalog': 'TIC',
             'radius': self.pars.cat_qry_radius
         }
-        catalog_data = self._try_query(Catalogs.query_region, cat_params)
+        catalog_data = self._try_query(Catalogs.query_region, cat_params, verbose)
         if len(catalog_data) == 0:
             self._print("No TESS object found for given catalog row.", verbose)
             return pd.DataFrame()
@@ -169,7 +174,7 @@ class VirtualTESS(VirtualObservatory):
             ~np.isnan(cat_data_dists),
             cat_data_dists < self.pars.distance_thresh
         )
-        if any(close_dsts):
+        if not any(close_dsts):
             self._print("No objects found within distance "
                         "threshold for TIC query.", verbose)
             return pd.DataFrame()
@@ -191,7 +196,7 @@ class VirtualTESS(VirtualObservatory):
             'radius': self.pars.obs_qry_radius,
             'obs_collection': 'TESS',
         }
-        data_query = self._try_query(Observations.query_criteria, obs_params)
+        data_query = self._try_query(Observations.query_criteria, obs_params, verbose)
         if len(data_query) == 0:
             self._print(f"No data found for object {tess_name}.", verbose)
             return pd.DataFrame()
@@ -202,27 +207,24 @@ class VirtualTESS(VirtualObservatory):
         
         lc_indices = []
         for i, uri in enumerate(data_query['dataURL']):
-            if isinstance(uri, str) and uri[-5:-7] == 'lc':
+            if isinstance(uri, str) and uri[-7:-5] == 'lc':
                 lc_indices.append(i)
+
+        if not lc_indices:
+            self._print(f"No lightcurve data found for object {tess_name}.", verbose)
+            return pd.DataFrame()
+
         self._print(f"Found {len(lc_indices)} light curve(s) "
                      "for this source.", verbose)
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
         header_attributes_to_save = [
-            'TICVER',
-            'RA_OBJ',
-            'DEC_OBJ',
-            'PMRA',
-            'PMDEC',
-            'TESSMAG',
-            'TEFF',
-            'LOGG',
-            'MH',
-            'RADIUS',
-            'CRMITEN',
-            'CRSPOC',
-            'CRBLKSZ',
+            'TICVER', 'RA_OBJ', 'DEC_OBJ',
+            'PMRA', 'PMDEC', 'TESSMAG',
+            'TEFF', 'LOGG', 'MH',
+            'RADIUS', 'CRMITEN',
+            'CRSPOC', 'CRBLKSZ',
         ]
         df_list = []
         altdata = {}
@@ -232,24 +234,24 @@ class VirtualTESS(VirtualObservatory):
         TICID = set()
         for i in lc_indices:
             uri = data_query['dataURL'][i]
-            table = Table.read(base_url + uri, format='fits')
-            sector = np.nan
-            with fits.open(base_url + uri, cache=False) as hdul:
-                sector = hdul[0].header['SECTOR']
-                sectors.add(sector)
-                TICID.add(hdul[0].header['TICID'])
-                # TODO: what if below attributes have diff values
-                # over all lightcurve files? save all?
-                # right now we only save values for first file
-                for attribute in header_attributes_to_save:
-                    if attribute not in altdata:
-                        altdata[attribute] = hdul[0].header[attribute]
-                if 'lightcurve columns' not in altdata:
-                    altdata['lightcurve columns'] = str(hdul[1].data.columns)
-                if 'aperture matrix' not in altdata:
-                    altdata['aperture matrix'] = hdul[2].data
-            table.add_column(sector, "SECTOR")
+            table = self._try_table_read_fits(base_url + uri)
+            hdul0header, hdul2data = self._try_open_fits(base_url + uri)
+
+            TICID.add(hdul0header['TICID'])
+            sector = hdul0header['SECTOR']
+            sectors.add(sector)
+            table["SECTOR"] = sector
             df_list.append(table.to_pandas())
+
+            # TODO: what if below attributes have diff values
+            # over all lightcurve files? save all?
+            # right now we only save values for first file
+            for attribute in header_attributes_to_save:
+                if attribute not in altdata:
+                    altdata[attribute] = hdul0header[attribute]
+            if 'aperture matrix' not in altdata:
+                altdata['aperture matrix'] = hdul2data
+        
         data = pd.concat(df_list, ignore_index=True)
 
         altdata['sectors'] = list(sectors)
@@ -280,6 +282,40 @@ class VirtualTESS(VirtualObservatory):
                 self._print(f"Request timed out.", verbose)
 
         raise TimeoutError(f"Too many timeouts from query request.")
+
+
+    def _try_table_read_fits(self, url):
+        """
+        Tries to read fits file repeatedly, ignoring any timeout errors.
+        Returns first successful response, otherwise raises TimeoutError.
+        """
+        for _ in range(10):
+            try:
+                return Table.read(url, format="fits")
+            except socket.timeout:
+                continue
+
+        raise TimeoutError(f"Too many timeouts from trying to read fits.")
+
+
+    def _try_open_fits(self, url):
+        """
+        Tries to open fits file repeatedly, ignoring any timeout errors.
+        Returns first successful response, otherwise raises TimeoutError.
+        """
+        for _ in range(10):
+            try:
+                header0 = None
+                data2 = None
+                with fits.open(url, cache=False) as hdul:
+                    header0 = hdul[0].header
+                    data2 = hdul[2].data
+                return header0, data2
+            except socket.timeout:
+                continue
+
+        raise TimeoutError(f"Too many timeouts from trying to open fits.")
+                
         
     def _print(self, msg, verbose):
         """
@@ -287,3 +323,37 @@ class VirtualTESS(VirtualObservatory):
         """
         if verbose > 0:
             print(msg)
+
+
+if __name__ == "__main__":
+    tess = VirtualTESS(project="testing VirtualTESS")
+    white_dwarfs = Catalog(default="wd")
+    white_dwarfs.load()
+
+    print("finished loading catalog")
+
+    count = 0
+    warning_count = 0
+    for i in range(len(white_dwarfs.data)):
+        cat_row = white_dwarfs.get_row(i, output="dict")
+        if cat_row["mag"] > 16:
+            continue
+
+        print(f"\n\nindex {i}, count {count}")
+        result = tess.fetch_data_from_observatory(cat_row, verbose=1)
+        if type(result) != tuple:
+            continue
+
+        lc_data, altdata = result
+        count += 1
+        if type(altdata['TICID']) == list:
+            warning_count += 1
+        if count % 100 == 0:
+            print(f"\n\nProgress: found {count} lightcurves\n\n")
+        
+        gaia_source_id = cat_row["name"]
+        print("saving to disk...")
+        lc_data.to_csv("/Users/felix_3gpdyfd/astro_research/virtualobserver"
+            f"/src/tess_data_TEST/tess_lc_{gaia_source_id}.csv", index=False)
+
+    print(f"\n\nCount: {count} \tWarning count: {warning_count}")
