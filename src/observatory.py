@@ -1,6 +1,7 @@
 import time
 import os
 import glob
+import copy
 import re
 import yaml
 import validators
@@ -134,6 +135,19 @@ class ParsObservatory(Parameters):
         )
         self.num_threads_download = self.add_par(
             "num_threads_download", 0, int, "Number of threads to use for downloading"
+        )
+        self.download_pars_list = self.add_par(
+            "download_pars_list",
+            [],
+            list,
+            "List of parameters that have an effect on downloading data",
+        )
+        self.check_download_pars = self.add_par(
+            "check_download_pars",
+            False,  # this check could be expensive for large data folders
+            bool,
+            "Check if the download parameters have changed since the last download"
+            "and if so, re-download the data",
         )
 
         self._default_cfg_key = "observatories"
@@ -577,13 +591,32 @@ class VirtualObservatory:
                     except KeyError as e:
                         if "No object named" in str(e):
                             # This does not exist in the file
-                            session.delete(raw_data)
+
                             # TODO: is delete the right thing to do?
+                            session.delete(raw_data)
                             raw_data = None
                         else:
                             raise e
                     finally:
                         lock.release()
+
+                if raw_data is not None and self.pars.check_download_pars:
+                    # check if the download parameters used to save
+                    # the data are consistent with those used now
+                    if "download_pars" not in raw_data.altdata:
+                        # TODO: is delete the right thing to do?
+                        session.delete(raw_data)
+                        raw_data = None
+                    else:
+                        for key in self.pars.download_pars_list:
+                            if (
+                                key not in raw_data.altdata["download_pars"]
+                                or raw_data.altdata["download_pars"][key]
+                                != self.pars[key]
+                            ):
+                                # TODO: is delete the right thing to do?
+                                session.delete(raw_data)
+                                raw_data = None
 
                 # no data on DB/file, must re-fetch from observatory website:
                 if raw_data is None:
@@ -591,7 +624,13 @@ class VirtualObservatory:
                     data, altdata = self.fetch_data_from_observatory(
                         cat_row, **fetch_args
                     )
-                    altdata.update(cat_row)  # TODO: can we get the full catalog row?
+                    altdata.update(cat_row)  # TODO: should we get the full catalog row?
+
+                    # save the parameters involved with the download
+                    altdata["download_pars"] = {
+                        k: self.pars[k] for k in self.pars.download_pars_list
+                    }
+
                     raw_data = data_class(
                         data=data,
                         altdata=altdata,
@@ -609,7 +648,7 @@ class VirtualObservatory:
                 ):
                     getattr(source, f"raw_{dt}").append(raw_data)
 
-                # here we explicitely set all relational collections
+                # here we explicitly set all relational collections
                 # to an empty list, so they are accessible (and empty)
                 # even if the source is no longer attached to the DB.
                 for name in ["reduced", "processed", "simulated"]:
@@ -1085,6 +1124,24 @@ class ParsDemoObs(ParsObservatory):
             "demo_url", "http://www.example.com", str, "A URL parameter"
         )
 
+        self.wait_time = self.add_par(
+            "wait_time", 0.0, float, "Time to wait to simulate downloading from web."
+        )
+
+        self.wait_time_poisson = self.add_par(
+            "wait_time_poisson",
+            0.0,
+            float,
+            "Time to wait to simulate downloading from web, "
+            "with a Poisson distribution random number.",
+        )
+
+        self.sim_args = self.add_par(
+            "sim_args", {}, dict, "Arguments to pass to the simulator."
+        )
+
+        self.download_pars_list = ["wait_time", "wait_time_poisson", "sim_args"]
+
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
@@ -1127,7 +1184,12 @@ class VirtualDemoObs(VirtualObservatory):
         super().__init__(name="demo")
 
     def fetch_data_from_observatory(
-        self, cat_row, wait_time=0, wait_time_poisson=0, verbose=False, sim_args={}
+        self,
+        cat_row,
+        wait_time=None,
+        wait_time_poisson=None,
+        verbose=False,
+        sim_args={},
     ):
         """
         Fetch data from the observatory for a given source.
@@ -1143,16 +1205,22 @@ class VirtualDemoObs(VirtualObservatory):
             name, ra, dec, mag, filter_name (saying which band the mag is in).
         wait_time: int or float, optional
             If given, will make the simulator pause for a short time.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
         wait_time_poisson: bool, optional
             Will add a randomly selected integer number of seconds
             (from a Poisson distribution) to the wait time.
             The mean of the distribution is the value given
             to wait_time_poisson.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
         verbose: bool, optional
             If True, will print out some information about the
             data that is being fetched or simulated.
         sim_args: dict
             A dictionary passed into the simulate_lightcuve function.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
 
         Returns
         -------
@@ -1162,23 +1230,31 @@ class VirtualDemoObs(VirtualObservatory):
             Additional data to be stored in the RawPhotometry object.
 
         """
+        if wait_time is None:
+            wait_time = self.pars.wait_time
+        if wait_time_poisson is None:
+            wait_time_poisson = self.pars.wait_time_poisson
+        if sim_args is not None:
+            # need a copy, so we don't change the original dict in pars:
+            sim_args_default = copy.deepcopy(self.pars.sim_args)
+            sim_args_default.update(sim_args)
 
         if verbose:
             print(
                 f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
             )
-        wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
+        total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
         data = self.simulate_lightcurve(**sim_args)
         altdata = {
             "demo_boolean": self.pars.demo_boolean,
-            "wait_time": wait_time_seconds,
+            "wait_time": total_wait_time_seconds,
         }
 
-        time.sleep(wait_time_seconds)
+        time.sleep(total_wait_time_seconds)
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["cat_index"]} after {wait_time_seconds} seconds'
+                f'Finished fetch data for source {cat_row["cat_index"]} after {total_wait_time_seconds} seconds'
             )
 
         return data, altdata
