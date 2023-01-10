@@ -15,7 +15,7 @@ filelock==3.8.2
 flaky==3.7.0
 fonttools==4.38.0
 gitdb==4.0.10
-GitPython==3.1.29
+GitPython==3.1.30
 greenlet==2.0.1
 h5py==3.7.0
 healpix-alchemy==1.0.1
