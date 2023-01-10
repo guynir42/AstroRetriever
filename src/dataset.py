@@ -1,5 +1,5 @@
 import os
-import uuid
+import re
 import string
 import warnings
 from tables import NaturalNameWarning
@@ -43,7 +43,40 @@ UNIFORMITY_THRESHOLD = 0.01
 
 
 def simplify(key):
-    return key.lower().replace(" ", "").replace("_", "").replace("-", "")
+    """
+    Cleans up (and bumps to lower case)
+    a string to compare it to a list of expected
+    keywords such as "jd" or "timestamps".
+
+    Will remove spaces, underscores and dashes.
+    Will remove any numbers, any values after a comma,
+    and finally will remove trailing "s".
+    """
+    key = key.lower().replace(" ", "").replace("_", "").replace("-", "")
+
+    key = re.sub(r"\d+", "", key)
+
+    key = key.split(",")[0]
+
+    if key[-1] == "s":
+        key = key[:-1]
+
+    return key
+
+
+def get_time_offset(time_str):
+    """
+    When a timestamp column is given as a string
+    with a numeric offset (e.g., "MJD-50000"),
+    this function picks up that offset and returns it.
+    This can be used to modify the times using
+    the "to datetime" and "to mjd" lambdas.
+    """
+    val = re.search(r"[+-]\s+\d+", time_str)
+    if val is None:
+        return 0
+    else:
+        return float(val.group(0).replace(" ", ""))
 
 
 def add_alias(att):
@@ -840,7 +873,7 @@ class DatasetMixin:
                     if len(os.listdir(path)) == 0:
                         os.rmdir(path)
 
-    def find_colmap(self, data):
+    def find_colmap(self):
         """
         Calculate the column map for the data.
         This locates columns in the data that
@@ -848,78 +881,93 @@ class DatasetMixin:
         assigns them.
         """
 
-        if isinstance(data, pd.DataFrame):
-            columns = data.columns
+        if isinstance(self._data, pd.DataFrame):
+            columns = self._data.columns
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
         for c in columns:  # timestamps
-            if simplify(c) in ("jd", "jds", "juliandate", "juliandates"):
+            if simplify(c) in ("jd", "juliandate"):
                 self.time_info["format"] = "mjd"
+                offset = get_time_offset(c)  # e.g., JD-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t, format="jd", scale="utc"
+                    t + offset, format="jd", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: Time(
-                    t, format="jd", scale="utc"
+                    t + offset, format="jd", scale="utc"
                 ).mjd
                 self.colmap["time"] = c
                 break
-            elif simplify(c) in ("mjd", "mjds"):
+            elif simplify(c) in ("mjd",):
                 self.time_info["format"] = "mjd"
+                offset = get_time_offset(c)  # e.g., MJD-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t, format="mjd", scale="utc"
+                    t + offset, format="mjd", scale="utc"
                 ).datetime
-                self.time_info["to mjd"] = lambda t: t
+                self.time_info["to mjd"] = lambda t: t + offset
                 self.colmap["time"] = c
                 break
-            elif simplify(c) in ("time", "times", "datetime", "datetimes"):
-                if isinstance(data[c][0], (str, bytes)):
-                    if "T" in data[c][0]:
-                        self.time_info["format"] = "isot"
-                        self.time_info["to datetime"] = lambda t: Time(
-                            t, format="isot", scale="utc"
-                        ).datetime
-                        self.time_info["to mjd"] = lambda t: Time(
-                            t, format="isot", scale="utc"
-                        ).mjd
-                    else:
-                        self.time_info["format"] = "iso"
-                        self.time_info["to datetime"] = lambda t: Time(
-                            t, format="iso", scale="utc"
-                        ).datetime
-                        self.time_info["to mjd"] = lambda t: Time(
-                            t, format="iso", scale="utc"
-                        ).mjd
-                self.colmap["time"] = c
-                break
-            elif simplify(c) == "timestamps":
-                self.time_info["format"] = "unix"
+            elif simplify(c) in ("bjd",):
+                self.time_info["format"] = "bjd"
+                offset = get_time_offset(c)  # e.g., BJD-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t, format="unix", scale="utc"
+                    t + offset, format="bjd", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: Time(
-                    t, format="unix", scale="utc"
+                    t + offset, format="bjd", scale="utc"
+                ).mjd
+                self.colmap["time"] = c
+                break
+            elif simplify(c) in ("time", "datetime") and isinstance(
+                self._data[c][0], (str, bytes)
+            ):
+                if "T" in self._data[c][0]:
+                    self.time_info["format"] = "isot"
+                    self.time_info["to datetime"] = lambda t: Time(
+                        t, format="isot", scale="utc"
+                    ).datetime
+                    self.time_info["to mjd"] = lambda t: Time(
+                        t, format="isot", scale="utc"
+                    ).mjd
+                else:
+                    self.time_info["format"] = "iso"
+                    self.time_info["to datetime"] = lambda t: Time(
+                        t, format="iso", scale="utc"
+                    ).datetime
+                    self.time_info["to mjd"] = lambda t: Time(
+                        t, format="iso", scale="utc"
+                    ).mjd
+                self.colmap["time"] = c
+                break
+            elif simplify(c) == ("time", "unix", "timestamp"):
+                self.time_info["format"] = "unix"
+                offset = get_time_offset(c)  # e.g., Unix-12345000
+                self.time_info["to datetime"] = lambda t: Time(
+                    t + offset, format="unix", scale="utc"
+                ).datetime
+                self.time_info["to mjd"] = lambda t: Time(
+                    t + offset, format="unix", scale="utc"
                 ).mjd
                 self.colmap["time"] = c
                 break
 
         for c in columns:  # exposure time
-            if simplify(c) in ("exptime", "exptimes", "exposuretime", "exposuretimes"):
+            if simplify(c) in ("exptime", "exposuretime"):
                 self.colmap["exptime"] = c
                 break
 
         for c in columns:  # right ascension
-            if simplify(c) in ("ra", "ras", "rightascension", "rightascensions"):
+            if simplify(c) in ("ra", "rightascension"):
                 self.colmap["ra"] = c
                 break
 
         for c in columns:  # declination
-            if simplify(c) in ("dec", "decs", "declination", "declinations"):
+            if simplify(c) in ("dec", "declination"):
                 self.colmap["dec"] = c
                 break
 
         for c in columns:  # magnitude
-            if simplify(c) in ("mag", "mags", "magnitude", "magnitudes"):
+            if simplify(c) in ("mag", "magnitude"):
                 self.colmap["mag"] = c
                 break
 
@@ -929,18 +977,12 @@ class DatasetMixin:
                 break
 
         for c in columns:  # fluxes
-            if simplify(c) in ("flux", "fluxes", "count", "counts"):
+            if simplify(c) in ("flux", "fluxe", "count"):
                 self.colmap["flux"] = c
                 break
 
         for c in columns:  # flux errors
-            if simplify(c) in (
-                "fluxerr",
-                "fluxerr",
-                "fluxerror",
-                "counterr",
-                "counterror",
-            ):
+            if simplify(c) in ("fluxerr", "fluxerror", "counterr", "counterror"):
                 self.colmap["fluxerr"] = c
                 break
 
@@ -950,11 +992,11 @@ class DatasetMixin:
                 break
 
         for c in columns:  # bad data flags
-            if simplify(c) in ("flag", "catflag", "catflags", "baddata"):
+            if simplify(c) in ("flag", "catflag", "baddata"):
                 self.colmap["flag"] = c
                 break
 
-    def calc_times(self, data):
+    def calc_times(self):
         """
         Calculate datetimes and MJDs for each epoch,
         based on the conversions found in self.time_info.
@@ -962,13 +1004,13 @@ class DatasetMixin:
         is loaded from disk or given as input,
         but are not saved in the DB or on disk.
         """
-        if len(data) == 0:
+        if len(self._data) == 0:
             return
-        self.times = self.time_info["to datetime"](data[self.colmap["time"]])
+        self.times = self.time_info["to datetime"](self._data[self.colmap["time"]])
         self.time_start = min(self.times)
         self.time_end = max(self.times)
 
-        self.mjds = self.time_info["to mjd"](data[self.colmap["time"]])
+        self.mjds = self.time_info["to mjd"](self._data[self.colmap["time"]])
 
     def plot(self, ax=None, **kwargs):
         """
@@ -1096,8 +1138,8 @@ class DatasetMixin:
         self.number = len(data)  # for imaging data this would be different?
         self.size = self.calc_size()
         self.format = self.guess_format()
-        self.find_colmap(data)
-        self.calc_times(data)
+        self.find_colmap()
+        self.calc_times()
 
     @property
     def times(self):
