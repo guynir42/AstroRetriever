@@ -21,7 +21,7 @@ from src.ztf import VirtualZTF
 
 from src.database import Session
 from src.source import Source, DEFAULT_PROJECT
-from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP
+from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP, simplify, get_time_offset
 from src.observatory import VirtualDemoObs
 from src.catalog import Catalog
 from src.detection import Detection
@@ -1484,6 +1484,14 @@ def test_quality_checks(analysis, new_source, raw_phot):
 
 
 # TODO: add test for simulation events
+
+
+def test_column_names_simplify_and_offset():
+    assert simplify("Times") == "time"
+    assert simplify("M-JD") == "mjd"
+    assert simplify("BJD - 2457000, days") == "bjd"
+
+    assert get_time_offset("BJD - 2457000, days") == -2457000
 
 
 def test_on_close_utility():
