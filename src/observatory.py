@@ -378,9 +378,9 @@ class VirtualObservatory:
             objects to the database (default).
             If False, do not save the data to disk or the
             raw data objects to the database (debugging only).
-        dataset_args: dict
-            Additional keyword arguments to pass to the
-            download method of the specific observatory.
+        fetch_args: dict, optional
+            Additional arguments to pass to the
+            fetch_data_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -556,6 +556,12 @@ class VirtualObservatory:
             (it may have more data from other observatories).
 
         """
+
+        download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
+        download_pars.update(
+            {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
+        )
+
         with Session() as session:
             source = session.scalars(
                 sa.select(Source).where(
@@ -593,7 +599,11 @@ class VirtualObservatory:
                             # This does not exist in the file
 
                             # TODO: is delete the right thing to do?
-                            session.delete(raw_data)
+                            # session.delete(raw_data)
+                            source.remove_raw_data(
+                                obs=self.name, data_type=dt, session=session
+                            )
+                            session.flush()
                             raw_data = None
                         else:
                             raise e
@@ -605,18 +615,32 @@ class VirtualObservatory:
                     # the data are consistent with those used now
                     if "download_pars" not in raw_data.altdata:
                         # TODO: is delete the right thing to do?
-                        session.delete(raw_data)
+                        # session.delete(raw_data)
+                        source.remove_raw_data(
+                            obs=self.name, data_type=dt, session=session
+                        )
+                        session.flush()
                         raw_data = None
                     else:
                         for key in self.pars.download_pars_list:
                             if (
                                 key not in raw_data.altdata["download_pars"]
                                 or raw_data.altdata["download_pars"][key]
-                                != self.pars[key]
+                                != download_pars[key]
                             ):
+
+                                # print(
+                                #     f'deleted raw data, key: {key}, '
+                                #     f'val1= {raw_data.altdata["download_pars"][key]}, '
+                                #     f'val2= {download_pars[key]}'
+                                # )
                                 # TODO: is delete the right thing to do?
-                                session.delete(raw_data)
+                                source.remove_raw_data(
+                                    obs=self.name, data_type=dt, session=session
+                                )
+                                session.flush()
                                 raw_data = None
+                                break
 
                 # no data on DB/file, must re-fetch from observatory website:
                 if raw_data is None:
@@ -624,12 +648,14 @@ class VirtualObservatory:
                     data, altdata = self.fetch_data_from_observatory(
                         cat_row, **fetch_args
                     )
-                    altdata.update(cat_row)  # TODO: should we get the full catalog row?
+
+                    # save the catalog info
+                    altdata[
+                        "cat_row"
+                    ] = cat_row  # TODO: should we get the full catalog row?
 
                     # save the parameters involved with the download
-                    altdata["download_pars"] = {
-                        k: self.pars[k] for k in self.pars.download_pars_list
-                    }
+                    altdata["download_pars"] = download_pars
 
                     raw_data = data_class(
                         data=data,
@@ -1254,7 +1280,8 @@ class VirtualDemoObs(VirtualObservatory):
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["cat_index"]} after {total_wait_time_seconds} seconds'
+                f'Finished fetch data for source {cat_row["cat_index"]} '
+                f"after {total_wait_time_seconds} seconds"
             )
 
         return data, altdata
