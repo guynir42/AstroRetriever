@@ -599,7 +599,6 @@ class VirtualObservatory:
                             # This does not exist in the file
 
                             # TODO: is delete the right thing to do?
-                            # session.delete(raw_data)
                             source.remove_raw_data(
                                 obs=self.name, data_type=dt, session=session
                             )
@@ -615,7 +614,6 @@ class VirtualObservatory:
                     # the data are consistent with those used now
                     if "download_pars" not in raw_data.altdata:
                         # TODO: is delete the right thing to do?
-                        # session.delete(raw_data)
                         source.remove_raw_data(
                             obs=self.name, data_type=dt, session=session
                         )
@@ -1264,6 +1262,7 @@ class VirtualDemoObs(VirtualObservatory):
             # need a copy, so we don't change the original dict in pars:
             sim_args_default = copy.deepcopy(self.pars.sim_args)
             sim_args_default.update(sim_args)
+            sim_args = sim_args_default
 
         if verbose:
             print(
