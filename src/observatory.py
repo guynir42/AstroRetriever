@@ -626,12 +626,6 @@ class VirtualObservatory:
                                 or raw_data.altdata["download_pars"][key]
                                 != download_pars[key]
                             ):
-
-                                # print(
-                                #     f'deleted raw data, key: {key}, '
-                                #     f'val1= {raw_data.altdata["download_pars"][key]}, '
-                                #     f'val2= {download_pars[key]}'
-                                # )
                                 # TODO: is delete the right thing to do?
                                 source.remove_raw_data(
                                     obs=self.name, data_type=dt, session=session
@@ -648,9 +642,8 @@ class VirtualObservatory:
                     )
 
                     # save the catalog info
-                    altdata[
-                        "cat_row"
-                    ] = cat_row  # TODO: should we get the full catalog row?
+                    # TODO: should we get the full catalog row?
+                    altdata["cat_row"] = cat_row
 
                     # save the parameters involved with the download
                     altdata["download_pars"] = download_pars
