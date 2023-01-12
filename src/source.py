@@ -372,6 +372,7 @@ class Source(Base, conesearch_alchemy.Point):
             getattr(self, f"raw_{data_type}").remove(raw_data)
             if session is not None:
                 session.delete(raw_data)
+            return True
         else:
             raise RuntimeError(
                 f"Source {self.name} has more than one "
