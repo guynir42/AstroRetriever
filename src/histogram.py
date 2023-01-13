@@ -143,16 +143,17 @@ class Histogram:
         if isinstance(names, str):
             names = [names]
 
-        coords = getattr(self.pars, f"{input_type}_coords").copy()
-        for k in coords.keys():
+        coords_old = getattr(self.pars, f"{input_type}_coords")
+        coords_new = coords_old.copy()
+        for k in coords_old.keys():
             if k not in names:
-                del coords[k]
+                del coords_new[k]
 
-        missing = set(names) - set(coords.keys())
+        missing = set(names) - set(coords_new.keys())
         if len(missing) > 0:
             raise ValueError(f"Missing coordinates: {missing}")
 
-        setattr(self.pars, f"{input_type}_coords", coords)
+        setattr(self.pars, f"{input_type}_coords", coords_new)
 
     def initialize(self):
 
