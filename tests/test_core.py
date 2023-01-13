@@ -1065,11 +1065,10 @@ def test_histogram():
     num_mag = len(np.arange(15, 21 + 0.5, 0.5))
     num_dynamic = 3  # guess the number of values for dynamic axes
     num_bytes = 4  # uint32
+
     assert h.get_size() == 0
-    assert (
-        h.get_size_estimate("bytes")
-        == (num_snr + num_dmag) * num_mag * num_dynamic**2 * num_bytes
-    )
+    estimate_bytes = (num_snr + num_dmag) * num_mag * num_dynamic**2 * num_bytes
+    assert h.get_size_estimate("bytes") == estimate_bytes
 
     # add some data with uniform filter
     num_points1 = 10
@@ -1083,14 +1082,16 @@ def test_histogram():
         )
     )
 
-    # add some data with well defined dmag values
+    # make sure data has well defined dmag values
     df.loc[0:4, "dmag"] = 1.3
 
+    # this will fail because the df doesn't have "mag"
     with pytest.raises(ValueError) as err:
         h.add_data(df)
 
     assert "Could not find data for axis mag" in str(err.value)
 
+    # throwaway class to make a test source
     class FakeSource:
         pass
 
@@ -1195,7 +1196,7 @@ def test_histogram():
     assert h.data.dmag.attrs["overflow"] == 10
     assert h.data.dmag.attrs["underflow"] == 0
 
-    # a new source with above range magnitude
+    # a new source with magnitude above range
     source.mag = 25.3
     h.add_data(df, source)
     assert h.data.mag.attrs["overflow"] == num_points3

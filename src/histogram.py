@@ -9,6 +9,37 @@ from src.parameters import Parameters
 
 
 class ParsHistogram(Parameters):
+    """
+    A histogram object's parameters are saved in this class.
+    Most of the parameters of the histograms have to do with
+    defining the coordinates for the DataArrays.
+    These are given as coordinate specs:
+    either a 3-tuple for a statis axis or
+    an empty tuple or 2-tuple for a dynamic axis.
+    A static axis is defined as (start, stop, step),
+    using np.arange(start, stop + step, step).
+    A dynamic axis is defined as (start, step) or ()
+    in case of a string based coordinate.
+    If given a start and step, it will add bins with the
+    correct width (step) until it can accommodate new data.
+    An empty tuple will create an axis without a defined step.
+    This only works if the coordinate is string-based
+    (e.g., filter names).
+
+    The three types of coordinates are score, source, and obs.
+    The score coordinates are special in that they define
+    one DataArray per coordinate (per score).
+    The source and obs are common for all DataArrays.
+
+    In addition, the dtype parameter controls the underlying
+    data type of the histogram arrays.
+    Since this is a histogram, the data type
+    must be unsigned integers. Choose uint16 for smaller
+    data sets (in RAM and on disk) when expecting the data
+    to be sparse, or uint32 for larger data sets but without
+    the risk of overflow.
+    """
+
     def __init__(self, **kwargs):
         super().__init__()
 
@@ -23,7 +54,10 @@ class ParsHistogram(Parameters):
             "dmag": (-3, 3, 0.1),
         }  # other options: any of the quality cuts
         self.score_coords = self.add_par(
-            "score_coords", default_score_coords, dict, "Coordinates for the score axes"
+            "score_coords",
+            default_score_coords,
+            dict,
+            "Coordinate specs for the score axes",
         )
 
         default_source_coords = {
@@ -33,7 +67,7 @@ class ParsHistogram(Parameters):
             "source_coords",
             default_source_coords,
             dict,
-            "Coordinates for the source axes",
+            "Coordinate specs for the source axes",
         )
 
         default_obs_coords = {
@@ -44,16 +78,16 @@ class ParsHistogram(Parameters):
             "obs_coords",
             default_obs_coords,
             dict,
-            "Coordinates for the observation axes",
+            "Coordinate specs for the observation axes",
         )
 
-        def __setattr__(self, key, value):
-            if key == "dtype" and value not in ("uint16", "uint32"):
-                raise ValueError(
-                    f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
-                )
+    def __setattr__(self, key, value):
+        if key == "dtype" and value not in ("uint16", "uint32"):
+            raise ValueError(
+                f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
+            )
 
-            super().__setattr__(key, value)
+        super().__setattr__(key, value)
 
     @classmethod
     def get_default_cfg_key(cls):
@@ -85,7 +119,7 @@ class Histogram:
     The bins are along coordinates in either
     score, source, or observation (obs) space.
     The score coordinates are for the measured values,
-    like Signal to Noise Ratio (snr), or Delta Magnitude (dmag).
+    like signal-to-noise ratio (snr), or delta-magnitude (dmag).
     The source coordinates depend on the source,
     and are given by the catalog row for that source (e.g., magnitude).
     The observation coordinates are the values given by
@@ -106,8 +140,24 @@ class Histogram:
     """
 
     def __init__(self, **kwargs):
+        """
+        Constructor for a histogram object.
+        Can contain multiple DataArrays for different score coordinates.
+        If the default parameters are ok, or if giving updated parameters
+        through the kwargs to this function, then provide initialiaze=True.
+        Otherwise, the initialize function must be called explicitly,
+        after adjusting the parameters.
 
-        can_initialize = kwargs.get("initialize", False)
+        Parameters
+        ----------
+        initialize: bool
+            If True, then initialize the histogram right after passing
+            the kwargs to the parameters object. Otherwise, the
+            initialize function must be called explicitly.
+        kwargs: additional arguments are passed into the parameters object.
+        """
+
+        can_initialize = kwargs.pop("initialize", False)
 
         self.pars = ParsHistogram(**kwargs)
         self.data = None
@@ -116,6 +166,23 @@ class Histogram:
             self.initialize()
 
     def initialize(self):
+        """
+        Build the histogram data structure,
+        including coordinates and DataArrays.
+        This can potentially take up a lot of RAM
+        and could be time consuming.
+        Therefore, it is not called automatically when
+        making this object, only when the initialize=True
+        flag is given to the constructor.
+        Otherwise, the user gets an opportunity to adjust
+        the parameters, check the array size, and only
+        then explicitly call this function.
+        """
+
+        if self.pars.dtype not in ("uint16", "uint32"):
+            raise ValueError(
+                f"Unsupported dtype: {self.pars.dtype}, must be uint16 or uint32."
+            )
 
         # create the coordinates
         coords = {}
@@ -125,12 +192,12 @@ class Histogram:
                 coords[k].attrs["input"] = input_
 
         data_shape = tuple(
-            len(v) for v in coords.values() if v.attrs["input"] != "score"
+            len(v) for v in coords.values() if v.attrs["input"] in ("source", "obs")
         )
 
         # these coordinates are shared by all the DataArrays
         common_coord_names = [
-            k for k, v in coords.items() if v.attrs["input"] != "score"
+            k for k, v in coords.items() if v.attrs["input"] in ("source", "obs")
         ]
 
         data_vars = {}
@@ -156,7 +223,11 @@ class Histogram:
             The name of the coordinate.
         specs:
             A tuple of (start, stop, step) for a fixed range,
-            or an empty tuple for a dynamic range.
+            or an empty tuple or a 2-tuple (start, step) for a dynamic range.
+            An extra last element can be given as a string
+            to specify the units of the coordinate.
+            In that case the tuple will be (start, stop, step, units)
+            or (start, step, units) or (units).
 
         Returns
         -------
@@ -207,7 +278,7 @@ class Histogram:
     def get_coordinate_name(name):
         """
         Get the long name of a coordinate.
-        If the name is not recognized,
+        If the name is not recognized (hard coded),
         return the name itself.
 
         Parameters
@@ -222,6 +293,7 @@ class Histogram:
         str
             Long name of the coordinate
         """
+
         return {
             "mag": "Magnitude",
             "dmag": "Delta Magnitude",
@@ -240,8 +312,8 @@ class Histogram:
         Parameters
         ----------
         units: str
-            Can be 'kb', 'mb', or 'gb'.
-            Otherwise, assume 'bytes' are returned.
+            Can be 'bytes', 'kb', 'mb', or 'gb'.
+            Default is "mb".
 
         Returns
         -------
@@ -269,8 +341,8 @@ class Histogram:
         Parameters
         ----------
         units: str
-            Can be 'kb', 'mb', or 'gb'.
-            Otherwise, assume 'bytes' are returned.
+            Can be 'bytes', 'kb', 'mb', or 'gb'.
+            Default is "mb".
         dyn_coord_size: int
             The number of unique values to assume for dynamic coordinate axes.
             Default is 3, which is appropriate for having a few values.
@@ -287,25 +359,26 @@ class Histogram:
         """
 
         common_size = 1
-        for d in self.data.coords.values():
-            # only count non-source coordinates (shared by all DataArrays)
-            if d.attrs["input"] != "score":
-                if len(d) <= 1:
+        for coord in self.data.coords.values():
+            # only count non-score coordinates (shared by all DataArrays)
+            if coord.attrs["input"] in ("source", "obs"):
+                if len(coord) <= 1:
                     common_size *= dyn_coord_size
                 else:
-                    common_size *= len(d)
+                    common_size *= len(coord)
 
         score_size = 0
-        for d in self.data.coords.values():
-            # only count non-source coordinates (shared by all DataArrays)
-            if d.attrs["input"] == "score":
-                if len(d) <= 1:
+        for coord in self.data.coords.values():
+            # only count score coordinates
+            if coord.attrs["input"] == "score":
+                if len(coord) <= 1:
                     score_size += dyn_score_size
                 else:
-                    score_size += len(d)
+                    score_size += len(coord)
 
         total_size = common_size * score_size
 
+        # get the number of bytes in one of the arrays
         array_names = list(self.data.keys())
         total_size *= self.data[array_names[0]].dtype.itemsize
 
@@ -313,10 +386,18 @@ class Histogram:
 
     @staticmethod
     def unit_convert_bytes(units):
+        """
+        Convert a number of bytes into another unit.
+        Can choose "kb", "mb", or "gb", which will return
+        the appropriate number of bytes in that unit.
+        If "bytes" or any other string, will return 1,
+        i.e., no conversion.
+        """
         if units.endswith("s"):
             units = units[:-1]
 
         return {
+            "byte": 1,
             "kb": 1024,
             "mb": 1024**2,
             "gb": 1024**3,
@@ -334,6 +415,7 @@ class Histogram:
         those scalar values will be used to slice into
         the histogram, and speed up the binning process.
         All the other values will be binned using ...
+        # TODO: finish description
 
         Parameters
         ----------
@@ -346,29 +428,31 @@ class Histogram:
         kwargs:
             Additional arguments to pass to the binning function.
             Currently there are no additional arguments.
-
-        Returns
-        -------
-
         """
+        # input data is a dictionary with a key for each axis,
+        # and each value is a scalar or an array of values.
+        # this gets ingested by the histogram DataArray
+        # after it is filled from all objects given in args.
+        input_data = {}
+
         # go over args and see if any objects
         # have attributes that match one of the axes.
-        input_data = {}
         for axis in self.data.dims:
             input_data[axis] = None
             for obj in args:
                 if hasattr(obj, axis):
                     values = getattr(obj, axis)
-                    if not isinstance(values, str) and hasattr(values, "__len__"):
+                    if not self.is_scalar(values):
                         # an array, but need to check if all are the same
                         if len(np.unique(values)) == 1:
                             input_data[axis] = values[0]
                         else:
                             input_data[axis] = np.array(values)
-                    else:  # assume it is a scalar value / string
+                    else:  # a scalar value / string
                         input_data[axis] = values
                     break  # take the first thing that matches
 
+        # check the length of the timeseries that is given
         sample_len = None
         for obj in args:
             if isinstance(obj, pd.DataFrame):
@@ -377,9 +461,10 @@ class Histogram:
         if sample_len is None:
             sample_len = 1
 
+        # how many different scores are we tracking? (snr, dmag, etc)
         num_scores = len(self.data.data_vars)
 
-        # check all data axes have a coordinate value
+        # check all data axes have a coordinate value or values array
         for axis in self.data.dims:
             if input_data[axis] is None:
                 raise ValueError(f"Could not find data for axis {axis}")
@@ -390,7 +475,7 @@ class Histogram:
         # If so, expand the axes to include the new values.
         for axis in self.data.dims:
             if self.data.coords[axis].attrs["type"] == "fixed":
-                continue
+                continue  # no need to expand fixed axes
 
             # scalar string
             if isinstance(input_data[axis], str):
@@ -399,6 +484,7 @@ class Histogram:
                     or input_data[axis] not in self.data.coords[axis].values
                 ):
                     self.expand_axis(axis, input_data[axis])
+
             # list of strings
             elif hasattr(input_data[axis], "__len__") and all(
                 isinstance(x, str) for x in input_data[axis]
@@ -419,16 +505,13 @@ class Histogram:
 
         # here is where we actually increase the bin counts
         for name, da in self.data.data_vars.items():
-            # each da is for a different score
+            # each da is a DataArray for a different score
 
-            # get a slice of the full array that matches
-            # any scalar values
+            # get a slice of the full array that matches any scalar values
             indices = {}
             array_values = {}
             for ax in da.dims:
-                if isinstance(input_data[ax], str) or not hasattr(
-                    input_data[ax], "__len__"
-                ):
+                if self.is_scalar(input_data[ax]):
                     indices[ax] = self.get_index(ax, input_data[ax])
                 else:
                     array_values[ax] = input_data[ax]
@@ -446,29 +529,33 @@ class Histogram:
                     if da.coords[ax].attrs["input"] == "score":
                         num_values_to_add = sample_len
                     else:
+                        # because the common axes are shared by all scores
+                        # we will end up adding the sample_len multiple times
                         num_values_to_add = sample_len / num_scores
+
                     if ax in indices and indices[ax] < 0:
                         da.coords[ax].attrs["underflow"] += num_values_to_add
                         in_range = False
                     elif ax in indices and indices[ax] >= len(da.coords[ax]):
                         da.coords[ax].attrs["overflow"] += num_values_to_add
                         in_range = False
+                    # else: do nothing, there's no overflow/underflow
 
             if in_range:
                 # if all the arrays have unique values, just add the number of measurements:
-                if not array_values:
+                if not array_values:  # empty dict
+                    # TODO: check that this actually works...
                     self.data[name][indices] += np.array(sample_len).astype(da.dtype)
                 else:
-                    # bin the remaining dataframe columns into
-                    # the appropriate axes
+                    # bin the non-unique dataframe columns into the appropriate axes
                     da_slice = self.data[name].isel(**indices)
                     if set(da_slice.dims) != set(array_values.keys()):
                         raise ValueError("Slice into data array has wrong dimensions!")
 
                     # setup the bin edges and values
                     # make sure they're ordered by the da_slice dims
-                    bins = []
-                    values = []
+                    bins = []  # array of bin edges
+                    values = []  # array of new values to count
                     for dim in da_slice.dims:
                         centers = da_slice.coords[dim].values
 
@@ -488,6 +575,9 @@ class Histogram:
                             # ref: https://stackoverflow.com/a/16993364/18256949
                             ordered_array = np.array([lookup[x] for x in uniq])[rev_ind]
 
+                            # ordered_array should be a list of numbers,
+                            # each representing a string, according to the
+                            # order of strings in the axis.
                             values.append(ordered_array)
                             edges = np.arange(-0.5, len(centers) + 0.5, 1)
                         else:  # get bin edges from center values
@@ -500,7 +590,7 @@ class Histogram:
                         bins.append(edges)
 
                     counts, _ = np.histogramdd(values, bins)
-                    da_slice += counts.astype(da.dtype)
+                    da_slice += counts.astype(da.dtype)  # add to existing counts
 
                     # add the over/underflow:
                     for ax in array_values:
@@ -508,6 +598,8 @@ class Histogram:
                             if da_slice.coords[ax].attrs["input"] == "score":
                                 correction = 1
                             else:
+                                # because the common axes are shared by all scores
+                                # we will end up adding the sample_len multiple times
                                 correction = 1 / num_scores
                             mx = max(da_slice.coords[ax].values)
                             mn = min(da_slice.coords[ax].values)
@@ -523,15 +615,33 @@ class Histogram:
                             )
 
     def expand_axis(self, axis, new_values):
+        """
+        Expand the axis to include the new values.
+        This only works for dynamic axes.
+        String based axes are expanded simply by
+        adding any values that are not included.
+        Numeric axes are expanded by adding as many
+        bins as needed (with the predefined step)
+        so that the min/max of the new values
+        are included in the new axis.
+
+        Parameters
+        ----------
+        axis: str
+            The name of the axis to expand.
+            Will load the data coordinate DataArray.
+        new_values: array-like
+            The new values to include in the axis.
+            This can be a scalar string or number,
+            or a numeric array or a string array.
+
+        """
         if isinstance(new_values, str):
-            if (
-                self.data.coords[axis].size == 0
-                or new_values not in self.data.coords[axis].values
-            ):
-                if self.data.coords[axis].size > 0:
-                    new_coord = self.data.coords[axis].values + [new_values]
-                else:
-                    new_coord = [new_values]
+            if self.data.coords[axis].size == 0:
+                new_coord = [new_values]
+            elif new_values not in self.data.coords[axis].values:
+                new_coord = self.data.coords[axis].values + [new_values]
+            # else: do nothing, the value exists in the axes
         else:  # scalar or array
             # str array/list
             if hasattr(new_values, "__len__") and all(
@@ -559,22 +669,12 @@ class Histogram:
                 if np.isclose(lower[-1], min(self.data[axis])):
                     lower = lower[:-1]
 
-                new_coord = np.concatenate(
-                    (
-                        lower,
-                        self.data[axis],
-                    )
-                )
+                new_coord = np.concatenate((lower, self.data[axis]))
 
                 # the new values after the original axis
                 upper = np.arange(max(new_coord) + step, mx + step, step)
 
-                new_coord = np.concatenate(
-                    (
-                        new_coord,
-                        upper,
-                    )
-                )
+                new_coord = np.concatenate((new_coord, upper))
 
         # make a new array with all the same coords,
         # except replace the one axis with the new coord
@@ -623,7 +723,7 @@ class Histogram:
         ----------
         axis: str
             Name of coordinate to look up.
-        value: str or float
+        value: scalar str or float
             Which value to try to match.
             If float, will find the closest match.
             If string, will find an exact match
@@ -643,20 +743,24 @@ class Histogram:
                 raise ValueError(f"Value {value} not in axis {axis}")
             return np.where(self.data.coords[axis].values == value)[0][0]
         else:
-            if (
-                value
-                > max(self.data.coords[axis].values)
-                + self.data.coords[axis].attrs["step"] / 2
-            ):
+            step = self.data.coords[axis].attrs["step"]
+            if value > max(self.data.coords[axis].values) + step / 2:
                 return self.data.coords[axis].size
-            elif (
-                value
-                < min(self.data.coords[axis].values)
-                - self.data.coords[axis].attrs["step"] / 2
-            ):
+            elif value < min(self.data.coords[axis].values) - step / 2:
                 return -1
             else:
                 return np.argmin(np.abs(self.data.coords[axis].values - value))
+
+    @staticmethod
+    def is_scalar(value):
+        """
+        Check if a value is a scalar (string or not has __len__).
+        Returns True if a scalar, False if not.
+        """
+        if isinstance(value, str) or not hasattr(value, "__len__"):
+            return True
+        else:
+            return False
 
 
 if __name__ == "__main__":
