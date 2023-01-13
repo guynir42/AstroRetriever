@@ -8,6 +8,13 @@ class ParsQuality(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
 
+        self.cut_names = self.add_par(
+            "cut_names",
+            ["offset"],
+            list,
+            "List of names of the quality cuts used in this analysis",
+        )
+
         self.offset_threshold = self.add_par(
             "offset_threshold",
             3.5,

@@ -93,7 +93,7 @@ def get_class_from_data_type(data_type):
     # add more data types here
     else:
         raise ValueError(
-            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
+            f'Data type given "{data_type}" is not one of {allowed_data_types}'
         )
 
 
@@ -511,7 +511,7 @@ class Parameters:
         else:
             return DATA_ROOT or ""
 
-    def get_class(self, name, **kwargs):
+    def get_class_instance(self, name, **kwargs):
         """
         Get a class from a string.
         To load a class, there must be (at least) two
@@ -520,7 +520,8 @@ class Parameters:
           the class definition. E.g., src.my_simulator
         - <name>_class: the name of the class. E.g., MySimulator.
         - <name>_kwargs: a dictionary with initialization arguments.
-          The kwargs given to this function override those loaded from file.
+          The kwargs given as inputs to this function
+          override those loaded from file.
 
         Parameters
         ----------
@@ -532,7 +533,8 @@ class Parameters:
             E.g., if name="Analysis", then the Analysis class
             will be loaded from the "src.analysis" module.
         kwargs: dict
-            Additional keyword arguments to pass to the class.
+            Additional keyword arguments to pass to the class,
+            overriding those in <name>_kwargs.
 
         Returns
         -------
@@ -541,19 +543,20 @@ class Parameters:
         """
 
         # default module and class_name for core classes:
-        if name.lower() == "analysis":
+        name = name.lower()
+        if name == "analysis":
             module = "src.analysis"
             class_name = "Analysis"
-        elif name.lower() == "simulator":
+        elif name == "simulator":
             module = "src.simulator"
             class_name = "Simulator"
-        elif name.lower() == "catalog":
+        elif name == "catalog":
             module = "src.catalog"
             class_name = "Catalog"
-        elif name.lower() == "finder":
+        elif name == "finder":
             module = "src.finder"
             class_name = "Finder"
-        elif name.lower() == "quality":
+        elif name == "quality":
             module = "src.quality"
             class_name = "Quality"
         else:
@@ -588,7 +591,7 @@ class Parameters:
         If these keys already exist, don't update them.
         This is useful to automatically propagate
         parameter values that need to be shared by
-        sub-objects.
+        sub-objects (e.g., project name).
         """
         keys = propagated_keys
         for k in keys:

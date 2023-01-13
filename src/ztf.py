@@ -32,7 +32,7 @@ class ParsObsZTF(ParsObservatory):
             "cone_search_radius",
             2.0,
             float,
-            "Radius of cone search for ZTF observations",
+            "Radius of cone search for ZTF observations (arcsec)",
         )
 
         self.limiting_magnitude = self.add_par(
@@ -57,6 +57,14 @@ class ParsObsZTF(ParsObservatory):
             "Maximum magnitude difference between catalog magnitude "
             "and median measured magnitude, below which that oid is not saved",
         )
+
+        self.download_pars_list = [
+            "minimal_declination",
+            "cone_search_radius",
+            "limiting_magnitude",
+            "faint_magnitude_difference",
+            "bright_magnitude_difference",
+        ]
 
         self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
@@ -120,11 +128,13 @@ class VirtualZTF(VirtualObservatory):
             altdata = {}
         else:
             # get a big enough radius to fit high proper motion stars
+            # proper motion is given as milli-arcsec per year
             pmra = cat_row.get("pmra", 0)
             pmdec = cat_row.get("pmdec", 0)
             pm = np.sqrt(pmra**2 + pmdec**2)
 
-            radius = self.pars.cone_search_radius + (0.003 * pm)  # arcsec
+            pm_radius_bump = 0.003 * pm  # convert to arcsec, allow 3 years of motion
+            radius = self.pars.cone_search_radius + pm_radius_bump  # arcsec
             new_query = lightcurve.LCQuery.from_position(
                 cat_row["ra"], cat_row["dec"], radius, auth=self.get_credentials()
             )

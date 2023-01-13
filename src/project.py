@@ -305,7 +305,9 @@ class Project:
                 )
             )
 
-        self.analysis = self.pars.get_class("analysis", **analysis_kwargs)
+        # use the pars object's analysis_module and analysis_class
+        # to initialize a custom analysis object
+        self.analysis = self.pars.get_class_instance("analysis", **analysis_kwargs)
         self.analysis.observatories = self.observatories
 
     def make_observatory(self, name, inputs):
@@ -357,7 +359,7 @@ class Project:
         obs_class = getattr(module, class_name)
         new_obs = obs_class(**inputs)
 
-        # TODO: separate reducer and use pars.get_class to load it
+        # TODO: separate reducer and use pars.get_class_instance to load it
         # parse parameters for reduction methods for this observatory
         # reducer_dict = {}
         # reducer_dict.update(self.pars.reducer)  # project pars

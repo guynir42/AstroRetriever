@@ -11,6 +11,13 @@ class ParsFinder(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
 
+        self.score_names = self.add_par(
+            "score_names",
+            ["snr"],
+            list,
+            "List of names of the scores used in this analysis",
+        )
+
         self.snr_threshold = self.add_par(
             "snr_threshold", 5, (float, int), "S/N threshold for detection"
         )

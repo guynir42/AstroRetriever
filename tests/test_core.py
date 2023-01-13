@@ -1040,6 +1040,49 @@ def test_demo_observatory_save_downloaded(test_project):
             session.commit()
 
 
+def test_download_pars(test_project):
+    # make random sources unique to this test
+    test_project.catalog.make_test_catalog()
+    test_project.catalog.load()
+    obs = test_project.observatories["demo"]
+    try:
+        # download the first source only
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 0})
+
+        # reloading this source should be quick (no call to fetch should be sent)
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time < 1  # should take less than 1s
+
+        # now check that download parameters are inconsistent
+        obs.pars.check_download_pars = True
+
+        # reloading
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time > 1  # should take about 3s to re-download
+
+        # reloading this source should be quick (no call to fetch should be sent)
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time < 1  # should take less than 1s
+
+    finally:
+        for d in obs.datasets:
+            d.delete_data_from_disk()
+
+        if len(obs.datasets) > 0:
+            assert not os.path.isfile(obs.datasets[0].get_fullname())
+
+        with Session() as session:
+            for d in obs.datasets:
+                session.delete(d)
+            session.commit()
+
+
 @pytest.mark.flaky(max_runs=3)
 def test_histogram():
 
