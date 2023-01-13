@@ -119,19 +119,19 @@ class Analysis:
     """
     This is a pipeline object that accepts a Source object
     (e.g., with some lightcurves) and performs analysis on it.
-    Use pars.data_types to choose which kind of analysis is to be done.
-    The default is to use photometry.
-    Any sources with all empty raw data will be skipped.
+    Use pars.data_types to choose which kind of analysis
+    is to be done. The default is to use photometry.
+    Any sources with all-empty raw data will be skipped.
     Other sources are assumed to have reduced datasets,
     and that they already contain the data required.
     For example, a source with a lightcurve that is missing
     its data (either in RAM or from disk) will raise an exception.
 
     The outputs of the analysis are:
-    1) Properties object summarizing the results for each object (e.g., best S/N).
+    1) Properties object, summarizing the results for each object (e.g., best S/N).
     2) Processed data (e.g., lightcurves) with quality flags and S/N, etc.
     3) Detection objects (if we find anything interesting)
-    4) Update to the histogram (counts the number of measurements
+    4) Updates to the histogram (counts the number of measurements
        with a specific score like S/N, specific magnitude, etc.).
     5) Simulated datasets and detections (if using injections).
 
@@ -142,38 +142,62 @@ class Analysis:
     too far from the source RA/Dec, then we can disqualify
     some data points, which will also flag the Detection objects
     that overlap those measurements.
+    This uses, e.g., the "offset" quality cut.
 
     The Finder object then proceeds to add S/N (and other scores)
-    to the processed lightcurve. These can be saved to the database
+    to the processed lightcurve.
+    The processed lightcurves can be saved to the database
     and to disk, or they can be removed to save space.
     Use the pars.commit_processed to toggle this behavior.
 
-    A Histogram object can be used to keep track of the number
-    of measurements that are lost to each score,
+    quality_values is a histogram object is used to keep track
+    of the number of measurements that are lost to each quality cut,
     so we can fine tune the cut thresholds on the QualityChecker object.
+    all_scores and good_scores are used to track the number of measurements
+    that end up with each score. The good_scores includes only data that
+    passed all quality cuts.
 
     The Simulator is used to inject fake sources into the data,
     which are recovered as Detection objects.
     The injection data is calculated after posting the new
     counts into the histogram.
 
-
     """
 
     def __init__(self, **kwargs):
-        finder_kwargs = kwargs.pop("finder_kwargs", {})
         quality_kwargs = kwargs.pop("quality_kwargs", {})
+        finder_kwargs = kwargs.pop("finder_kwargs", {})
         simulator_kwargs = kwargs.pop("simulator_kwargs", {})
 
+        # kwargs to pass into the different histograms
+        histogram_kwargs = kwargs.pop("histogram_kwargs", {})
+        histogram_kwargs["initialize"] = False  # just making sure
+
+        # ingest the rest of the kwargs:
         self.pars = ParsAnalysis(**kwargs)
-        self.all_scores = Histogram()
-        self.good_scores = Histogram()
-        # self.extra_scores = []  # an optional list of extra Histogram objects
-        self.quality_values = Histogram()
-        self.checker = self.pars.get_class("quality", **quality_kwargs)
-        self.finder = self.pars.get_class("finder", **finder_kwargs)
+
+        # quality check cuts and the values histograms
+        self.checker = self.pars.get_class_instance("quality", **quality_kwargs)
+
+        self.quality_values = Histogram(**histogram_kwargs)
+
+        # update the kwargs with the right scores:
+        self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
+        self.quality_values.initialize()
+
+        # the finder and simulator
+        self.finder = self.pars.get_class_instance("finder", **finder_kwargs)
         self.finder.checker = self.checker  # link to this here, too
-        self.sim = self.pars.get_class("simulator", **simulator_kwargs)
+        self.sim = self.pars.get_class_instance("simulator", **simulator_kwargs)
+
+        self.all_scores = Histogram(**histogram_kwargs)
+        self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.all_scores.initialize()
+        self.good_scores = Histogram(**histogram_kwargs)
+        self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.good_scores.initialize()
+        # self.extra_scores = []  # an optional list of extra Histogram objects
+
         # self.threshold = None  # Threshold object
         # self.extra_thresholds = []  # list of Threshold objects
 

@@ -21,6 +21,7 @@ class ParsHistogram(Parameters):
         default_score_coords = {
             "snr": (-10, 10, 0.1),
             "dmag": (-3, 3, 0.1),
+            "offset": (0, 5, 0.1),
         }  # other options: any of the quality cuts
         self.score_coords = self.add_par(
             "score_coords", default_score_coords, dict, "Coordinates for the score axes"
@@ -114,6 +115,44 @@ class Histogram:
 
         if can_initialize:
             self.initialize()
+
+    def pick_out_coords(self, names, input_type="score"):
+        """
+        Pick only a subset of the coordinate specs based
+        on a list of names. Usually this is used to pick
+        which scores we want to use, e.g., "snr" for counting
+        good measurements and "offset" for counting epochs
+        that failed the quality cuts.
+
+        This function must be called before initialization!
+
+        Parameters
+        ----------
+        names: string or list of strings
+            The names of the coordinates to pick out.
+            Other coordinates will be removed from the
+            coord specs. If any of the names do not
+            exist in the list of coordinates, will
+            raise a ValueError.
+        input_type: string
+            The type of coordinates to pick out.
+            Options are 'score', 'source', or 'obs'.
+            Default is 'score'.
+
+        """
+        if isinstance(names, str):
+            names = [names]
+
+        coords = getattr(self.pars, f"{input_type}_coords").copy()
+        for k in coords.keys():
+            if k not in names:
+                del coords[k]
+
+        missing = set(names) - set(coords.keys())
+        if len(missing) > 0:
+            raise ValueError(f"Missing coordinates: {missing}")
+
+        setattr(self.pars, f"{input_type}_coords", coords)
 
     def initialize(self):
 
