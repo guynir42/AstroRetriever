@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -168,10 +170,12 @@ class Analysis:
         quality_kwargs = kwargs.pop("quality_kwargs", {})
         finder_kwargs = kwargs.pop("finder_kwargs", {})
         simulator_kwargs = kwargs.pop("simulator_kwargs", {})
+        self.output_folder = kwargs.pop("output_folder", os.getcwd())
 
         # kwargs to pass into the different histograms
         histogram_kwargs = kwargs.pop("histogram_kwargs", {})
         histogram_kwargs["initialize"] = False  # just making sure
+        histogram_kwargs["output_folder"] = self.output_folder
 
         # ingest the rest of the kwargs:
         self.pars = ParsAnalysis(**kwargs)
@@ -179,7 +183,8 @@ class Analysis:
         # quality check cuts and the values histograms
         self.checker = self.pars.get_class_instance("quality", **quality_kwargs)
 
-        self.quality_values = Histogram(**histogram_kwargs)
+        self.pars.add_defaults_to_dict(histogram_kwargs)  # project name etc
+        self.quality_values = Histogram(**histogram_kwargs, name="quality_values")
 
         # update the kwargs with the right scores:
         self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
@@ -190,16 +195,13 @@ class Analysis:
         self.finder.checker = self.checker  # link to this here, too
         self.sim = self.pars.get_class_instance("simulator", **simulator_kwargs)
 
-        self.all_scores = Histogram(**histogram_kwargs)
+        self.all_scores = Histogram(**histogram_kwargs, name="all_scores")
         self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
         self.all_scores.initialize()
-        self.good_scores = Histogram(**histogram_kwargs)
+        self.good_scores = Histogram(**histogram_kwargs, name="good_scores")
         self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
         self.good_scores.initialize()
         # self.extra_scores = []  # an optional list of extra Histogram objects
-
-        # self.threshold = None  # Threshold object
-        # self.extra_thresholds = []  # list of Threshold objects
 
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
@@ -217,7 +219,8 @@ class Analysis:
         if isinstance(sources, Source):
             sources = [sources]
 
-        # TODO: load histograms from file
+        self.load_histograms()
+
         batch_detections = []
         for source in sources:
             # check how many raw datasets are not empty
@@ -268,7 +271,7 @@ class Analysis:
             with Session() as session:
                 try:  # if anything fails, must rollback all
                     if self.pars.save_histograms:
-                        self.save_histograms()
+                        self.save_histograms(temp=True)
 
                     for source in sources:
                         session.add(source)
@@ -290,8 +293,12 @@ class Analysis:
                             [data.save() for data in getattr(source, f"simulated_{dt}")]
 
                     session.commit()
+
+                    # if all the file saving and DB interactions work,
+                    # then we can commit the histograms (rename temp files)
+                    self.commit_histograms()
                 except Exception:
-                    self.restore_histogram_backup()
+                    self.rollback_histograms()
                     session.rollback()
                     for source in sources:
                         for dt in self.pars.data_types:
@@ -568,44 +575,57 @@ class Analysis:
 
         return np.random.poisson(self.pars.num_injections)
 
-    def save_histograms(self):
+    def get_all_histograms(self):
         """
-        Save the histograms to a file.
+        Get a list of all histograms that are
+        associated with this Analysis object.
         """
-        pass
+        return [obj for obj in self.__dict__.values() if isinstance(obj, Histogram)]
 
-    def restore_histogram_backup(self):
+    def load_histograms(self):
         """
-        Roll back the histograms from a backup file.
+        Load the histograms from file.
+        This is used to continue a previous run,
+        or to use the histograms to make plots.
+        """
+        for hist in self.get_all_histograms():
+            hist.load()
+
+    def save_histograms(self, temp=False):
+        """
+        Save the histograms to a (temporary) file.
+        If using temp=False, will simply save all the
+        histograms to their respective files.
+        If using temp=True, will save the histograms
+        into temporary files (appended with ".temp");
+        To make sure the temp file replaces the old file,
+        must also call commit_histograms().
+        """
+        suffix = "temp" if temp else None
+
+        for hist in self.get_all_histograms():
+            hist.save(suffix=suffix)
+
+    def rollback_histograms(self):
+        """
+        Roll back the histograms saved to the temporary files.
         This is called in case there was a problem
         saving or committing any data.
         """
-        pass
+        for hist in self.get_all_histograms():
+            hist.remove_data_from_file(suffix="temp")
 
+    def commit_histograms(self):
+        """
+        Commit the histograms saved to the temporary files.
+        This is called after the histograms have been saved
+        to the temporary files, and we are sure that
+        there were no problems.
+        Will also create backup files for the histograms.
+        """
+        for hist in self.get_all_histograms():
+            fullname = os.path.join(hist.output_folder, f"histograms_{hist.name}.nc")
+            if os.path.exists(fullname):
+                os.rename(fullname, fullname + ".backup")
 
-# I think we can get rid of this:
-class Threshold:
-    def __init__(self, name, **kwargs):
-        self.name = name
-        self.abs = kwargs.get("abs", False)
-        self.type = kwargs.get("type", "float")
-        if self.type == "float":
-            self.threshold = kwargs.get("thresh", 5.0)
-            self.max = kwargs.get("max", 10)
-            self.min = kwargs.get("min", -10)
-            self.step = kwargs.get("step", 0.1)
-        elif self.type == "int":
-            self.threshold = kwargs.get("thresh", 5)
-            self.max = kwargs.get("max", 10)
-            self.min = kwargs.get("min", -10)
-            self.step = kwargs.get("step", 1)
-        elif self.type == "bool":
-            self.threshold = kwargs.get("thresh", 1)
-            self.max = kwargs.get("max", 1)
-            self.min = kwargs.get("min", 0)
-            self.step = kwargs.get("step", 1)
-        else:
-            raise ValueError(
-                f"Unknown threshold type: {self.type}. "
-                f"Use 'float', 'int', or 'bool'."
-            )
+            os.rename(fullname + ".temp", fullname)

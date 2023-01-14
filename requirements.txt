@@ -17,6 +17,7 @@ fonttools==4.38.0
 gitdb==4.0.10
 GitPython==3.1.30
 greenlet==2.0.1
+h5netcdf==1.1.0
 h5py==3.7.0
 healpix-alchemy==1.0.1
 identify==2.5.10
@@ -26,6 +27,7 @@ kiwisolver==1.4.4
 lark-parser==0.12.0
 matplotlib==3.6.2
 MOCPy==0.11.0
+netCDF4==1.6.2
 networkx==2.8.8
 nodeenv==1.7.0
 numexpr==2.8.4

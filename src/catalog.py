@@ -122,7 +122,6 @@ class ParsCatalog(Parameters):
         )
 
         self._enforce_no_new_attrs = True
-        self._enforce_type_checks = True
 
         self.load_then_update(kwargs)
 

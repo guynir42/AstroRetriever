@@ -44,7 +44,6 @@ class ParsFinder(Parameters):
             "Remove detections that did not pass quality cuts. ",
         )
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)

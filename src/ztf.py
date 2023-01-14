@@ -66,7 +66,6 @@ class ParsObsZTF(ParsObservatory):
             "bright_magnitude_difference",
         ]
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         config = self.load_then_update(kwargs)

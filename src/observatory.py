@@ -151,7 +151,6 @@ class ParsObservatory(Parameters):
         )
 
         self._default_cfg_key = "observatories"
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = False  # allow subclasses to expand attributes
 
         self.filtmap = self.add_par(
@@ -1159,7 +1158,6 @@ class ParsDemoObs(ParsObservatory):
 
         self.download_pars_list = ["wait_time", "wait_time_poisson", "sim_args"]
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         config = self.load_then_update(kwargs)

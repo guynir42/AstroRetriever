@@ -23,7 +23,6 @@ class ParsQuality(Parameters):
             "that are larger than this many times the offset noise.",
         )
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)

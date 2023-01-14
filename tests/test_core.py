@@ -1449,7 +1449,8 @@ def test_analysis(analysis, new_source, raw_phot):
             for lc in new_source.reduced_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)
-                session.delete(lc)
+                if lc in session:
+                    session.delete(lc)
             for lc in new_source.processed_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)
