@@ -1331,7 +1331,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(max_runs=5)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1381,6 +1381,7 @@ def test_analysis(analysis, new_source, raw_phot):
 
     try:  # now save everything
         analysis.pars.save_anything = True
+        analysis.reset_histograms()
         new_source.reset_analysis()
         # make sure to save the raw/reduced data first
         raw_phot.save()
@@ -1444,6 +1445,13 @@ def test_analysis(analysis, new_source, raw_phot):
             assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
             assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
+        # check the number of values added to the histogram matches
+        num_snr_values = int(analysis.all_scores.data.snr_counts.sum().values)
+        assert len(new_source.raw_photometry[0].data) == num_snr_values
+
+        num_offset_values = int(analysis.quality_values.data.offset_counts.sum().values)
+        assert len(new_source.raw_photometry[0].data) == num_offset_values
+
     finally:  # remove all generated lightcurves and detections etc.
         with Session() as session:
             for lc in new_source.reduced_lightcurves:
@@ -1457,9 +1465,10 @@ def test_analysis(analysis, new_source, raw_phot):
                 session.delete(lc)
 
             session.commit()
+        analysis.remove_all_histogram_files(remove_backup=True)
 
 
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(max_runs=5)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)

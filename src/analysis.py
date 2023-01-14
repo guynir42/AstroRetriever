@@ -188,7 +188,6 @@ class Analysis:
 
         # update the kwargs with the right scores:
         self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
-        self.quality_values.initialize()
 
         # the finder and simulator
         self.finder = self.pars.get_class_instance("finder", **finder_kwargs)
@@ -197,10 +196,11 @@ class Analysis:
 
         self.all_scores = Histogram(**histogram_kwargs, name="all_scores")
         self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
-        self.all_scores.initialize()
         self.good_scores = Histogram(**histogram_kwargs, name="good_scores")
         self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
-        self.good_scores.initialize()
+
+        # this generates the xarrays in each histogram
+        self.reset_histograms()
         # self.extra_scores = []  # an optional list of extra Histogram objects
 
         self.detections = []  # a list of Detection objects
@@ -492,43 +492,6 @@ class Analysis:
 
         source.properties = Properties(has_data=True, project=self.pars.project)
 
-    def update_histograms(self, lightcurves, source):
-        """
-        Go over the histograms and update them.
-        There are a few histograms that need to be updated.
-        The first is the "all" histogram, which keeps track
-        of the scores for all measurements, regardless of
-        the quality flags.
-        The second is a list of "pass" histograms,
-        each associated with a specific Threshold object.
-        Measurements that do not pass the respective thresholds
-        are not included in the count for these histograms.
-        There should be one or more Threshold objects,
-        allowing the user to try different configurations
-        simultaneously and measure the amount of data lost
-        in each case.
-        The last one is the "quality" histogram,
-        which keeps track of the values (scores) of
-        the various quality flags, so we can later
-        adjust the thresholds we want to use.
-
-
-        Parameters
-        ----------
-        lightcurves: list of Lightcurve objects
-            The lightcurves to check. These are always
-            going to be the "processed_lightcurves".
-        source: Source object
-            The lightcurves for this source are scanned.
-            Adds the name of the source to the list of source
-            names that were included in the histograms.
-
-        Returns
-        -------
-
-        """
-        pass  # TODO: implement this
-
     def inject_to_lightcurves(self, lightcurves, source, index=0):
         """
         Inject a fake source/event into the data.
@@ -574,6 +537,50 @@ class Analysis:
         """
 
         return np.random.poisson(self.pars.num_injections)
+
+    def reset_histograms(self):
+        """
+        Reset the histograms to zero arrays.
+        """
+        for hist in self.get_all_histograms():
+            hist.initialize()
+
+    def update_histograms(self, lightcurves, source):
+        """
+        Go over the histograms and update them.
+        There are a few histograms that need to be updated.
+        The first is the "all_scores" histogram, which keeps track
+        of the scores for all measurements, regardless of
+        the quality flags.
+        The second is a list of "good_scores" histograms,
+        which includes only epochs that did not fail any
+        quality cuts (good data only).
+        The last one is the "quality_values" histogram,
+        which keeps track of the values (scores) of
+        the various quality flags, so we can later
+        adjust the thresholds we want to use.
+
+        Note that the source names for sources that have
+        already been added to the histogram are stored
+        in the attributes of the histogram object.
+        If the same source is added again it will
+        skip it silently.
+
+        Parameters
+        ----------
+        lightcurves: list of Lightcurve objects
+            The lightcurves to check. These are always
+            going to be the "processed_lightcurves".
+        source: Source object
+            The lightcurves for this source are scanned.
+            Adds the name of the source to the list of source
+            names that were included in the histograms.
+
+        """
+
+        for hist in self.get_all_histograms():
+            for lc in lightcurves:
+                hist.add_data(source, lc.data)
 
     def get_all_histograms(self):
         """
@@ -629,3 +636,16 @@ class Analysis:
                 os.rename(fullname, fullname + ".backup")
 
             os.rename(fullname + ".temp", fullname)
+
+    def remove_all_histogram_files(self, remove_backup=False):
+        """
+        Delete all the files associated with the histograms.
+        This is useful if you want to start from scratch.
+        Use remove_backup=True to also delete the backup files.
+        """
+
+        for hist in self.get_all_histograms():
+            hist.remove_data_from_file()
+            hist.remove_data_from_file(suffix="temp")
+            if remove_backup:
+                hist.remove_data_from_file(suffix="backup")
