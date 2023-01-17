@@ -37,6 +37,7 @@ def new_source():
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
         test_only=True,
+        mag=np.random.uniform(15, 20),
     )
     yield source
     # with Session() as session:

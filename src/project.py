@@ -73,7 +73,6 @@ class ParsProject(Parameters):
             "Hash of the names in the catalog for this project.",
         )
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)
@@ -613,10 +612,6 @@ class Project:
 
         """
         self.output_folder = self.name.upper()
-
-        # and produce a massive config dictionary
-        # translate that into a yaml file in memory
-        # get that file's hash
 
         # version control is enabled
         if self.pars.version_control:

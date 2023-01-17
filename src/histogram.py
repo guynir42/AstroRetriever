@@ -1,9 +1,12 @@
+import os
+import json
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from src.parameters import Parameters
-
+from src.source import Source
 
 # TODO: should this be saved to the database?
 
@@ -50,9 +53,9 @@ class ParsHistogram(Parameters):
             "Data type of underlying array (must be uint16 or uint32)",
         )
         default_score_coords = {
-            "snr": (-10, 10, 0.1),
+            "snr": (-20, 20, 0.1),
             "dmag": (-3, 3, 0.1),
-            "offset": (0, 5, 0.1),
+            "offset": (-5, 5, 0.1),
         }  # other options: any of the quality cuts
         self.score_coords = self.add_par(
             "score_coords",
@@ -73,7 +76,7 @@ class ParsHistogram(Parameters):
 
         default_obs_coords = {
             "exptime": (30, 1),
-            "filt": (),
+            "filter": (),
         }  # other options: airmass, zp, magerr
         self.obs_coords = self.add_par(
             "obs_coords",
@@ -81,6 +84,16 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the observation axes",
         )
+
+        self.raise_on_repeat_source = self.add_par(
+            "raise_on_repeat_source",
+            False,
+            bool,
+            "Raise an error if a source name already "
+            "exists in the histogram source_names set.",
+        )
+
+        self._enforce_no_new_attrs = True
 
     def __setattr__(self, key, value):
         if key == "dtype" and value not in ("uint16", "uint32"):
@@ -151,6 +164,13 @@ class Histogram:
 
         Parameters
         ----------
+        name: str
+            Name of the histogram object, e.g., all_score, quality_cuts.
+            This is used to name the output netCDF file (histograms_<name>.nc).
+        output_folder: str
+            The path (relative or absolute) to the folder where the output
+            netCDF file will be saved. Should be the same place that the
+            project saves all files.
         initialize: bool
             If True, then initialize the histogram right after passing
             the kwargs to the parameters object. Otherwise, the
@@ -159,6 +179,8 @@ class Histogram:
         """
 
         can_initialize = kwargs.pop("initialize", False)
+        self.name = kwargs.pop("name", None)
+        self.output_folder = kwargs.pop("output_folder", None)
 
         self.pars = ParsHistogram(**kwargs)
         self.data = None
@@ -249,6 +271,17 @@ class Histogram:
                 )
 
         self.data = xr.Dataset(data_vars, coords=coords)
+        if self.name is not None:
+            self.data.attrs["name"] = self.name
+
+        self.data.attrs["source_names"] = set()
+
+        if self.output_folder is None:
+            self.output_folder = os.getcwd()
+
+        # create the output folder
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
 
     def create_coordinate(self, name, specs):
         """
@@ -275,8 +308,8 @@ class Histogram:
             The coordinate axis.
         """
 
-        if not isinstance(specs, tuple):
-            raise ValueError(f"Coordinate specs must be a tuple: {specs}")
+        if not isinstance(specs, (tuple, list)):
+            raise ValueError(f"Coordinate specs must be a list or tuple: {specs}")
 
         if len(specs) and isinstance(specs[-1], str):
             units = specs[-1]
@@ -475,13 +508,29 @@ class Histogram:
         # after it is filled from all objects given in args.
         input_data = {}
 
+        # check if source is already in the histogram
+        for arg in args:
+            if isinstance(arg, Source):
+                if arg.name in self.data.attrs["source_names"]:
+                    if self.pars.raise_on_repeat_source:
+                        raise ValueError(
+                            f"Source {arg.name} already exists in histogram"
+                        )
+                    else:
+                        return  # quietly exit without adding the data
+
         # go over args and see if any objects
         # have attributes that match one of the axes.
         for axis in self.data.dims:
             input_data[axis] = None
             for obj in args:
-                if hasattr(obj, axis):
+                values = None
+                if hasattr(obj, "__contains__") and axis in obj:
+                    values = obj[axis]
+                elif hasattr(obj, axis):
                     values = getattr(obj, axis)
+
+                if values is not None:
                     if not self.is_scalar(values):
                         # an array, but need to check if all are the same
                         if len(np.unique(values)) == 1:
@@ -490,6 +539,7 @@ class Histogram:
                             input_data[axis] = np.array(values)
                     else:  # a scalar value / string
                         input_data[axis] = values
+
                     break  # take the first thing that matches
 
         # check the length of the timeseries that is given
@@ -678,9 +728,11 @@ class Histogram:
         """
         if isinstance(new_values, str):
             if self.data.coords[axis].size == 0:
-                new_coord = [new_values]
+                new_coord = np.array([new_values])
             elif new_values not in self.data.coords[axis].values:
-                new_coord = self.data.coords[axis].values + [new_values]
+                new_coord = np.concatenate(
+                    [self.data.coords[axis].values, [new_values]]
+                )
             # else: do nothing, the value exists in the axes
         else:  # scalar or array
             # str array/list
@@ -751,7 +803,7 @@ class Histogram:
                     )
 
         new_dataset = xr.Dataset(new_data)
-
+        new_dataset.attrs = self.data.attrs.copy()
         self.data = new_dataset
 
     def get_index(self, axis, value):
@@ -790,6 +842,107 @@ class Histogram:
                 return -1
             else:
                 return np.argmin(np.abs(self.data.coords[axis].values - value))
+
+    @staticmethod
+    def from_netcdf(filename):
+        """
+        Load the data from a netcdf file.
+        """
+        if not os.path.exists(filename):
+            raise ValueError(f"File {filename} does not exist.")
+
+        with xr.open_dataset(filename) as ds:
+            data = ds.load()
+
+        folder, filename = os.path.split(filename)
+        h = Histogram()
+        if "name" in data.attrs:
+            h.name = data.attrs["name"]
+        if "pars" in data.attrs:
+            parameters = json.loads(data.attrs["pars"])
+            h.pars = ParsHistogram(**parameters)
+        if "source_names" in data.attrs:
+            data.attrs["source_names"] = set(data.attrs["source_names"])
+
+        h.output_folder = folder
+        h.data = data
+
+        return h
+
+    def load(self, suffix=None):
+        """
+        Load the data from the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        fullname = os.path.join(self.output_folder, filename)
+        if os.path.exists(fullname):
+            with xr.open_dataset(fullname) as ds:
+                self.data = ds.load()
+
+            if "name" in self.data.attrs:
+                self.name = self.data.attrs["name"]
+
+            if "pars" in self.data.attrs:
+                parameters = json.loads(self.data.attrs["pars"])
+                self.pars = ParsHistogram(**parameters)
+
+            if "source_names" in self.data.attrs:
+                self.data.attrs["source_names"] = set(self.data.attrs["source_names"])
+
+    def save(self, suffix=None):
+        """
+        Save the data to the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        # netCDF files can't store dicts, must convert to string
+        self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
+        self.data.attrs["source_names"] = list(self.data.attrs["source_names"])
+        self.data.to_netcdf(os.path.join(self.output_folder, filename), mode="w")
+
+    def remove_data_from_file(self, suffix=None):
+        """
+        Save the data to the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        fullname = os.path.join(self.output_folder, filename)
+        if os.path.exists(fullname):
+            os.remove(fullname)
 
     @staticmethod
     def is_scalar(value):

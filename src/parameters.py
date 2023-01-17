@@ -153,7 +153,7 @@ class Parameters:
 
         self._enforce_type_checks = self.add_par(
             "_enforce_type_checks",
-            False,
+            True,
             bool,
             "Choose if input values should be checked "
             "against the type defined in add_par().",
