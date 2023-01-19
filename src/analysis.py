@@ -11,6 +11,10 @@ from src.dataset import Lightcurve
 from src.database import Session
 from src.source import Source
 from src.properties import Properties
+from src.utils import help_with_class
+from src.quality import QualityChecker
+from src.finder import Finder
+from src.simulator import Simulator
 
 
 class ParsAnalysis(Parameters):
@@ -165,6 +169,15 @@ class Analysis:
     counts into the histogram.
 
     """
+
+    @classmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(
+            cls, ParsAnalysis, [QualityChecker, Finder, Simulator, Histogram]
+        )
 
     def __init__(self, **kwargs):
         quality_kwargs = kwargs.pop("quality_kwargs", {})

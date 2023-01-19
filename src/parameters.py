@@ -270,6 +270,9 @@ class Parameters:
         """
 
         desc = default = types = ""
+        value = self[name]
+        if isinstance(value, str):
+            value = f'"{value}"'
 
         if name in self.__docstrings__:
             desc = self.__docstrings__[name].strip()
@@ -278,9 +281,17 @@ class Parameters:
         if name in self.__defaultpars__:
             default = f"default= {self.__defaultpars__[name]}"
         if name in self.__typecheck__:
-            types = f"type= {self.__typecheck__[name]}"
-        joined = " | ".join([desc, default, types])
-        s = f"= {self[name]} [{joined}]"
+            types = self.__typecheck__[name]
+            if not isinstance(types, tuple):
+                types = (types,)
+            types = (t.__name__ for t in types)
+            types = f'types= {", ".join(types)}'
+        extra = ", ".join([s for s in (default, types) if s])
+        if extra:
+            extra = f" [{extra}]"
+
+        s = f"= {value} % {desc}{extra}"
+
         return s
 
     def replace_unset(self, **kwargs):
@@ -678,7 +689,7 @@ class Parameters:
 
         return same
 
-    @staticmethod
+    @classmethod
     def get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.

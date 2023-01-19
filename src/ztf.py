@@ -10,6 +10,7 @@ from ztfquery import lightcurve
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
+from src.utils import help_with_class
 
 
 class ParsObsZTF(ParsObservatory):
@@ -75,6 +76,17 @@ class ParsObsZTF(ParsObservatory):
 
 
 class VirtualZTF(VirtualObservatory):
+    """
+    A virtual observatory sub class for getting ZTF data.
+    """
+
+    @classmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(cls, ParsObsZTF)
+
     def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualZTF object.

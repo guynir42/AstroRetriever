@@ -5,6 +5,7 @@ from src.parameters import Parameters
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.detection import Detection
+from src.utils import help_with_class
 
 
 class ParsFinder(Parameters):
@@ -87,6 +88,13 @@ class Finder:
     are passed in using the dictionary.
 
     """
+
+    @classmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(cls, ParsFinder)
 
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)

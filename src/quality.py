@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from src.parameters import Parameters
+from src.utils import help_with_class
 
 
 class ParsQuality(Parameters):
@@ -36,6 +37,13 @@ class ParsQuality(Parameters):
 
 
 class QualityChecker:
+    @classmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(cls, ParsQuality)
+
     def __init__(self, **kwargs):
         self.pars = ParsQuality(**kwargs)
 

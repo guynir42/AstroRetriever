@@ -1,3 +1,8 @@
+"""
+The project is used to combine a catalog,
+some observatories, and analysis objects.
+"""
+
 import importlib
 import os
 import json
@@ -8,14 +13,15 @@ from collections import OrderedDict
 
 import sqlalchemy as sa
 
+from src.utils import help_with_class
 import src.database
 from src.database import Session
 from src.parameters import Parameters, normalize_data_types
-from src.catalog import Catalog
+from src.catalog import Catalog, ParsCatalog
 from src.observatory import ParsObservatory
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
-from src.analysis import Analysis
+from src.analysis import Analysis, ParsAnalysis
 from src.properties import Properties
 
 
@@ -232,18 +238,47 @@ class ParsProject(Parameters):
 
 
 class Project:
+    """
+    Combine a catalog, observatories, and analysis objects.
+
+    The project allows loading of parameters,
+    and saving of results all under one object.
+    Each project should be used for one science case,
+    with a set of sources given by the catalog,
+    a set of observatories given by the obs_names list,
+    and the reduction and analysis to be done
+    on the data from each observatory.
+    """
+
+    @classmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+
+        subclasses = [Catalog, Analysis]
+        pars_classes = [ParsCatalog, ParsAnalysis]
+
+        for obs_name in ParsObservatory.allowed_obs_names:
+            _, class_name, pars_name = cls.get_observatory_classes(obs_name)
+            subclasses.append(class_name)
+            pars_classes.append(pars_name)
+
+        help_with_class(
+            cls,
+            ParsProject,
+            subclasses,
+        )
+
+        # for subclass, sub_pars in zip(subclasses, pars_classes):
+        #     help_with_class(
+        #         subclass,
+        #         sub_pars,
+        #     )
+
     def __init__(self, name, **kwargs):
         """
         Create a new Project object.
-        The project is used to combine a catalog,
-        some observatories, and analysis objects.
-        It allows loading of parameters saving of results
-        all under one object.
-        Each project should be used for one science case,
-        with a set of sources given by the catalog,
-        a set of observations given by the obs_names list,
-        and the reduction and analysis to be done
-        on the data from each observatory.
 
         Parameters
         ----------
@@ -309,6 +344,39 @@ class Project:
         self.analysis = self.pars.get_class_instance("analysis", **analysis_kwargs)
         self.analysis.observatories = self.observatories
 
+    @staticmethod
+    def get_observatory_classes(name):
+        """
+        Translate the name of the observatory
+        into the module name, the class name
+        and the class of the parameters object
+        that goes in it.
+
+        Parameters
+        ----------
+        name: str
+            Name of the observatory.
+
+        Returns
+        -------
+        module: str
+            Name of the module containing the observatory class.
+        obs_class: class
+            Class of the observatory object.
+        pars_class: class
+            Class of the parameters object.
+        """
+        if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
+            module = "observatory"
+            obs_class = "VirtualDemoObs"
+            pars_class = "ParsDemoObs"
+        else:
+            module = name.lower()
+            obs_class = f"Virtual{name.upper()}"
+            pars_class = f"ParsObs{name.upper()}"
+
+        return module, obs_class, pars_class
+
     def make_observatory(self, name, inputs):
         """
         Produce an Observatory object,
@@ -344,12 +412,7 @@ class Project:
 
         """
 
-        if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
-            module_name = "observatory"
-            class_name = "VirtualDemoObs"
-        else:
-            module_name = name.lower()
-            class_name = f"Virtual{name}"
+        module_name, class_name, _ = self.get_observatory_classes(name)
 
         if not isinstance(inputs, dict):
             raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
@@ -660,20 +723,45 @@ class NamedList(list):
 
 
 if __name__ == "__main__":
-    print("Starting a new project")
     proj = Project(
-        name="WD",
-        obs_names="ZTF",  # a single observatory named ZTF
-        catalog_kwargs={"default": "WD"},  # load the default WD catalog
-        verbose=1,  # print out some info
-        obs_kwargs={
-            "ZTF": {  # instructions for ZTF specifically
-                "data_glob": "lightcurves_WD*.h5",  # filename format
-                "catalog_matching": "number",  # match by catalog row number
-                "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
+        name="default_test",  # must give a name to each project
+        description="my project description",  # optional parameter example
+        version_control=False,  # whether to use version control on products
+        obs_names=["ZTF"],  # must give at least one observatory name
+        # parameters to pass to the Analysis object:
+        analysis_kwargs={
+            "num_injections": 3,
+            "finder_kwargs": {  # pass through Analysis into Finder
+                "snr_threshold": 7.5,
             },
-        },  # general parameters to pass to all observatories
+            "finder_module": "src.finder",  # can choose different module
+            "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
+        },
+        analysis_module="src.analysis",  # replace this with your code path
+        analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
+        catalog_kwargs={"default": "WD"},  # load the default WD catalog
+        # parameters to be passed into each observatory class
+        obs_kwargs={
+            "reducer": {
+                "radius": 3,
+                "gap": 40,
+            },
+            "ZTF": {  # specific instructions for the ZTF observatory only
+                "credentials": {
+                    "username": "guy",
+                    "password": "12345",
+                },
+            },
+        },
     )
+
+    # download all data for all sources in the catalog
+    # and reduce the data (skipping raw and reduced data already on file)
+    # and store the results as detection objects in the DB, along with
+    # detection stats in the form of histogram arrays.
+    # proj.run()
+
+    proj.help()
 
     # proj.delete_all_sources()
     # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)

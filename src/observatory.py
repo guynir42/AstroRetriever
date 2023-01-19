@@ -21,11 +21,9 @@ from src.parameters import (
 )
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
-from src.detection import Detection
-
 from src.catalog import Catalog
-from src.histogram import Histogram
-from src.analysis import Analysis
+
+from src.utils import help_with_class
 
 lock = threading.Lock()
 
@@ -210,12 +208,21 @@ class ParsObservatory(Parameters):
 
 class VirtualObservatory:
     """
+    Download data from specific observatories (using subclasses).
+
     Base class for other virtual observatories.
     This class allows the user to load a catalog,
     and for each object in it, download data from
     some real observatory, run analysis on it,
     save the results for later, and so on.
     """
+
+    @staticmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(cls, ParsObservatory)
 
     def __init__(self, name=None):
         """
@@ -1178,6 +1185,21 @@ class ParsDemoObs(ParsObservatory):
 
 
 class VirtualDemoObs(VirtualObservatory):
+    """
+    A demo observatory that produces simulated data.
+
+    This is useful for testing and demonstration purposes.
+    To get actual data from real observations, use the
+    real VirtualObservatory sub classes, e.g., VirtualZTF.
+    """
+
+    @staticmethod
+    def help(cls):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        help_with_class(cls, ParsDemoObs)
+
     def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualDemoObs object.
