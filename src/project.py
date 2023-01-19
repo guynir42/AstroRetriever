@@ -13,7 +13,6 @@ from collections import OrderedDict
 
 import sqlalchemy as sa
 
-from src.utils import help_with_class
 import src.database
 from src.database import Session
 from src.parameters import Parameters, normalize_data_types
@@ -23,6 +22,7 @@ from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis, ParsAnalysis
 from src.properties import Properties
+from src.utils import help_with_class, help_with_object
 
 
 class ParsProject(Parameters):
@@ -250,31 +250,26 @@ class Project:
     on the data from each observatory.
     """
 
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
 
-        subclasses = [Catalog, Analysis]
-        pars_classes = [ParsCatalog, ParsAnalysis]
+        if isinstance(self, Project):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Project:
+            cls = Project
+            subclasses = [Catalog, Analysis]
 
-        for obs_name in ParsObservatory.allowed_obs_names:
-            _, class_name, pars_name = cls.get_observatory_classes(obs_name)
-            subclasses.append(class_name)
-            pars_classes.append(pars_name)
+            for obs_name in ParsObservatory.allowed_obs_names:
+                _, class_name, pars_name = cls.get_observatory_classes(obs_name)
+                subclasses.append(class_name)
 
-        help_with_class(
-            cls,
-            ParsProject,
-            subclasses,
-        )
-
-        # for subclass, sub_pars in zip(subclasses, pars_classes):
-        #     help_with_class(
-        #         subclass,
-        #         sub_pars,
-        #     )
+            help_with_class(
+                cls,
+                ParsProject,
+                subclasses,
+            )
 
     def __init__(self, name, **kwargs):
         """
@@ -359,8 +354,8 @@ class Project:
 
         Returns
         -------
-        module: str
-            Name of the module containing the observatory class.
+        module: module
+            Module containing the observatory class.
         obs_class: class
             Class of the observatory object.
         pars_class: class
@@ -368,13 +363,15 @@ class Project:
         """
         if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
             module = "observatory"
-            obs_class = "VirtualDemoObs"
-            pars_class = "ParsDemoObs"
+            class_name = "VirtualDemoObs"
+            pars_name = "ParsDemoObs"
         else:
             module = name.lower()
-            obs_class = f"Virtual{name.upper()}"
-            pars_class = f"ParsObs{name.upper()}"
-
+            class_name = f"Virtual{name.upper()}"
+            pars_name = f"ParsObs{name.upper()}"
+        module = importlib.import_module("." + module, package="src")
+        obs_class = getattr(module, class_name)
+        pars_class = getattr(module, pars_name)
         return module, obs_class, pars_class
 
     def make_observatory(self, name, inputs):
@@ -412,13 +409,11 @@ class Project:
 
         """
 
-        module_name, class_name, _ = self.get_observatory_classes(name)
+        module, obs_class, _ = self.get_observatory_classes(name)
 
         if not isinstance(inputs, dict):
             raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
 
-        module = importlib.import_module("." + module_name, package="src")
-        obs_class = getattr(module, class_name)
         new_obs = obs_class(**inputs)
 
         # TODO: separate reducer and use pars.get_class_instance to load it
@@ -761,8 +756,8 @@ if __name__ == "__main__":
     # detection stats in the form of histogram arrays.
     # proj.run()
 
+    Project.help()
     proj.help()
-
     # proj.delete_all_sources()
     # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
     # sources = proj.get_all_sources()

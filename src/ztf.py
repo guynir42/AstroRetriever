@@ -9,8 +9,8 @@ from ztfquery import lightcurve
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
-from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
-from src.utils import help_with_class
+from src.dataset import RawPhotometry, Lightcurve
+from src.utils import help_with_class, help_with_object
 
 
 class ParsObsZTF(ParsObservatory):
@@ -80,12 +80,14 @@ class VirtualZTF(VirtualObservatory):
     A virtual observatory sub class for getting ZTF data.
     """
 
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsObsZTF)
+        if isinstance(self, VirtualZTF):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualZTF:
+            help_with_class(VirtualZTF, ParsObsZTF)
 
     def __init__(self, **kwargs):
         """

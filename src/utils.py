@@ -3,6 +3,7 @@ Various utility functions and classes
 that were not relevant to any specific module.
 """
 import sys
+from inspect import signature
 
 
 class OnClose:
@@ -85,17 +86,66 @@ def help_with_class(cls, pars_cls=None, sub_classes=None):
     description = short_docstring(trim_docstring(cls.__doc__))
 
     print(f"{cls.__name__}\n" "--------\n" f"{description}")
+
+    print_functions(cls)
+
     if pars_cls is not None:
         print("Parameters:")
         # initialize a parameters object and print it
         pars = pars_cls(cfg_file=False)  # do not read config file
         pars.print()  # show a list of parameters
-
         print()  # newline
 
     if sub_classes is not None:
         for sub_cls in sub_classes:
             if hasattr(sub_cls, "help") and callable(sub_cls.help):
                 sub_cls.help()
-
         print()  # newline
+
+
+def help_with_object(obj, owner_pars):
+    """
+    Print the help for this object and all sub-objects that know how to print help.
+    """
+    description = short_docstring(trim_docstring(obj.__class__.__doc__))
+    this_pars = None
+    print(f"{obj.__class__.__name__}*\n" "--------\n" f"{description}")
+
+    print_functions(obj)
+
+    if hasattr(obj, "pars"):
+        print("Parameters:")
+        obj.pars.print(owner_pars)
+        print()  # newline
+        this_pars = obj.pars
+
+    for k, v in obj.__dict__.items():
+        if not k.startswith("_"):
+            if hasattr(v, "help") and callable(v.help):
+                v.help(this_pars)
+            elif hasattr(v, "__len__"):
+                for li in v:
+                    if hasattr(li, "help") and callable(li.help):
+                        li.help(this_pars)
+
+
+def print_functions(obj):
+    """
+    Print the functions in this object.
+    Ignores private methods and help().
+    If object doesn't have any public methods
+    will print nothing.
+    """
+    func_list = []
+    for name in dir(obj):
+        if name.startswith("_") or name == "help":
+            continue
+        func = getattr(obj, name)
+        if callable(func):
+            func_list.append(func)
+
+    if len(func_list) > 0:
+        print("Methods:")
+        for func in func_list:
+            print(f"  {func.__name__}{signature(func)}")
+        print()

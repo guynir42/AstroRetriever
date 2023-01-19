@@ -11,7 +11,7 @@ from src.dataset import Lightcurve
 from src.database import Session
 from src.source import Source
 from src.properties import Properties
-from src.utils import help_with_class
+from src.utils import help_with_class, help_with_object
 from src.quality import QualityChecker
 from src.finder import Finder
 from src.simulator import Simulator
@@ -170,14 +170,14 @@ class Analysis:
 
     """
 
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(
-            cls, ParsAnalysis, [QualityChecker, Finder, Simulator, Histogram]
-        )
+        if isinstance(self, Analysis):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Analysis:
+            help_with_class(Analysis, ParsAnalysis)
 
     def __init__(self, **kwargs):
         quality_kwargs = kwargs.pop("quality_kwargs", {})

@@ -17,7 +17,7 @@ import pandas as pd
 from astropy.io import fits
 
 from src.parameters import Parameters
-from src.utils import help_with_class
+from src.utils import help_with_class, help_with_object
 
 SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_\./\\\\]+|\.\.")
 
@@ -189,12 +189,14 @@ class ParsCatalog(Parameters):
 
 
 class Catalog:
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsCatalog)
+        if isinstance(self, Catalog):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Catalog:
+            help_with_class(Catalog, ParsCatalog)
 
     def __init__(self, **kwargs):
         self.pars = ParsCatalog(**kwargs)

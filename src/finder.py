@@ -5,7 +5,7 @@ from src.parameters import Parameters
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.detection import Detection
-from src.utils import help_with_class
+from src.utils import help_with_class, help_with_object
 
 
 class ParsFinder(Parameters):
@@ -89,12 +89,14 @@ class Finder:
 
     """
 
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsFinder)
+        if isinstance(self, Finder):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Finder:
+            help_with_class(Finder, ParsFinder)
 
     def __init__(self, **kwargs):
         self.pars = ParsFinder(**kwargs)

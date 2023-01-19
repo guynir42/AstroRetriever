@@ -609,21 +609,38 @@ class Parameters:
             if k in self and k not in inputs:
                 inputs[k] = self[k]
 
-    def print(self):
+    def print(self, owner_pars=None):
         """
         Print the parameters.
+
+        If given an owner_pars input,
+        will not print any of the default
+        parameters if their values are the same
+        in the owner_pars object.
         """
+        if owner_pars is not None and not isinstance(owner_pars, Parameters):
+            raise ValueError("owner_pars must be a Parameters object.")
+
         names = []
         desc = []
+        defaults = []
         for name in self.__dict__:
             if name.startswith("_"):
                 continue
+            if owner_pars is not None:
+                if name in propagated_keys and self[name] == owner_pars[name]:
+                    defaults.append(name)
+                    continue
+
             desc.append(self.get_par_string(name))
             names.append(name)
 
-        max_length = max(len(n) for n in names)
-        for n, d in zip(names, desc):
-            print(f"{n:>{max_length}}{d}")
+        if len(defaults) > 0:
+            print(f" Propagated pars: {', '.join(defaults)}")
+        if len(names) > 0:
+            max_length = max(len(n) for n in names)
+            for n, d in zip(names, desc):
+                print(f" {n:>{max_length}}{d}")
 
     def to_dict(self, hidden=False):
         """

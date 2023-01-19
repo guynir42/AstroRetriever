@@ -1,5 +1,5 @@
 from src.parameters import Parameters
-from src.utils import help_with_class
+from src.utils import help_with_class, help_with_object
 
 
 class ParsSimulator(Parameters):
@@ -14,12 +14,14 @@ class ParsSimulator(Parameters):
 
 
 class Simulator:
-    @classmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsSimulator)
+        if isinstance(self, Simulator):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Simulator:
+            help_with_class(Simulator, ParsSimulator)
 
     def __init__(self, **kwargs):
-        pass
+        self.pars = ParsSimulator(**kwargs)

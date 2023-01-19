@@ -23,7 +23,7 @@ from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 from src.catalog import Catalog
 
-from src.utils import help_with_class
+from src.utils import help_with_class, help_with_object
 
 lock = threading.Lock()
 
@@ -217,12 +217,14 @@ class VirtualObservatory:
     save the results for later, and so on.
     """
 
-    @staticmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsObservatory)
+        if isinstance(self, VirtualObservatory):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Catalog:
+            help_with_class(VirtualObservatory, ParsObservatory)
 
     def __init__(self, name=None):
         """
@@ -1193,12 +1195,14 @@ class VirtualDemoObs(VirtualObservatory):
     real VirtualObservatory sub classes, e.g., VirtualZTF.
     """
 
-    @staticmethod
-    def help(cls):
+    def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
         """
-        help_with_class(cls, ParsDemoObs)
+        if isinstance(self, VirtualDemoObs):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualDemoObs:
+            help_with_class(VirtualDemoObs, ParsDemoObs)
 
     def __init__(self, **kwargs):
         """
