@@ -262,7 +262,7 @@ class Project:
             subclasses = [Catalog, Analysis]
 
             for obs_name in ParsObservatory.allowed_obs_names:
-                _, class_name, pars_name = cls.get_observatory_classes(obs_name)
+                _, class_name, pars_name = cls._get_observatory_classes(obs_name)
                 subclasses.append(class_name)
 
             help_with_class(
@@ -299,7 +299,7 @@ class Project:
         self.pars.add_defaults_to_dict(catalog_kwargs)
         self.pars.add_defaults_to_dict(analysis_kwargs)
 
-        # filled by setup_output_folder at runtime:
+        # filled by _setup_output_folder at runtime:
         self.output_folder = None
         self.cfg_hash = None  # hash of the config file (for version control)
 
@@ -328,7 +328,7 @@ class Project:
         self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
             self.observatories.append(
-                self.make_observatory(
+                self._make_observatory(
                     name=obs,
                     inputs=obs_kwargs,
                 )
@@ -340,7 +340,7 @@ class Project:
         self.analysis.observatories = self.observatories
 
     @staticmethod
-    def get_observatory_classes(name):
+    def _get_observatory_classes(name):
         """
         Translate the name of the observatory
         into the module name, the class name
@@ -374,7 +374,7 @@ class Project:
         pars_class = getattr(module, pars_name)
         return module, obs_class, pars_class
 
-    def make_observatory(self, name, inputs):
+    def _make_observatory(self, name, inputs):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -409,7 +409,7 @@ class Project:
 
         """
 
-        module, obs_class, _ = self.get_observatory_classes(name)
+        module, obs_class, _ = self._get_observatory_classes(name)
 
         if not isinstance(inputs, dict):
             raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
@@ -487,7 +487,7 @@ class Project:
 
         """
 
-        self.save_config()
+        self._save_config()
 
         source_names = self.catalog.names
         types = self.pars.data_types
@@ -614,7 +614,7 @@ class Project:
                 session.add(source)
                 session.commit()
 
-    def save_config(self):
+    def _save_config(self):
         """
         Save the configuration file to disk.
         This is the point where the project
@@ -648,13 +648,13 @@ class Project:
         else:
             self.cfg_hash = ""
 
-        self.setup_output_folder()
+        self._setup_output_folder()
 
         # write the config file to disk
         with open(os.path.join(self.output_folder, "config.yaml"), "w") as f:
             yaml.dump(cfg_dict, f, sort_keys=False)
 
-    def setup_output_folder(self):
+    def _setup_output_folder(self):
         """
         Create a folder for the output of this project.
         This will include all the reduced and analyzed data,

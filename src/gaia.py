@@ -4,15 +4,14 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.time import Time
 from astroquery.gaia import GaiaClass
-
-from src.catalog import Catalog
+from src.utils import ra2deg, dec2deg
 
 # TODO: move this into a more reasonable place, then remove this file?
 def cone_search(
     ra, dec, radius=2.0, num_matches=1, limmag=20.5, catalog="gaiaedr3.gaia_source"
 ):
-    ra = Catalog.ra2deg(ra)
-    dec = Catalog.dec2deg(dec)
+    ra = ra2deg(ra)
+    dec = dec2deg(dec)
 
     target = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     df = (

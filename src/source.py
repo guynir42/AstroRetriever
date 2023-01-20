@@ -14,12 +14,13 @@ import healpix_alchemy as ha
 from astropy import units as u
 
 from src.database import Base, Session, CloseSession, engine
-from src.catalog import Catalog
+
 from src.parameters import (
     allowed_data_types,
     convert_data_type,
     get_class_from_data_type,
 )
+from src.utils import ra2sex, dec2sex
 
 # matplotlib.use("qt5agg")
 
@@ -221,9 +222,9 @@ class Source(Base, conesearch_alchemy.Point):
         mag = f"{self.mag:.2f}" if self.mag is not None else "None"
         string = f'Source(name="{self.name}"'
         if self.ra is not None:
-            string += f", ra={Catalog.ra2sex(self.ra)}"
+            string += f", ra={ra2sex(self.ra)}"
         if self.dec is not None:
-            string += f", dec={Catalog.dec2sex(self.dec)}"
+            string += f", dec={dec2sex(self.dec)}"
         string += f', mag= {mag}, project="{self.project}"'
         string += f", datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
 

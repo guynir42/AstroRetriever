@@ -232,7 +232,7 @@ class Analysis:
         if isinstance(sources, Source):
             sources = [sources]
 
-        self.load_histograms()
+        self._load_histograms()
 
         batch_detections = []
         for source in sources:
@@ -249,7 +249,7 @@ class Analysis:
                 continue  # skip sources without data
 
             # what data types go into the analysis?
-            analysis_name = "analyze_" + "_and_".join(self.pars.data_types)
+            analysis_name = "_analyze_" + "_and_".join(self.pars.data_types)
             analysis_func = getattr(self, analysis_name, None)
             if analysis_func is None or not callable(analysis_func):
                 raise ValueError(
@@ -284,7 +284,7 @@ class Analysis:
             with Session() as session:
                 try:  # if anything fails, must rollback all
                     if self.pars.save_histograms:
-                        self.save_histograms(temp=True)
+                        self._save_histograms(temp=True)
 
                     for source in sources:
                         session.add(source)
@@ -309,9 +309,9 @@ class Analysis:
 
                     # if all the file saving and DB interactions work,
                     # then we can commit the histograms (rename temp files)
-                    self.commit_histograms()
+                    self._commit_histograms()
                 except Exception:
-                    self.rollback_histograms()
+                    self._rollback_histograms()
                     session.rollback()
                     for source in sources:
                         for dt in self.pars.data_types:
@@ -326,7 +326,7 @@ class Analysis:
 
                     raise  # finally re-raise the exception
 
-    def analyze_photometry(self, source):
+    def _analyze_photometry(self, source):
         """
         Run the analysis on a list of processed Lightcurve
         objects associated with the given source.
@@ -361,36 +361,36 @@ class Analysis:
         # remove existing lightcurves and make copies of the
         # "reduced_lightcurves" to use as "processed_lightcurves"
         source.processed_lightcurves = lcs
-        self.check_lightcurves(lcs, source)
-        self.process_lightcurves(lcs, source)
-        new_det = self.detect_in_lightcurves(lcs, source)
+        self._check_lightcurves(lcs, source)
+        self._process_lightcurves(lcs, source)
+        new_det = self._detect_in_lightcurves(lcs, source)
         # make sure to mark these as processed
         [setattr(lc, "was_processed", True) for lc in lcs]
 
-        self.calc_props_from_lightcurves(lcs, source)
+        self._calc_props_from_lightcurves(lcs, source)
 
-        self.update_histograms(lcs, source)
+        self._update_histograms(lcs, source)
 
         sim_det = []
         source.simulated_lightcurves = []  # get rid of the old ones
-        for i in range(self.get_num_injections()):
+        for i in range(self._get_num_injections()):
             # add simulated events into the lightcurves
-            sim_lcs, sim_pars = self.inject_to_lightcurves(lcs, source, index=i)
+            sim_lcs, sim_pars = self._inject_to_lightcurves(lcs, source, index=i)
             [setattr(lc, "was_simulated", True) for lc in sim_lcs]
 
             # re-run quality and finder on the simulated data
-            self.check_lightcurves(sim_lcs, source, sim_pars)
-            self.process_lightcurves(sim_lcs, source, sim_pars)
+            self._check_lightcurves(sim_lcs, source, sim_pars)
+            self._process_lightcurves(sim_lcs, source, sim_pars)
 
             # find detections in the simulated data
-            sim_det += self.detect_in_lightcurves(sim_lcs, source, sim_pars)
+            sim_det += self._detect_in_lightcurves(sim_lcs, source, sim_pars)
 
         det = new_det + sim_det
         source.detections = det
 
         return det
 
-    def check_lightcurves(self, lightcurves, source, sim=None):
+    def _check_lightcurves(self, lightcurves, source, sim=None):
         """
         Apply the QualityChecker object to the lightcurves,
         and add the results into columns in the lightcurve
@@ -420,7 +420,7 @@ class Analysis:
         """
         self.checker.check(lightcurves, source, sim)
 
-    def process_lightcurves(self, lightcurves, source, sim=None):
+    def _process_lightcurves(self, lightcurves, source, sim=None):
         """
         Apply the Finder object to the lightcurves,
         and add the results into columns in the lightcurve
@@ -449,7 +449,7 @@ class Analysis:
         """
         self.finder.process(lightcurves, source, sim)
 
-    def detect_in_lightcurves(self, lightcurves, source, sim=None):
+    def _detect_in_lightcurves(self, lightcurves, source, sim=None):
         """
         Apply the Finder object(s) associated with this
         Analysis, to produce Detection objects based
@@ -483,7 +483,7 @@ class Analysis:
         """
         return self.finder.detect(lightcurves, source, sim)
 
-    def calc_props_from_lightcurves(self, lightcurves, source):
+    def _calc_props_from_lightcurves(self, lightcurves, source):
         """
         Calculate some Properties on this source
         based on the lightcurves given.
@@ -505,7 +505,7 @@ class Analysis:
 
         source.properties = Properties(has_data=True, project=self.pars.project)
 
-    def inject_to_lightcurves(self, lightcurves, source, index=0):
+    def _inject_to_lightcurves(self, lightcurves, source, index=0):
         """
         Inject a fake source/event into the data.
         The fake source is added to the lightcurves,
@@ -540,7 +540,7 @@ class Analysis:
 
         return sim_lcs, sim_pars
 
-    def get_num_injections(self):
+    def _get_num_injections(self):
         """
         Get a number of injections that should
         be made into each source.
@@ -555,10 +555,10 @@ class Analysis:
         """
         Reset the histograms to zero arrays.
         """
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             hist.initialize()
 
-    def update_histograms(self, lightcurves, source):
+    def _update_histograms(self, lightcurves, source):
         """
         Go over the histograms and update them.
         There are a few histograms that need to be updated.
@@ -591,27 +591,27 @@ class Analysis:
 
         """
 
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             for lc in lightcurves:
                 hist.add_data(source, lc.data)
 
-    def get_all_histograms(self):
+    def _get_all_histograms(self):
         """
         Get a list of all histograms that are
         associated with this Analysis object.
         """
         return [obj for obj in self.__dict__.values() if isinstance(obj, Histogram)]
 
-    def load_histograms(self):
+    def _load_histograms(self):
         """
         Load the histograms from file.
         This is used to continue a previous run,
         or to use the histograms to make plots.
         """
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             hist.load()
 
-    def save_histograms(self, temp=False):
+    def _save_histograms(self, temp=False):
         """
         Save the histograms to a (temporary) file.
         If using temp=False, will simply save all the
@@ -619,23 +619,23 @@ class Analysis:
         If using temp=True, will save the histograms
         into temporary files (appended with ".temp");
         To make sure the temp file replaces the old file,
-        must also call commit_histograms().
+        must also call _commit_histograms().
         """
         suffix = "temp" if temp else None
 
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             hist.save(suffix=suffix)
 
-    def rollback_histograms(self):
+    def _rollback_histograms(self):
         """
         Roll back the histograms saved to the temporary files.
         This is called in case there was a problem
         saving or committing any data.
         """
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             hist.remove_data_from_file(suffix="temp")
 
-    def commit_histograms(self):
+    def _commit_histograms(self):
         """
         Commit the histograms saved to the temporary files.
         This is called after the histograms have been saved
@@ -643,7 +643,7 @@ class Analysis:
         there were no problems.
         Will also create backup files for the histograms.
         """
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             fullname = os.path.join(hist.output_folder, f"histograms_{hist.name}.nc")
             if os.path.exists(fullname):
                 os.rename(fullname, fullname + ".backup")
@@ -657,7 +657,7 @@ class Analysis:
         Use remove_backup=True to also delete the backup files.
         """
 
-        for hist in self.get_all_histograms():
+        for hist in self._get_all_histograms():
             hist.remove_data_from_file()
             hist.remove_data_from_file(suffix="temp")
             if remove_backup:

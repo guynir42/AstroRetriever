@@ -12,6 +12,13 @@ class ParsSimulator(Parameters):
 
         self.load_then_update(kwargs)
 
+    @classmethod
+    def get_default_cfg_key(cls):
+        """
+        Get the default key to use when loading a config file.
+        """
+        return "simulator"
+
 
 class Simulator:
     def help(self=None, owner_pars=None):
