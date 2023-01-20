@@ -250,27 +250,6 @@ class Project:
     on the data from each observatory.
     """
 
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-
-        if isinstance(self, Project):
-            help_with_object(self, owner_pars)
-        elif self is None or self == Project:
-            cls = Project
-            subclasses = [Catalog, Analysis]
-
-            for obs_name in ParsObservatory.allowed_obs_names:
-                _, class_name, pars_name = cls._get_observatory_classes(obs_name)
-                subclasses.append(class_name)
-
-            help_with_class(
-                cls,
-                ParsProject,
-                subclasses,
-            )
-
     def __init__(self, name, **kwargs):
         """
         Create a new Project object.
@@ -680,6 +659,27 @@ class Project:
         # create the output folder
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+
+        if isinstance(self, Project):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Project:
+            cls = Project
+            subclasses = [Catalog, Analysis]
+
+            for obs_name in ParsObservatory.allowed_obs_names:
+                _, class_name, pars_name = cls._get_observatory_classes(obs_name)
+                subclasses.append(class_name)
+
+            help_with_class(
+                cls,
+                ParsProject,
+                subclasses,
+            )
 
 
 class NamedList(list):

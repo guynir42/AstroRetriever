@@ -123,6 +123,8 @@ class ParsAnalysis(Parameters):
 
 class Analysis:
     """
+    Run analysis for individual sources: Search for strong peaks, disqualify bad data, etc.
+
     This is a pipeline object that accepts a Source object
     (e.g., with some lightcurves) and performs analysis on it.
     Use pars.data_types to choose which kind of analysis
@@ -169,15 +171,6 @@ class Analysis:
     counts into the histogram.
 
     """
-
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, Analysis):
-            help_with_object(self, owner_pars)
-        elif self is None or self == Analysis:
-            help_with_class(Analysis, ParsAnalysis)
 
     def __init__(self, **kwargs):
         quality_kwargs = kwargs.pop("quality_kwargs", {})
@@ -662,3 +655,12 @@ class Analysis:
             hist.remove_data_from_file(suffix="temp")
             if remove_backup:
                 hist.remove_data_from_file(suffix="backup")
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, Analysis):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Analysis:
+            help_with_class(Analysis, ParsAnalysis)

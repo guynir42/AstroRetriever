@@ -190,14 +190,29 @@ class ParsCatalog(Parameters):
 
 
 class Catalog:
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, Catalog):
-            help_with_object(self, owner_pars)
-        elif self is None or self == Catalog:
-            help_with_class(Catalog, ParsCatalog)
+    """
+    Container for a table with sources and their magnitudes and coordinates.
+
+    The catalog object can be used to load or even download info on
+    some assortment of astronomical sources. For example, choose
+    default="WD" to download the white dwarf catalog from Fusillo et al 2021.
+
+    If not using the default, please make sure to specify the filename
+    and/or URL to download the catalog from.
+    Other parameters include names of the columns in the raw catalog data,
+    and other definitions useful for finding the sources in the sky.
+
+    The loaded catalog will exist, as a pandas dataframe or numpy named-array,
+    inside the attribute "data".
+
+    Some methods exist to translate a row from the raw data into usable
+    information for e.g., downloading sources.
+
+    A complete list of default options:
+    -"test": make a small catalog with random sources
+    -"WD": load the WD catalog from Fusillo et al 2021
+
+    """
 
     def __init__(self, **kwargs):
         self.pars = ParsCatalog(**kwargs)
@@ -745,6 +760,15 @@ class Catalog:
             pass  # TODO: need to finish this
         elif fmt == "h5":
             df.to_hdf(filename, key="catalog", mode="w")
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, Catalog):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Catalog:
+            help_with_class(Catalog, ParsCatalog)
 
 
 if __name__ == "__main__":

@@ -37,14 +37,21 @@ class ParsQuality(Parameters):
 
 
 class QualityChecker:
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, QualityChecker):
-            help_with_object(self, owner_pars)
-        elif self is None or self == QualityChecker:
-            help_with_class(QualityChecker, ParsQuality)
+    """
+    Applies data quality checks to timeseries data and flags bad data points.
+
+    The quality checks are hard coded into this class,
+    but should be overriden when using more complicated analysis.
+    The exact threshold for each parameter cut is saved in the
+    parameters object, and can be tweaked by the config file or
+    user input to the constructor.
+
+    Epochs with bad data are flagged and not used in
+    subsequent event detection, and the values of each
+    quality check are summed into a histograms object
+    on the analysis object (inside "quality_values").
+
+    """
 
     def __init__(self, **kwargs):
         self.pars = ParsQuality(**kwargs)
@@ -117,3 +124,12 @@ class QualityChecker:
         or single sided (False).
         """
         return {"offset": True}
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, QualityChecker):
+            help_with_object(self, owner_pars)
+        elif self is None or self == QualityChecker:
+            help_with_class(QualityChecker, ParsQuality)

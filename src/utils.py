@@ -273,3 +273,33 @@ def date2jd(date):
         t = t.astimezone(timezone.utc)
 
     return Time(t).jd
+
+
+def unit_convert_bytes(units):
+    """
+    Convert a number of bytes into another unit.
+    Can choose "kb", "mb", or "gb", which will return
+    the appropriate number of bytes in that unit.
+    If "bytes" or any other string, will return 1,
+    i.e., no conversion.
+    """
+    if units.endswith("s"):
+        units = units[:-1]
+
+    return {
+        "byte": 1,
+        "kb": 1024,
+        "mb": 1024**2,
+        "gb": 1024**3,
+    }.get(units.lower(), 1)
+
+
+def is_scalar(value):
+    """
+    Check if a value is a scalar (string or not has __len__).
+    Returns True if a scalar, False if not.
+    """
+    if isinstance(value, str) or not hasattr(value, "__len__"):
+        return True
+    else:
+        return False
