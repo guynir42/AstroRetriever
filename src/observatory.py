@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import threading
 import concurrent.futures
-from astropy.time import Time
 
 import sqlalchemy as sa
 from src.database import Session
@@ -22,7 +21,6 @@ from src.parameters import (
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 from src.catalog import Catalog
-
 from src.utils import help_with_class, help_with_object
 
 lock = threading.Lock()
@@ -161,9 +159,9 @@ class ParsObservatory(Parameters):
         # subclasses need to add these lines:
         # _enforce_no_new_attrs = True  # lock adding wrong attributes
         # config = load_then_update()  # load config file and update parameters
-        # apply_specific_pars(config)  # apply specific parameters for this observatory
+        # _apply_specific_pars(config)  # apply specific parameters for this observatory
 
-    def apply_specific_pars(self, inputs):
+    def _apply_specific_pars(self, inputs):
         """
         Check if parameters were given for a
         specific observatory. For example if
@@ -199,7 +197,7 @@ class ParsObservatory(Parameters):
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -216,15 +214,6 @@ class VirtualObservatory:
     some real observatory, run analysis on it,
     save the results for later, and so on.
     """
-
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, VirtualObservatory):
-            help_with_object(self, owner_pars)
-        elif self is None or self == Catalog:
-            help_with_class(VirtualObservatory, ParsObservatory)
 
     def __init__(self, name=None):
         """
@@ -257,7 +246,7 @@ class VirtualObservatory:
 
         if "credentials" in self.pars:
             # if credentials contains a filename and key:
-            self.load_passwords(**self.pars.credentials)
+            self._load_passwords(**self.pars.credentials)
 
             # if credentials (username, password, etc.)
             # are given by the config/user inputs
@@ -290,7 +279,7 @@ class VirtualObservatory:
 
         self._catalog = catalog
 
-    def load_passwords(self, filename=None, key=None, **_):
+    def _load_passwords(self, filename=None, key=None, **_):
         """
         Load a YAML file with usernames, passwords, etc.
 
@@ -428,7 +417,7 @@ class VirtualObservatory:
             num_threads = min(self.pars.num_threads_download, stop - i)
 
             if num_threads > 1:
-                sources = self.fetch_data_asynchronous(
+                sources = self._fetch_data_asynchronous(
                     i, i + num_threads, save, fetch_args, dataset_args
                 )
             else:  # single threaded execution
@@ -458,7 +447,7 @@ class VirtualObservatory:
 
         return num_loaded
 
-    def fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
+    def _fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
         """
         Get data for a few sources, either by loading them
         from disk or by fetching the data online from
@@ -810,7 +799,7 @@ class VirtualObservatory:
                         if num_sources and j >= num_sources:
                             break
                         data = store[k]
-                        cat_id = self.find_dataset_identifier(data, k)
+                        cat_id = self._find_dataset_identifier(data, k)
                         data_type = (
                             "photometry"  # TODO: what about multiple data types??
                         )
@@ -822,7 +811,7 @@ class VirtualObservatory:
         if self.pars.verbose:
             print("Done populating sources.")
 
-    def find_dataset_identifier(self, data, key):
+    def _find_dataset_identifier(self, data, key):
         """
         Find the identifier that connects the data
         loaded from file with the catalog row and
@@ -1039,7 +1028,7 @@ class VirtualObservatory:
             kwargs = parameters
 
         # arguments to be passed into the new dataset constructors
-        init_kwargs = self.make_init_kwargs(dataset)
+        init_kwargs = self._make_init_kwargs(dataset)
 
         # choose which kind of reduction to do
         if output_type is None:
@@ -1088,7 +1077,7 @@ class VirtualObservatory:
 
         return new_datasets
 
-    def make_init_kwargs(self, dataset):
+    def _make_init_kwargs(self, dataset):
         """
         Make a dictionary of arguments to pass to the
         constructor of a new (reduced) dataset.
@@ -1131,6 +1120,15 @@ class VirtualObservatory:
 
         return init_kwargs
 
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualObservatory):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualObservatory:
+            help_with_class(VirtualObservatory, ParsObservatory)
+
 
 class ParsDemoObs(ParsObservatory):
 
@@ -1172,7 +1170,7 @@ class ParsDemoObs(ParsObservatory):
         config = self.load_then_update(kwargs)
 
         # apply parameters specific to this class
-        self.apply_specific_pars(config)
+        self._apply_specific_pars(config)
 
     def __setattr__(self, key, value):
         """
@@ -1194,15 +1192,6 @@ class VirtualDemoObs(VirtualObservatory):
     To get actual data from real observations, use the
     real VirtualObservatory sub classes, e.g., VirtualZTF.
     """
-
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, VirtualDemoObs):
-            help_with_object(self, owner_pars)
-        elif self is None or self == VirtualDemoObs:
-            help_with_class(VirtualDemoObs, ParsDemoObs)
 
     def __init__(self, **kwargs):
         """
@@ -1408,6 +1397,15 @@ class VirtualDemoObs(VirtualObservatory):
                 new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualDemoObs):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualDemoObs:
+            help_with_class(VirtualDemoObs, ParsDemoObs)
 
 
 if __name__ == "__main__":

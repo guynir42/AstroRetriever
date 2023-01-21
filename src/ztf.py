@@ -73,22 +73,13 @@ class ParsObsZTF(ParsObservatory):
         config = self.load_then_update(kwargs)
 
         # apply parameters specific to this class
-        self.apply_specific_pars(config)
+        self._apply_specific_pars(config)
 
 
 class VirtualZTF(VirtualObservatory):
     """
     A virtual observatory sub class for getting ZTF data.
     """
-
-    def help(self=None, owner_pars=None):
-        """
-        Print the help for this object and objects contained in it.
-        """
-        if isinstance(self, VirtualZTF):
-            help_with_object(self, owner_pars)
-        elif self is None or self == VirtualZTF:
-            help_with_class(VirtualZTF, ParsObsZTF)
 
     def __init__(self, **kwargs):
         """
@@ -365,6 +356,15 @@ class VirtualZTF(VirtualObservatory):
             )
 
         return username, password
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualZTF):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualZTF:
+            help_with_class(VirtualZTF, ParsObsZTF)
 
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):

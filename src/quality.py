@@ -29,7 +29,7 @@ class ParsQuality(Parameters):
         self.load_then_update(kwargs)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """

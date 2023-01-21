@@ -83,7 +83,7 @@ class ParsProject(Parameters):
 
         self.load_then_update(kwargs)
 
-    def verify_observatory_names(self, names):
+    def _verify_observatory_names(self, names):
         """
         Check that the observatory names are a unique set of strings.
 
@@ -117,13 +117,13 @@ class ParsProject(Parameters):
         if key in ("vc", "version_control"):
             key = "version_control"
         if key == "obs_names":
-            self.verify_observatory_names(value)
+            self._verify_observatory_names(value)
             return
 
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -148,13 +148,13 @@ class ParsProject(Parameters):
             List of Parameters objects.
         """
         pars_list = []
-        ParsProject.update_pars_list(project_obj, pars_list, verbose=verbose)
-        ParsProject.order_pars_list(pars_list, verbose=verbose)
+        ParsProject._update_pars_list(project_obj, pars_list, verbose=verbose)
+        ParsProject._order_pars_list(pars_list, verbose=verbose)
 
         return pars_list
 
     @staticmethod
-    def update_pars_list(obj, pars_list, object_list=None, verbose=False):
+    def _update_pars_list(obj, pars_list, object_list=None, verbose=False):
         """
         Recursively get the parameter objects from
         all sub-objects of the given object.
@@ -207,19 +207,19 @@ class ParsProject(Parameters):
                 if verbose:
                     print(f"loading an iterable: {k}")
                 for item in v:
-                    ParsProject.update_pars_list(item, pars_list, object_list)
+                    ParsProject._update_pars_list(item, pars_list, object_list)
             elif isinstance(v, dict):
                 if verbose:
                     print(f"loading a dict: {k}")
                 for item in v.values():
-                    ParsProject.update_pars_list(item, pars_list, object_list)
+                    ParsProject._update_pars_list(item, pars_list, object_list)
             else:
                 if verbose:
                     print(f"loading a single object: {k}")
-                ParsProject.update_pars_list(v, pars_list, object_list)
+                ParsProject._update_pars_list(v, pars_list, object_list)
 
     @staticmethod
-    def order_pars_list(pars_list, verbose=False):
+    def _order_pars_list(pars_list, verbose=False):
         """
         Reorder a list of Parameter objects such that
         ParsProject is first, then all observatories

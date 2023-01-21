@@ -6,6 +6,7 @@ import pandas as pd
 import xarray as xr
 
 from src.parameters import Parameters
+from src.source import Source
 from src.utils import help_with_class, help_with_object, unit_convert_bytes, is_scalar
 
 
@@ -105,7 +106,7 @@ class ParsHistogram(Parameters):
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -513,7 +514,7 @@ class Histogram:
                     values = getattr(obj, axis)
 
                 if values is not None:
-                    if not self.is_scalar(values):
+                    if not is_scalar(values):
                         # an array, but need to check if all are the same
                         if len(np.unique(values)) == 1:
                             input_data[axis] = values[0]
@@ -583,7 +584,7 @@ class Histogram:
             indices = {}
             array_values = {}
             for ax in da.dims:
-                if self.is_scalar(input_data[ax]):
+                if is_scalar(input_data[ax]):
                     indices[ax] = self._get_index(ax, input_data[ax])
                 else:
                     array_values[ax] = input_data[ax]
