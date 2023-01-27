@@ -62,7 +62,6 @@ def test_tess_download(tess_project, wd_cat):
             assert len(df) > 0
             assert np.all(df["mjd"] > 0)
             assert np.all(df["mag"] > 0)
-            # assert all([x in ["zg", "zr", "zi"] for x in df["filtercode"]])
 
             metadata = store.get_storer(key).attrs["altdata"]
             assert isinstance(metadata, dict)
