@@ -21,7 +21,7 @@ from astropy.io import fits
 
 from src.parameters import Parameters
 from src.source import Source
-from src.database import Session
+from src.database import Session, CloseSession
 from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
 
 
@@ -419,16 +419,23 @@ class Catalog:
 
         return c
 
-    def get_all_sources(self):
+    def get_all_sources(self, session=None):
         """
         Get all sources in the catalog that have a
         corresponding row in the database.
 
         """
         # TODO: add cfg_hash to this
-        stmt = sa.select(Source).where(Source.id.in_(self.data["id"]))
-        with Session() as session:
-            sources = session.scalars(stmt).all()
+        names = [str(name) for name in self.data[self.pars.name_column]]
+
+        stmt = sa.select(Source).where(Source.name.in_(names))
+
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+        sources = session.scalars(stmt).all()
+
         return sources
 
     @staticmethod

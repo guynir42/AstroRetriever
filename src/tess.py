@@ -64,7 +64,7 @@ class ParsObsTESS(ParsObservatory):
         config = self.load_then_update(kwargs)
 
         # apply parameters specific to this class
-        self.apply_specific_pars(config)
+        self._apply_specific_pars(config)
 
 
 class VirtualTESS(VirtualObservatory):

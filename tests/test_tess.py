@@ -28,7 +28,7 @@ def test_tess_download(tess_project, wd_cat):
     c = wd_cat.make_smaller_catalog(idx)
 
     with Session() as session:
-        sources = c.get_all_sources()
+        sources = c.get_all_sources(session)
         for s in sources:
             session.delete(s)
         session.commit()
@@ -72,11 +72,8 @@ def test_tess_download(tess_project, wd_cat):
 
                 metadata = store.get_storer(key).attrs["altdata"]
                 assert isinstance(metadata, dict)
-
-                for k, v in s.cat_row.items():
-                    assert k in metadata
-                    assert metadata[k] == v
-
+                assert "cat_row" in metadata
+                assert metadata["cat_row"] == s.cat_row
                 assert "TICID" in metadata
                 assert abs(metadata["source mag"] - s.cat_row["mag"]) < 1
                 assert len(metadata["sectors"]) >= 1
