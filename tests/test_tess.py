@@ -24,7 +24,7 @@ def test_tess_download(tess_project, wd_cat):
     assert isinstance(tess, VirtualTESS)
 
     # get a small catalog with only 3 bright sources above the equator
-    idx = (wd_cat.data["phot_g_mean_mag"] < 10)
+    idx = wd_cat.data["phot_g_mean_mag"] < 10
     idx = np.where(idx)[0][:3]
     c = wd_cat.make_smaller_catalog(idx)
 
@@ -48,6 +48,7 @@ def test_tess_download(tess_project, wd_cat):
     filenames = []
 
     assert len(tess.sources) == 3
+    num_sources_with_data = 0
     for s in tess.sources:
         assert len(s.raw_photometry) == 1
         p = s.raw_photometry[0]
@@ -55,17 +56,30 @@ def test_tess_download(tess_project, wd_cat):
         assert os.path.exists(p.get_fullname())
         filenames.append(p.get_fullname())
 
-        with pd.HDFStore(p.get_fullname()) as store:
-            assert len(store.keys()) == 1
-            key = store.keys()[0]
-            df = store[key]
-            assert len(df) > 0
-            assert np.all(df["mjd"] > 0)
-            assert np.all(df["mag"] > 0)
+        if len(p.data):
+            with pd.HDFStore(p.get_fullname()) as store:
+                assert len(store.keys()) == 1
+                key = store.keys()[0]
+                df = store[key]
+                assert len(df) > 0
+                assert np.all(df["BJD - 2457000, days"] > 0)
+                assert np.all(df.loc[~np.isnan(df["SAP_FLUX"]), "SAP_FLUX"] > 0)
 
-            metadata = store.get_storer(key).attrs["altdata"]
-            assert isinstance(metadata, dict)
-            assert s.cat_row == metadata
+                metadata = store.get_storer(key).attrs["altdata"]
+                assert isinstance(metadata, dict)
+
+                for k, v in s.cat_row.items():
+                    assert k in metadata
+                    assert metadata[k] == v
+
+                assert "TICID" in metadata
+                assert abs(metadata["source mag"] - s.cat_row["mag"]) < 1
+                assert len(metadata["sectors"]) >= 1
+                assert isinstance(metadata["aperture matrix"], list)
+
+                num_sources_with_data += 1
+
+        assert num_sources_with_data > 0
 
 
 def test_tess_reduction(tess_project, new_source):

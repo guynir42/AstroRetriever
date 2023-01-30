@@ -139,6 +139,11 @@ class VO_Base:
     )
 
     def keywords_to_columns(self, input_dict):
+        """
+        Read off any keywords that exist on this
+        object and apply them to self, while also
+        removing these keyword/values from the input dict.
+        """
         for k in list(input_dict.keys()):
             if hasattr(self, k):
                 setattr(self, k, input_dict.pop(k))

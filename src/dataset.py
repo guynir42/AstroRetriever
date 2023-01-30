@@ -256,6 +256,8 @@ class DatasetMixin:
             if hasattr(self, k):
                 setattr(self, k, kwargs.pop(k))
 
+        # defined on the base class
+        # pop out any kwargs that are attributes of self.
         self.keywords_to_columns(kwargs)
 
         additional_keywords = []
@@ -891,31 +893,36 @@ class DatasetMixin:
                 self.time_info["format"] = "mjd"
                 offset = get_time_offset(c)  # e.g., JD-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t + offset, format="jd", scale="utc"
+                    t - offset, format="jd", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: Time(
-                    t + offset, format="jd", scale="utc"
+                    t - offset, format="jd", scale="utc"
                 ).mjd
+                self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("mjd",):
                 self.time_info["format"] = "mjd"
                 offset = get_time_offset(c)  # e.g., MJD-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t + offset, format="mjd", scale="utc"
+                    t - offset, format="mjd", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: t + offset
+                self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("bjd",):
                 self.time_info["format"] = "bjd"
                 offset = get_time_offset(c)  # e.g., BJD-12345000
+                # TODO: must add some conversion between JD and BJD
+                #  e.g., https://mail.python.org/pipermail/astropy/2014-April/002844.html
                 self.time_info["to datetime"] = lambda t: Time(
-                    t + offset, format="bjd", scale="utc"
+                    t - offset, format="jd", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: Time(
-                    t + offset, format="bjd", scale="utc"
+                    t - offset, format="jd", scale="utc"
                 ).mjd
+                self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "datetime") and isinstance(
@@ -937,17 +944,19 @@ class DatasetMixin:
                     self.time_info["to mjd"] = lambda t: Time(
                         t, format="iso", scale="utc"
                     ).mjd
+                self.time_info["offset"] = 0
                 self.colmap["time"] = c
                 break
             elif simplify(c) == ("time", "unix", "timestamp"):
                 self.time_info["format"] = "unix"
                 offset = get_time_offset(c)  # e.g., Unix-12345000
                 self.time_info["to datetime"] = lambda t: Time(
-                    t + offset, format="unix", scale="utc"
+                    t - offset, format="unix", scale="utc"
                 ).datetime
                 self.time_info["to mjd"] = lambda t: Time(
-                    t + offset, format="unix", scale="utc"
+                    t - offset, format="unix", scale="utc"
                 ).mjd
+                self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
 
@@ -1132,13 +1141,18 @@ class DatasetMixin:
                 "pandas DataFrame, or xarray Dataset, "
                 f"not {type(data)}"
             )
-        self._data = data
 
-        self.shape = data.shape
-        self.number = len(data)  # for imaging data this would be different?
+        self._data = data
+        self.find_colmap()
+
+        # remove rows with nan timestamps
+        if len(self._data.index) > 0 and "time" in self.colmap:
+            self._data = data[~np.isnan(data[self.colmap["time"]])]
+
+        self.shape = self._data.shape
+        self.number = len(self._data)  # for imaging data this would be different?
         self.size = self.calc_size()
         self.format = self.guess_format()
-        self.find_colmap()
         self.calc_times()
 
     @property
