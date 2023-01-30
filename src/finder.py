@@ -5,11 +5,19 @@ from src.parameters import Parameters
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.detection import Detection
+from src.utils import help_with_class, help_with_object
 
 
 class ParsFinder(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
+
+        self.score_names = self.add_par(
+            "score_names",
+            ["snr"],
+            list,
+            "List of names of the scores used in this analysis",
+        )
 
         self.snr_threshold = self.add_par(
             "snr_threshold", 5, (float, int), "S/N threshold for detection"
@@ -37,13 +45,12 @@ class ParsFinder(Parameters):
             "Remove detections that did not pass quality cuts. ",
         )
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -52,9 +59,7 @@ class ParsFinder(Parameters):
 
 class Finder:
     """
-    A basic finder implementation, looks for
-    high S/N times in the input lightcurves
-    and produces detections.
+    Basic finder: looks for high S/N times in timeseries and produces detections.
 
     Also acts as a base class for more complicated
     finder objects. Accepts various data
@@ -93,7 +98,6 @@ class Finder:
         "snr" or "score" that can later be used to make
         detections.
 
-
         Parameters
         ----------
         lightcurves: a list of Lightcurve objects
@@ -115,7 +119,7 @@ class Finder:
         """
         for lc in lightcurves:
             # Add some scores to the lightcurve
-            noise = self.estimate_flux_noise(lc, source)
+            noise = self._estimate_flux_noise(lc, source)
             lc.data["snr"] = (lc.data["flux"] - lc.flux_mean_robust) / noise
             lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
 
@@ -172,7 +176,7 @@ class Finder:
                 mx = snr[idx]
                 if mx > self.pars.snr_threshold:
                     # Create a detection object
-                    det = self.make_detection(idx, lc, source, sim)
+                    det = self._make_detection(idx, lc, source, sim)
                     if det:
                         detections.append(det)
                 else:
@@ -180,7 +184,7 @@ class Finder:
 
         return detections
 
-    def estimate_flux_noise(self, lightcurve, source=None):
+    def _estimate_flux_noise(self, lightcurve, source=None):
         """
         Estimate the flux noise in the lightcurve.
         The base class behavior is to take the maximum
@@ -203,7 +207,7 @@ class Finder:
         """
         return np.maximum(lightcurve.data["fluxerr"], lightcurve.flux_rms_robust)
 
-    def get_event_indices(self, lightcurve):
+    def _get_event_indices(self, lightcurve):
         """
         Get an estimate for the time range of the event.
         This is generally returned as the time range
@@ -216,7 +220,6 @@ class Finder:
 
         For more complicated events, this will be a range
         of indices where the lightcurve is above the threshold.
-
 
         Parameters
         ----------
@@ -240,7 +243,7 @@ class Finder:
 
         return list(np.where(lightcurve.data["snr"].values > thresh)[0])
 
-    def make_detection(self, peak_idx, lightcurve, source, sim=None):
+    def _make_detection(self, peak_idx, lightcurve, source, sim=None):
         """
         Make a Detection object from a lightcurve.
 
@@ -262,7 +265,7 @@ class Finder:
         det: Detection object
             The detection object for this event.
         """
-        time_indices = self.get_event_indices(lightcurve)
+        time_indices = self._get_event_indices(lightcurve)
         if "qflag" in lightcurve.data.columns:
             qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
         else:
@@ -346,3 +349,12 @@ class Finder:
         # can add matched filter here
 
         return det
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, Finder):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Finder:
+            help_with_class(Finder, ParsFinder)

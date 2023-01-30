@@ -64,9 +64,16 @@ def test_ztf_download(ztf_project, wd_cat):
             assert np.all(df["mag"] > 0)
             assert all([x in ["zg", "zr", "zi"] for x in df["filtercode"]])
 
-            metadata = store.get_storer(key).attrs["altdata"]
-            assert isinstance(metadata, dict)
-            assert s.cat_row == metadata
+            altdata = store.get_storer(key).attrs["altdata"]
+            assert isinstance(altdata, dict)
+            assert altdata["cat_row"] == s.cat_row
+            assert altdata["download_pars"] == {
+                "minimal_declination": -30.0,
+                "cone_search_radius": 2.0,
+                "limiting_magnitude": 20.5,
+                "faint_magnitude_difference": 1.0,
+                "bright_magnitude_difference": 1.0,
+            }
 
 
 def test_ztf_reduction(ztf_project, new_source):

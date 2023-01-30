@@ -1,7 +1,6 @@
 import warnings
 import sqlalchemy as sa
 
-import matplotlib
 import matplotlib.pyplot as plt
 
 from sqlalchemy import func
@@ -14,14 +13,13 @@ import healpix_alchemy as ha
 from astropy import units as u
 
 from src.database import Base, Session, CloseSession, engine
-from src.catalog import Catalog
+
 from src.parameters import (
     allowed_data_types,
     convert_data_type,
     get_class_from_data_type,
 )
-
-# matplotlib.use("qt5agg")
+from src.utils import ra2sex, dec2sex
 
 
 DEFAULT_PROJECT = "test_project"
@@ -221,9 +219,9 @@ class Source(Base, conesearch_alchemy.Point):
         mag = f"{self.mag:.2f}" if self.mag is not None else "None"
         string = f'Source(name="{self.name}"'
         if self.ra is not None:
-            string += f", ra={Catalog.ra2sex(self.ra)}"
+            string += f", ra={ra2sex(self.ra)}"
         if self.dec is not None:
-            string += f", dec={Catalog.dec2sex(self.dec)}"
+            string += f", dec={dec2sex(self.dec)}"
         string += f', mag= {mag}, project="{self.project}"'
         string += f", datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
 
@@ -273,7 +271,7 @@ class Source(Base, conesearch_alchemy.Point):
         else:
             # for each data type, check if there is that sort of data
             # on this source, if it is not an empty list, add it
-            types = {t for t in allowed_data_types if getattr(self, f"raw_t", [])}
+            types = {t for t in allowed_data_types if getattr(self, f"raw_{t}", [])}
             if len(types) == 0:
                 raise ValueError("No data types found for this source.")
             elif len(types) > 1:
@@ -311,6 +309,73 @@ class Source(Base, conesearch_alchemy.Point):
             ).first()
 
         return raw_data
+
+    def remove_raw_data(self, obs, data_type=None, session=None):
+        """
+        Remove from this source the raw data object associated
+        with the observatory named by "obs" and the data type
+        requested by "data_type".
+        If given a session object, will also delete the raw data
+        in the database, if it finds it.
+        Will return a boolean notifying if the data was
+        found and deleted.
+
+        Parameters
+        ----------
+        obs: str
+            Name of the observatory that produced
+            the requested raw data.
+        data_type: str (optional)
+            Type of data, could be "photometry", "spectroscopy",
+            "images", etc.
+            If not given, will try to infer the data type
+            by looking at the different types of data
+            associated with this source.
+            If there is more than one type of data,
+            will raise an error.
+        session: sqlalchemy session object (optional)
+            If given, will also search the DB for a matching
+            raw data object, and delete it if found.
+
+        Returns
+        -------
+        deleted: bool
+            True if the data was found and deleted, False otherwise.
+        """
+        if data_type is not None:  # data type is given explicitly
+            data_type = convert_data_type(data_type)
+        else:
+            # for each data type, check if there is that sort of data
+            # on this source, if it is not an empty list, add it
+            types = {t for t in allowed_data_types if getattr(self, f"raw_{t}", [])}
+            if len(types) == 0:
+                raise ValueError("No data types found for this source.")
+            elif len(types) > 1:
+                raise ValueError("More than one data type found for this source.")
+            else:
+                data_type = list(types)[0]
+
+        data_class = get_class_from_data_type(data_type)
+        # if source existed in DB it should have raw data objects
+        # if it doesn't that means the data needs to be downloaded
+        raw_data = [  # e.g., go over all raw_photometry...
+            data
+            for data in getattr(self, f"raw_{data_type}")
+            if data.observatory == obs
+        ]
+        if len(raw_data) == 0:
+            return False
+        elif len(raw_data) == 1:
+            raw_data = raw_data[0]
+            getattr(self, f"raw_{data_type}").remove(raw_data)
+            if session is not None:
+                session.delete(raw_data)
+            return True
+        else:
+            raise RuntimeError(
+                f"Source {self.name} has more than one "
+                f"{data_class.__name__} object from this observatory."
+            )
 
     def reset_analysis(self, session=None):
         """

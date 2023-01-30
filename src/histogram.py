@@ -1,14 +1,50 @@
+import os
+import json
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from src.parameters import Parameters
+from src.source import Source
+from src.utils import help_with_class, help_with_object, unit_convert_bytes, is_scalar
 
 
 # TODO: should this be saved to the database?
 
 
 class ParsHistogram(Parameters):
+    """
+    A histogram object's parameters are saved in this class.
+    Most of the parameters of the histograms have to do with
+    defining the coordinates for the DataArrays.
+    These are given as coordinate specs:
+    either a 3-tuple for a statis axis or
+    an empty tuple or 2-tuple for a dynamic axis.
+    A static axis is defined as (start, stop, step),
+    using np.arange(start, stop + step, step).
+    A dynamic axis is defined as (start, step) or ()
+    in case of a string based coordinate.
+    If given a start and step, it will add bins with the
+    correct width (step) until it can accommodate new data.
+    An empty tuple will create an axis without a defined step.
+    This only works if the coordinate is string-based
+    (e.g., filter names).
+
+    The three types of coordinates are score, source, and obs.
+    The score coordinates are special in that they define
+    one DataArray per coordinate (per score).
+    The source and obs are common for all DataArrays.
+
+    In addition, the dtype parameter controls the underlying
+    data type of the histogram arrays.
+    Since this is a histogram, the data type
+    must be unsigned integers. Choose uint16 for smaller
+    data sets (in RAM and on disk) when expecting the data
+    to be sparse, or uint32 for larger data sets but without
+    the risk of overflow.
+    """
+
     def __init__(self, **kwargs):
         super().__init__()
 
@@ -19,11 +55,15 @@ class ParsHistogram(Parameters):
             "Data type of underlying array (must be uint16 or uint32)",
         )
         default_score_coords = {
-            "snr": (-10, 10, 0.1),
+            "snr": (-20, 20, 0.1),
             "dmag": (-3, 3, 0.1),
+            "offset": (-5, 5, 0.1),
         }  # other options: any of the quality cuts
         self.score_coords = self.add_par(
-            "score_coords", default_score_coords, dict, "Coordinates for the score axes"
+            "score_coords",
+            default_score_coords,
+            dict,
+            "Coordinate specs for the score axes",
         )
 
         default_source_coords = {
@@ -33,30 +73,40 @@ class ParsHistogram(Parameters):
             "source_coords",
             default_source_coords,
             dict,
-            "Coordinates for the source axes",
+            "Coordinate specs for the source axes",
         )
 
         default_obs_coords = {
             "exptime": (30, 1),
-            "filt": (),
+            "filter": (),
         }  # other options: airmass, zp, magerr
         self.obs_coords = self.add_par(
             "obs_coords",
             default_obs_coords,
             dict,
-            "Coordinates for the observation axes",
+            "Coordinate specs for the observation axes",
         )
 
-        def __setattr__(self, key, value):
-            if key == "dtype" and value not in ("uint16", "uint32"):
-                raise ValueError(
-                    f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
-                )
+        self.raise_on_repeat_source = self.add_par(
+            "raise_on_repeat_source",
+            False,
+            bool,
+            "Raise an error if a source name already "
+            "exists in the histogram source_names set.",
+        )
 
-            super().__setattr__(key, value)
+        self._enforce_no_new_attrs = True
+
+    def __setattr__(self, key, value):
+        if key == "dtype" and value not in ("uint16", "uint32"):
+            raise ValueError(
+                f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
+            )
+
+        super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -85,7 +135,7 @@ class Histogram:
     The bins are along coordinates in either
     score, source, or observation (obs) space.
     The score coordinates are for the measured values,
-    like Signal to Noise Ratio (snr), or Delta Magnitude (dmag).
+    like signal-to-noise ratio (snr), or delta-magnitude (dmag).
     The source coordinates depend on the source,
     and are given by the catalog row for that source (e.g., magnitude).
     The observation coordinates are the values given by
@@ -106,8 +156,33 @@ class Histogram:
     """
 
     def __init__(self, **kwargs):
+        """
+        Constructor for a histogram object.
+        Can contain multiple DataArrays for different score coordinates.
+        If the default parameters are ok, or if giving updated parameters
+        through the kwargs to this function, then provide initialiaze=True.
+        Otherwise, the initialize function must be called explicitly,
+        after adjusting the parameters.
 
-        can_initialize = kwargs.get("initialize", False)
+        Parameters
+        ----------
+        name: str
+            Name of the histogram object, e.g., all_score, quality_cuts.
+            This is used to name the output netCDF file (histograms_<name>.nc).
+        output_folder: str
+            The path (relative or absolute) to the folder where the output
+            netCDF file will be saved. Should be the same place that the
+            project saves all files.
+        initialize: bool
+            If True, then initialize the histogram right after passing
+            the kwargs to the parameters object. Otherwise, the
+            initialize function must be called explicitly.
+        kwargs: additional arguments are passed into the parameters object.
+        """
+
+        can_initialize = kwargs.pop("initialize", False)
+        self.name = kwargs.pop("name", None)
+        self.output_folder = kwargs.pop("output_folder", None)
 
         self.pars = ParsHistogram(**kwargs)
         self.data = None
@@ -115,22 +190,78 @@ class Histogram:
         if can_initialize:
             self.initialize()
 
+    def pick_out_coords(self, names, input_type="score"):
+        """
+        Pick only a subset of the coordinate specs based
+        on a list of names. Usually this is used to pick
+        which scores we want to use, e.g., "snr" for counting
+        good measurements and "offset" for counting epochs
+        that failed the quality cuts.
+
+        This function must be called before initialization!
+
+        Parameters
+        ----------
+        names: string or list of strings
+            The names of the coordinates to pick out.
+            Other coordinates will be removed from the
+            coord specs. If any of the names do not
+            exist in the list of coordinates, will
+            raise a ValueError.
+        input_type: string
+            The type of coordinates to pick out.
+            Options are 'score', 'source', or 'obs'.
+            Default is 'score'.
+
+        """
+        if isinstance(names, str):
+            names = [names]
+
+        coords_old = getattr(self.pars, f"{input_type}_coords")
+        coords_new = coords_old.copy()
+        for k in coords_old.keys():
+            if k not in names:
+                del coords_new[k]
+
+        missing = set(names) - set(coords_new.keys())
+        if len(missing) > 0:
+            raise ValueError(f"Missing coordinates: {missing}")
+
+        setattr(self.pars, f"{input_type}_coords", coords_new)
+
     def initialize(self):
+        """
+        Build the histogram data structure,
+        including coordinates and DataArrays.
+        This can potentially take up a lot of RAM
+        and could be time consuming.
+        Therefore, it is not called automatically when
+        making this object, only when the initialize=True
+        flag is given to the constructor.
+        Otherwise, the user gets an opportunity to adjust
+        the parameters, check the array size, and only
+        then explicitly call this function.
+        """
+
+        if self.pars.dtype not in ("uint16", "uint32"):
+            raise ValueError(
+                f"Unsupported dtype: {self.pars.dtype}, must be uint16 or uint32."
+            )
 
         # create the coordinates
         coords = {}
         for input_ in ("score", "source", "obs"):
             for k, v in getattr(self.pars, f"{input_}_coords").items():
-                coords[k] = self.create_coordinate(k, v)
+                coords[k] = self._create_coordinate(k, v)
                 coords[k].attrs["input"] = input_
 
         data_shape = tuple(
-            len(v) for v in coords.values() if v.attrs["input"] != "score"
+            len(v) for v in coords.values() if v.attrs["input"] in ("source", "obs")
         )
 
         # these coordinates are shared by all the DataArrays
         common_coord_names = [
-            k for k, v in coords.items() if v.attrs["input"] != "score"
+            k for k, v in coords.items() if v.attrs["input"] in ("source", "obs")
         ]
 
         data_vars = {}
@@ -142,8 +273,19 @@ class Histogram:
                 )
 
         self.data = xr.Dataset(data_vars, coords=coords)
+        if self.name is not None:
+            self.data.attrs["name"] = self.name
 
-    def create_coordinate(self, name, specs):
+        self.data.attrs["source_names"] = set()
+
+        if self.output_folder is None:
+            self.output_folder = os.getcwd()
+
+        # create the output folder
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+
+    def _create_coordinate(self, name, specs):
         """
         Create a coordinate axis with a preset range
         or make a dynamic axis.
@@ -156,7 +298,11 @@ class Histogram:
             The name of the coordinate.
         specs:
             A tuple of (start, stop, step) for a fixed range,
-            or an empty tuple for a dynamic range.
+            or an empty tuple or a 2-tuple (start, step) for a dynamic range.
+            An extra last element can be given as a string
+            to specify the units of the coordinate.
+            In that case the tuple will be (start, stop, step, units)
+            or (start, step, units) or (units).
 
         Returns
         -------
@@ -164,8 +310,8 @@ class Histogram:
             The coordinate axis.
         """
 
-        if not isinstance(specs, tuple):
-            raise ValueError(f"Coordinate specs must be a tuple: {specs}")
+        if not isinstance(specs, (tuple, list)):
+            raise ValueError(f"Coordinate specs must be a list or tuple: {specs}")
 
         if len(specs) and isinstance(specs[-1], str):
             units = specs[-1]
@@ -198,16 +344,16 @@ class Histogram:
                 f"Coordinate specs must be a tuple of length 0 or 3: {specs}"
             )
 
-        ax.attrs["long_name"] = self.get_coordinate_name(name)
+        ax.attrs["long_name"] = self._get_coordinate_name(name)
         ax.attrs["units"] = units
 
         return ax
 
     @staticmethod
-    def get_coordinate_name(name):
+    def _get_coordinate_name(name):
         """
         Get the long name of a coordinate.
-        If the name is not recognized,
+        If the name is not recognized (hard coded),
         return the name itself.
 
         Parameters
@@ -222,6 +368,7 @@ class Histogram:
         str
             Long name of the coordinate
         """
+
         return {
             "mag": "Magnitude",
             "dmag": "Delta Magnitude",
@@ -240,8 +387,8 @@ class Histogram:
         Parameters
         ----------
         units: str
-            Can be 'kb', 'mb', or 'gb'.
-            Otherwise, assume 'bytes' are returned.
+            Can be 'bytes', 'kb', 'mb', or 'gb'.
+            Default is "mb".
 
         Returns
         -------
@@ -253,7 +400,7 @@ class Histogram:
         for d in self.data.data_vars.values():
             total_size += d.size * d.dtype.itemsize
 
-        return total_size / self.unit_convert_bytes(units)
+        return total_size / unit_convert_bytes(units)
 
     def get_size_estimate(self, units="mb", dyn_coord_size=3, dyn_score_size=100):
         """
@@ -269,8 +416,8 @@ class Histogram:
         Parameters
         ----------
         units: str
-            Can be 'kb', 'mb', or 'gb'.
-            Otherwise, assume 'bytes' are returned.
+            Can be 'bytes', 'kb', 'mb', or 'gb'.
+            Default is "mb".
         dyn_coord_size: int
             The number of unique values to assume for dynamic coordinate axes.
             Default is 3, which is appropriate for having a few values.
@@ -287,40 +434,30 @@ class Histogram:
         """
 
         common_size = 1
-        for d in self.data.coords.values():
-            # only count non-source coordinates (shared by all DataArrays)
-            if d.attrs["input"] != "score":
-                if len(d) <= 1:
+        for coord in self.data.coords.values():
+            # only count non-score coordinates (shared by all DataArrays)
+            if coord.attrs["input"] in ("source", "obs"):
+                if len(coord) <= 1:
                     common_size *= dyn_coord_size
                 else:
-                    common_size *= len(d)
+                    common_size *= len(coord)
 
         score_size = 0
-        for d in self.data.coords.values():
-            # only count non-source coordinates (shared by all DataArrays)
-            if d.attrs["input"] == "score":
-                if len(d) <= 1:
+        for coord in self.data.coords.values():
+            # only count score coordinates
+            if coord.attrs["input"] == "score":
+                if len(coord) <= 1:
                     score_size += dyn_score_size
                 else:
-                    score_size += len(d)
+                    score_size += len(coord)
 
         total_size = common_size * score_size
 
+        # get the number of bytes in one of the arrays
         array_names = list(self.data.keys())
         total_size *= self.data[array_names[0]].dtype.itemsize
 
-        return total_size / self.unit_convert_bytes(units)
-
-    @staticmethod
-    def unit_convert_bytes(units):
-        if units.endswith("s"):
-            units = units[:-1]
-
-        return {
-            "kb": 1024,
-            "mb": 1024**2,
-            "gb": 1024**3,
-        }.get(units.lower(), 1)
+        return total_size / unit_convert_bytes(units)
 
     def add_data(self, *args, **kwargs):
         """
@@ -334,6 +471,7 @@ class Histogram:
         those scalar values will be used to slice into
         the histogram, and speed up the binning process.
         All the other values will be binned using ...
+        # TODO: finish description
 
         Parameters
         ----------
@@ -346,29 +484,48 @@ class Histogram:
         kwargs:
             Additional arguments to pass to the binning function.
             Currently there are no additional arguments.
-
-        Returns
-        -------
-
         """
+        # input data is a dictionary with a key for each axis,
+        # and each value is a scalar or an array of values.
+        # this gets ingested by the histogram DataArray
+        # after it is filled from all objects given in args.
+        input_data = {}
+
+        # check if source is already in the histogram
+        for arg in args:
+            if isinstance(arg, Source):
+                if arg.name in self.data.attrs["source_names"]:
+                    if self.pars.raise_on_repeat_source:
+                        raise ValueError(
+                            f"Source {arg.name} already exists in histogram"
+                        )
+                    else:
+                        return  # quietly exit without adding the data
+
         # go over args and see if any objects
         # have attributes that match one of the axes.
-        input_data = {}
         for axis in self.data.dims:
             input_data[axis] = None
             for obj in args:
-                if hasattr(obj, axis):
+                values = None
+                if hasattr(obj, "__contains__") and axis in obj:
+                    values = obj[axis]
+                elif hasattr(obj, axis):
                     values = getattr(obj, axis)
-                    if not isinstance(values, str) and hasattr(values, "__len__"):
+
+                if values is not None:
+                    if not is_scalar(values):
                         # an array, but need to check if all are the same
                         if len(np.unique(values)) == 1:
                             input_data[axis] = values[0]
                         else:
                             input_data[axis] = np.array(values)
-                    else:  # assume it is a scalar value / string
+                    else:  # a scalar value / string
                         input_data[axis] = values
+
                     break  # take the first thing that matches
 
+        # check the length of the timeseries that is given
         sample_len = None
         for obj in args:
             if isinstance(obj, pd.DataFrame):
@@ -377,9 +534,10 @@ class Histogram:
         if sample_len is None:
             sample_len = 1
 
+        # how many different scores are we tracking? (snr, dmag, etc)
         num_scores = len(self.data.data_vars)
 
-        # check all data axes have a coordinate value
+        # check all data axes have a coordinate value or values array
         for axis in self.data.dims:
             if input_data[axis] is None:
                 raise ValueError(f"Could not find data for axis {axis}")
@@ -390,7 +548,7 @@ class Histogram:
         # If so, expand the axes to include the new values.
         for axis in self.data.dims:
             if self.data.coords[axis].attrs["type"] == "fixed":
-                continue
+                continue  # no need to expand fixed axes
 
             # scalar string
             if isinstance(input_data[axis], str):
@@ -398,13 +556,14 @@ class Histogram:
                     self.data.coords[axis].size == 0
                     or input_data[axis] not in self.data.coords[axis].values
                 ):
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
+
             # list of strings
             elif hasattr(input_data[axis], "__len__") and all(
                 isinstance(x, str) for x in input_data[axis]
             ):
                 if not set(input_data[axis]).issubset(self.data.coords[axis].values):
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
             else:
                 mx = max(self.data[axis] + self.data[axis].attrs["step"] / 2)
                 mn = min(self.data[axis] - self.data[axis].attrs["step"] / 2)
@@ -415,21 +574,18 @@ class Histogram:
                     new_mx = input_data[axis]
                     new_mn = input_data[axis]
                 if new_mx > mx or new_mn < mn:
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
 
         # here is where we actually increase the bin counts
         for name, da in self.data.data_vars.items():
-            # each da is for a different score
+            # each da is a DataArray for a different score
 
-            # get a slice of the full array that matches
-            # any scalar values
+            # get a slice of the full array that matches any scalar values
             indices = {}
             array_values = {}
             for ax in da.dims:
-                if isinstance(input_data[ax], str) or not hasattr(
-                    input_data[ax], "__len__"
-                ):
-                    indices[ax] = self.get_index(ax, input_data[ax])
+                if is_scalar(input_data[ax]):
+                    indices[ax] = self._get_index(ax, input_data[ax])
                 else:
                     array_values[ax] = input_data[ax]
 
@@ -446,29 +602,33 @@ class Histogram:
                     if da.coords[ax].attrs["input"] == "score":
                         num_values_to_add = sample_len
                     else:
+                        # because the common axes are shared by all scores
+                        # we will end up adding the sample_len multiple times
                         num_values_to_add = sample_len / num_scores
+
                     if ax in indices and indices[ax] < 0:
                         da.coords[ax].attrs["underflow"] += num_values_to_add
                         in_range = False
                     elif ax in indices and indices[ax] >= len(da.coords[ax]):
                         da.coords[ax].attrs["overflow"] += num_values_to_add
                         in_range = False
+                    # else: do nothing, there's no overflow/underflow
 
             if in_range:
                 # if all the arrays have unique values, just add the number of measurements:
-                if not array_values:
+                if not array_values:  # empty dict
+                    # TODO: check that this actually works...
                     self.data[name][indices] += np.array(sample_len).astype(da.dtype)
                 else:
-                    # bin the remaining dataframe columns into
-                    # the appropriate axes
+                    # bin the non-unique dataframe columns into the appropriate axes
                     da_slice = self.data[name].isel(**indices)
                     if set(da_slice.dims) != set(array_values.keys()):
                         raise ValueError("Slice into data array has wrong dimensions!")
 
                     # setup the bin edges and values
                     # make sure they're ordered by the da_slice dims
-                    bins = []
-                    values = []
+                    bins = []  # array of bin edges
+                    values = []  # array of new values to count
                     for dim in da_slice.dims:
                         centers = da_slice.coords[dim].values
 
@@ -488,6 +648,9 @@ class Histogram:
                             # ref: https://stackoverflow.com/a/16993364/18256949
                             ordered_array = np.array([lookup[x] for x in uniq])[rev_ind]
 
+                            # ordered_array should be a list of numbers,
+                            # each representing a string, according to the
+                            # order of strings in the axis.
                             values.append(ordered_array)
                             edges = np.arange(-0.5, len(centers) + 0.5, 1)
                         else:  # get bin edges from center values
@@ -500,7 +663,7 @@ class Histogram:
                         bins.append(edges)
 
                     counts, _ = np.histogramdd(values, bins)
-                    da_slice += counts.astype(da.dtype)
+                    da_slice += counts.astype(da.dtype)  # add to existing counts
 
                     # add the over/underflow:
                     for ax in array_values:
@@ -508,6 +671,8 @@ class Histogram:
                             if da_slice.coords[ax].attrs["input"] == "score":
                                 correction = 1
                             else:
+                                # because the common axes are shared by all scores
+                                # we will end up adding the sample_len multiple times
                                 correction = 1 / num_scores
                             mx = max(da_slice.coords[ax].values)
                             mn = min(da_slice.coords[ax].values)
@@ -522,16 +687,36 @@ class Histogram:
                                 num_values_to_add * correction
                             )
 
-    def expand_axis(self, axis, new_values):
+    def _expand_axis(self, axis, new_values):
+        """
+        Expand the axis to include the new values.
+        This only works for dynamic axes.
+        String based axes are expanded simply by
+        adding any values that are not included.
+        Numeric axes are expanded by adding as many
+        bins as needed (with the predefined step)
+        so that the min/max of the new values
+        are included in the new axis.
+
+        Parameters
+        ----------
+        axis: str
+            The name of the axis to expand.
+            Will load the data coordinate DataArray.
+        new_values: array-like
+            The new values to include in the axis.
+            This can be a scalar string or number,
+            or a numeric array or a string array.
+
+        """
         if isinstance(new_values, str):
-            if (
-                self.data.coords[axis].size == 0
-                or new_values not in self.data.coords[axis].values
-            ):
-                if self.data.coords[axis].size > 0:
-                    new_coord = self.data.coords[axis].values + [new_values]
-                else:
-                    new_coord = [new_values]
+            if self.data.coords[axis].size == 0:
+                new_coord = np.array([new_values])
+            elif new_values not in self.data.coords[axis].values:
+                new_coord = np.concatenate(
+                    [self.data.coords[axis].values, [new_values]]
+                )
+            # else: do nothing, the value exists in the axes
         else:  # scalar or array
             # str array/list
             if hasattr(new_values, "__len__") and all(
@@ -559,22 +744,12 @@ class Histogram:
                 if np.isclose(lower[-1], min(self.data[axis])):
                     lower = lower[:-1]
 
-                new_coord = np.concatenate(
-                    (
-                        lower,
-                        self.data[axis],
-                    )
-                )
+                new_coord = np.concatenate((lower, self.data[axis]))
 
                 # the new values after the original axis
                 upper = np.arange(max(new_coord) + step, mx + step, step)
 
-                new_coord = np.concatenate(
-                    (
-                        new_coord,
-                        upper,
-                    )
-                )
+                new_coord = np.concatenate((new_coord, upper))
 
         # make a new array with all the same coords,
         # except replace the one axis with the new coord
@@ -611,10 +786,10 @@ class Histogram:
                     )
 
         new_dataset = xr.Dataset(new_data)
-
+        new_dataset.attrs = self.data.attrs.copy()
         self.data = new_dataset
 
-    def get_index(self, axis, value):
+    def _get_index(self, axis, value):
         """
         Find the index of the closest value in a coordinate
         named "axis", to the value given.
@@ -623,7 +798,7 @@ class Histogram:
         ----------
         axis: str
             Name of coordinate to look up.
-        value: str or float
+        value: scalar str or float
             Which value to try to match.
             If float, will find the closest match.
             If string, will find an exact match
@@ -643,20 +818,123 @@ class Histogram:
                 raise ValueError(f"Value {value} not in axis {axis}")
             return np.where(self.data.coords[axis].values == value)[0][0]
         else:
-            if (
-                value
-                > max(self.data.coords[axis].values)
-                + self.data.coords[axis].attrs["step"] / 2
-            ):
+            step = self.data.coords[axis].attrs["step"]
+            if value > max(self.data.coords[axis].values) + step / 2:
                 return self.data.coords[axis].size
-            elif (
-                value
-                < min(self.data.coords[axis].values)
-                - self.data.coords[axis].attrs["step"] / 2
-            ):
+            elif value < min(self.data.coords[axis].values) - step / 2:
                 return -1
             else:
                 return np.argmin(np.abs(self.data.coords[axis].values - value))
+
+    @staticmethod
+    def from_netcdf(filename):
+        """
+        Load the data from a netcdf file.
+        """
+        if not os.path.exists(filename):
+            raise ValueError(f"File {filename} does not exist.")
+
+        with xr.open_dataset(filename) as ds:
+            data = ds.load()
+
+        folder, filename = os.path.split(filename)
+        h = Histogram()
+        if "name" in data.attrs:
+            h.name = data.attrs["name"]
+        if "pars" in data.attrs:
+            parameters = json.loads(data.attrs["pars"])
+            h.pars = ParsHistogram(**parameters)
+        if "source_names" in data.attrs:
+            data.attrs["source_names"] = set(data.attrs["source_names"])
+
+        h.output_folder = folder
+        h.data = data
+
+        return h
+
+    def load(self, suffix=None):
+        """
+        Load the data from the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        fullname = os.path.join(self.output_folder, filename)
+        if os.path.exists(fullname):
+            with xr.open_dataset(fullname) as ds:
+                self.data = ds.load()
+
+            if "name" in self.data.attrs:
+                self.name = self.data.attrs["name"]
+
+            if "pars" in self.data.attrs:
+                parameters = json.loads(self.data.attrs["pars"])
+                self.pars = ParsHistogram(**parameters)
+
+            if "source_names" in self.data.attrs:
+                self.data.attrs["source_names"] = set(self.data.attrs["source_names"])
+
+    def save(self, suffix=None):
+        """
+        Save the data to the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        # netCDF files can't store dicts, must convert to string
+        self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
+        self.data.attrs["source_names"] = list(self.data.attrs["source_names"])
+        self.data.to_netcdf(os.path.join(self.output_folder, filename), mode="w")
+
+    def remove_data_from_file(self, suffix=None):
+        """
+        Save the data to the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        filename = "histograms"
+        if self.name is not None:
+            filename += f"_{self.name}"
+        filename += ".nc"
+
+        if suffix is not None:
+            if not suffix.startswith("."):
+                suffix = "." + suffix
+            filename += suffix
+
+        fullname = os.path.join(self.output_folder, filename)
+        if os.path.exists(fullname):
+            os.remove(fullname)
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, Histogram):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Histogram:
+            help_with_class(Histogram, ParsHistogram)
 
 
 if __name__ == "__main__":

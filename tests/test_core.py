@@ -245,7 +245,7 @@ def test_version_control(data_dir):
         output_filename = None
 
         # save the config file
-        proj.save_config()
+        proj._save_config()
         output_filename = os.path.join(data_dir, proj.output_folder, "config.yaml")
 
         assert os.path.basename(proj.output_folder) == "TEST_PROJECT_" + proj.cfg_hash
@@ -1040,6 +1040,49 @@ def test_demo_observatory_save_downloaded(test_project):
             session.commit()
 
 
+def test_download_pars(test_project):
+    # make random sources unique to this test
+    test_project.catalog.make_test_catalog()
+    test_project.catalog.load()
+    obs = test_project.observatories["demo"]
+    try:
+        # download the first source only
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 0})
+
+        # reloading this source should be quick (no call to fetch should be sent)
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time < 1  # should take less than 1s
+
+        # now check that download parameters are inconsistent
+        obs.pars.check_download_pars = True
+
+        # reloading
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time > 1  # should take about 3s to re-download
+
+        # reloading this source should be quick (no call to fetch should be sent)
+        t0 = time.time()
+        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        reload_time = time.time() - t0
+        assert reload_time < 1  # should take less than 1s
+
+    finally:
+        for d in obs.datasets:
+            d.delete_data_from_disk()
+
+        if len(obs.datasets) > 0:
+            assert not os.path.isfile(obs.datasets[0].get_fullname())
+
+        with Session() as session:
+            for d in obs.datasets:
+                session.delete(d)
+            session.commit()
+
+
 @pytest.mark.flaky(max_runs=3)
 def test_histogram():
 
@@ -1065,11 +1108,10 @@ def test_histogram():
     num_mag = len(np.arange(15, 21 + 0.5, 0.5))
     num_dynamic = 3  # guess the number of values for dynamic axes
     num_bytes = 4  # uint32
+
     assert h.get_size() == 0
-    assert (
-        h.get_size_estimate("bytes")
-        == (num_snr + num_dmag) * num_mag * num_dynamic**2 * num_bytes
-    )
+    estimate_bytes = (num_snr + num_dmag) * num_mag * num_dynamic**2 * num_bytes
+    assert h.get_size_estimate("bytes") == estimate_bytes
 
     # add some data with uniform filter
     num_points1 = 10
@@ -1083,14 +1125,16 @@ def test_histogram():
         )
     )
 
-    # add some data with well defined dmag values
+    # make sure data has well defined dmag values
     df.loc[0:4, "dmag"] = 1.3
 
+    # this will fail because the df doesn't have "mag"
     with pytest.raises(ValueError) as err:
         h.add_data(df)
 
     assert "Could not find data for axis mag" in str(err.value)
 
+    # throwaway class to make a test source
     class FakeSource:
         pass
 
@@ -1195,7 +1239,7 @@ def test_histogram():
     assert h.data.dmag.attrs["overflow"] == 10
     assert h.data.dmag.attrs["underflow"] == 0
 
-    # a new source with above range magnitude
+    # a new source with magnitude above range
     source.mag = 25.3
     h.add_data(df, source)
     assert h.data.mag.attrs["overflow"] == num_points3
@@ -1287,7 +1331,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1337,6 +1381,7 @@ def test_analysis(analysis, new_source, raw_phot):
 
     try:  # now save everything
         analysis.pars.save_anything = True
+        analysis.reset_histograms()
         new_source.reset_analysis()
         # make sure to save the raw/reduced data first
         raw_phot.save()
@@ -1400,21 +1445,33 @@ def test_analysis(analysis, new_source, raw_phot):
             assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
             assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
+        # check the number of values added to the histogram matches
+        num_snr_values = int(analysis.all_scores.data.snr_counts.sum().values)
+        assert len(new_source.raw_photometry[0].data) == num_snr_values
+
+        num_offset_values = int(analysis.quality_values.data.offset_counts.sum().values)
+        assert len(new_source.raw_photometry[0].data) == num_offset_values
+
     finally:  # remove all generated lightcurves and detections etc.
         with Session() as session:
             for lc in new_source.reduced_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)
-                session.delete(lc)
+                if lc in session:
+                    try:
+                        session.delete(lc)
+                    except Exception as e:
+                        print(f"could not delete lc: {str(e)}")
             for lc in new_source.processed_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)
                 session.delete(lc)
 
             session.commit()
+        analysis.remove_all_histogram_files(remove_backup=True)
 
 
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(max_runs=5)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)

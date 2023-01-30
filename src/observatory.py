@@ -1,6 +1,7 @@
 import time
 import os
 import glob
+import copy
 import re
 import yaml
 import validators
@@ -8,7 +9,6 @@ import numpy as np
 import pandas as pd
 import threading
 import concurrent.futures
-from astropy.time import Time
 
 import sqlalchemy as sa
 from src.database import Session
@@ -20,11 +20,8 @@ from src.parameters import (
 )
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
-from src.detection import Detection
-
 from src.catalog import Catalog
-from src.histogram import Histogram
-from src.analysis import Analysis
+from src.utils import help_with_class, help_with_object
 
 lock = threading.Lock()
 
@@ -135,9 +132,21 @@ class ParsObservatory(Parameters):
         self.num_threads_download = self.add_par(
             "num_threads_download", 0, int, "Number of threads to use for downloading"
         )
+        self.download_pars_list = self.add_par(
+            "download_pars_list",
+            [],
+            list,
+            "List of parameters that have an effect on downloading data",
+        )
+        self.check_download_pars = self.add_par(
+            "check_download_pars",
+            False,  # this check could be expensive for large data folders
+            bool,
+            "Check if the download parameters have changed since the last download"
+            "and if so, re-download the data",
+        )
 
         self._default_cfg_key = "observatories"
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = False  # allow subclasses to expand attributes
 
         self.filtmap = self.add_par(
@@ -150,9 +159,9 @@ class ParsObservatory(Parameters):
         # subclasses need to add these lines:
         # _enforce_no_new_attrs = True  # lock adding wrong attributes
         # config = load_then_update()  # load config file and update parameters
-        # apply_specific_pars(config)  # apply specific parameters for this observatory
+        # _apply_specific_pars(config)  # apply specific parameters for this observatory
 
-    def apply_specific_pars(self, inputs):
+    def _apply_specific_pars(self, inputs):
         """
         Check if parameters were given for a
         specific observatory. For example if
@@ -188,7 +197,7 @@ class ParsObservatory(Parameters):
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -197,6 +206,8 @@ class ParsObservatory(Parameters):
 
 class VirtualObservatory:
     """
+    Download data from specific observatories (using subclasses).
+
     Base class for other virtual observatories.
     This class allows the user to load a catalog,
     and for each object in it, download data from
@@ -235,7 +246,7 @@ class VirtualObservatory:
 
         if "credentials" in self.pars:
             # if credentials contains a filename and key:
-            self.load_passwords(**self.pars.credentials)
+            self._load_passwords(**self.pars.credentials)
 
             # if credentials (username, password, etc.)
             # are given by the config/user inputs
@@ -268,7 +279,7 @@ class VirtualObservatory:
 
         self._catalog = catalog
 
-    def load_passwords(self, filename=None, key=None, **_):
+    def _load_passwords(self, filename=None, key=None, **_):
         """
         Load a YAML file with usernames, passwords, etc.
 
@@ -364,9 +375,9 @@ class VirtualObservatory:
             objects to the database (default).
             If False, do not save the data to disk or the
             raw data objects to the database (debugging only).
-        dataset_args: dict
-            Additional keyword arguments to pass to the
-            download method of the specific observatory.
+        fetch_args: dict, optional
+            Additional arguments to pass to the
+            fetch_data_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -406,7 +417,7 @@ class VirtualObservatory:
             num_threads = min(self.pars.num_threads_download, stop - i)
 
             if num_threads > 1:
-                sources = self.fetch_data_asynchronous(
+                sources = self._fetch_data_asynchronous(
                     i, i + num_threads, save, fetch_args, dataset_args
                 )
             else:  # single threaded execution
@@ -436,7 +447,7 @@ class VirtualObservatory:
 
         return num_loaded
 
-    def fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
+    def _fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
         """
         Get data for a few sources, either by loading them
         from disk or by fetching the data online from
@@ -542,6 +553,12 @@ class VirtualObservatory:
             (it may have more data from other observatories).
 
         """
+
+        download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
+        download_pars.update(
+            {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
+        )
+
         with Session() as session:
             source = session.scalars(
                 sa.select(Source).where(
@@ -577,13 +594,42 @@ class VirtualObservatory:
                     except KeyError as e:
                         if "No object named" in str(e):
                             # This does not exist in the file
-                            session.delete(raw_data)
+
                             # TODO: is delete the right thing to do?
+                            source.remove_raw_data(
+                                obs=self.name, data_type=dt, session=session
+                            )
+                            session.flush()
                             raw_data = None
                         else:
                             raise e
                     finally:
                         lock.release()
+
+                if raw_data is not None and self.pars.check_download_pars:
+                    # check if the download parameters used to save
+                    # the data are consistent with those used now
+                    if "download_pars" not in raw_data.altdata:
+                        # TODO: is delete the right thing to do?
+                        source.remove_raw_data(
+                            obs=self.name, data_type=dt, session=session
+                        )
+                        session.flush()
+                        raw_data = None
+                    else:
+                        for key in self.pars.download_pars_list:
+                            if (
+                                key not in raw_data.altdata["download_pars"]
+                                or raw_data.altdata["download_pars"][key]
+                                != download_pars[key]
+                            ):
+                                # TODO: is delete the right thing to do?
+                                source.remove_raw_data(
+                                    obs=self.name, data_type=dt, session=session
+                                )
+                                session.flush()
+                                raw_data = None
+                                break
 
                 # no data on DB/file, must re-fetch from observatory website:
                 if raw_data is None:
@@ -591,7 +637,14 @@ class VirtualObservatory:
                     data, altdata = self.fetch_data_from_observatory(
                         cat_row, **fetch_args
                     )
-                    altdata.update(cat_row)  # TODO: can we get the full catalog row?
+
+                    # save the catalog info
+                    # TODO: should we get the full catalog row?
+                    altdata["cat_row"] = cat_row
+
+                    # save the parameters involved with the download
+                    altdata["download_pars"] = download_pars
+
                     raw_data = data_class(
                         data=data,
                         altdata=altdata,
@@ -609,7 +662,7 @@ class VirtualObservatory:
                 ):
                     getattr(source, f"raw_{dt}").append(raw_data)
 
-                # here we explicitely set all relational collections
+                # here we explicitly set all relational collections
                 # to an empty list, so they are accessible (and empty)
                 # even if the source is no longer attached to the DB.
                 for name in ["reduced", "processed", "simulated"]:
@@ -745,7 +798,7 @@ class VirtualObservatory:
                         if num_sources and j >= num_sources:
                             break
                         data = store[k]
-                        cat_id = self.find_dataset_identifier(data, k)
+                        cat_id = self._find_dataset_identifier(data, k)
                         data_type = (
                             "photometry"  # TODO: what about multiple data types??
                         )
@@ -757,7 +810,7 @@ class VirtualObservatory:
         if self.pars.verbose:
             print("Done populating sources.")
 
-    def find_dataset_identifier(self, data, key):
+    def _find_dataset_identifier(self, data, key):
         """
         Find the identifier that connects the data
         loaded from file with the catalog row and
@@ -974,7 +1027,7 @@ class VirtualObservatory:
             kwargs = parameters
 
         # arguments to be passed into the new dataset constructors
-        init_kwargs = self.make_init_kwargs(dataset)
+        init_kwargs = self._make_init_kwargs(dataset)
 
         # choose which kind of reduction to do
         if output_type is None:
@@ -1023,7 +1076,7 @@ class VirtualObservatory:
 
         return new_datasets
 
-    def make_init_kwargs(self, dataset):
+    def _make_init_kwargs(self, dataset):
         """
         Make a dictionary of arguments to pass to the
         constructor of a new (reduced) dataset.
@@ -1066,6 +1119,15 @@ class VirtualObservatory:
 
         return init_kwargs
 
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualObservatory):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualObservatory:
+            help_with_class(VirtualObservatory, ParsObservatory)
+
 
 class ParsDemoObs(ParsObservatory):
 
@@ -1084,13 +1146,30 @@ class ParsDemoObs(ParsObservatory):
             "demo_url", "http://www.example.com", str, "A URL parameter"
         )
 
-        self._enforce_type_checks = True
+        self.wait_time = self.add_par(
+            "wait_time", 0.0, float, "Time to wait to simulate downloading from web."
+        )
+
+        self.wait_time_poisson = self.add_par(
+            "wait_time_poisson",
+            0.0,
+            float,
+            "Time to wait to simulate downloading from web, "
+            "with a Poisson distribution random number.",
+        )
+
+        self.sim_args = self.add_par(
+            "sim_args", {}, dict, "Arguments to pass to the simulator."
+        )
+
+        self.download_pars_list = ["wait_time", "wait_time_poisson", "sim_args"]
+
         self._enforce_no_new_attrs = True
 
         config = self.load_then_update(kwargs)
 
         # apply parameters specific to this class
-        self.apply_specific_pars(config)
+        self._apply_specific_pars(config)
 
     def __setattr__(self, key, value):
         """
@@ -1105,6 +1184,14 @@ class ParsDemoObs(ParsObservatory):
 
 
 class VirtualDemoObs(VirtualObservatory):
+    """
+    A demo observatory that produces simulated data.
+
+    This is useful for testing and demonstration purposes.
+    To get actual data from real observations, use the
+    real VirtualObservatory sub classes, e.g., VirtualZTF.
+    """
+
     def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualDemoObs object.
@@ -1126,7 +1213,12 @@ class VirtualDemoObs(VirtualObservatory):
         super().__init__(name="demo")
 
     def fetch_data_from_observatory(
-        self, cat_row, wait_time=0, wait_time_poisson=0, verbose=False, sim_args={}
+        self,
+        cat_row,
+        wait_time=None,
+        wait_time_poisson=None,
+        verbose=False,
+        sim_args={},
     ):
         """
         Fetch data from the observatory for a given source.
@@ -1142,16 +1234,22 @@ class VirtualDemoObs(VirtualObservatory):
             name, ra, dec, mag, filter_name (saying which band the mag is in).
         wait_time: int or float, optional
             If given, will make the simulator pause for a short time.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
         wait_time_poisson: bool, optional
             Will add a randomly selected integer number of seconds
             (from a Poisson distribution) to the wait time.
             The mean of the distribution is the value given
             to wait_time_poisson.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
         verbose: bool, optional
             If True, will print out some information about the
             data that is being fetched or simulated.
         sim_args: dict
             A dictionary passed into the simulate_lightcuve function.
+            Can either use the value in the parameters object or pass it
+            in directly, which will override the parameter.
 
         Returns
         -------
@@ -1161,23 +1259,33 @@ class VirtualDemoObs(VirtualObservatory):
             Additional data to be stored in the RawPhotometry object.
 
         """
+        if wait_time is None:
+            wait_time = self.pars.wait_time
+        if wait_time_poisson is None:
+            wait_time_poisson = self.pars.wait_time_poisson
+        if sim_args is not None:
+            # need a copy, so we don't change the original dict in pars:
+            sim_args_default = copy.deepcopy(self.pars.sim_args)
+            sim_args_default.update(sim_args)
+            sim_args = sim_args_default
 
         if verbose:
             print(
                 f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
             )
-        wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
+        total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
         data = self.simulate_lightcurve(**sim_args)
         altdata = {
             "demo_boolean": self.pars.demo_boolean,
-            "wait_time": wait_time_seconds,
+            "wait_time": total_wait_time_seconds,
         }
 
-        time.sleep(wait_time_seconds)
+        time.sleep(total_wait_time_seconds)
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["cat_index"]} after {wait_time_seconds} seconds'
+                f'Finished fetch data for source {cat_row["cat_index"]} '
+                f"after {total_wait_time_seconds} seconds"
             )
 
         return data, altdata
@@ -1288,6 +1396,15 @@ class VirtualDemoObs(VirtualObservatory):
                 new_datasets.append(Lightcurve(data=df, **init_kwargs))
 
         return new_datasets
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualDemoObs):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualDemoObs:
+            help_with_class(VirtualDemoObs, ParsDemoObs)
 
 
 if __name__ == "__main__":
