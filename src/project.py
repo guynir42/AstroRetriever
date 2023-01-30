@@ -371,7 +371,8 @@ class Project:
 
     def get_all_sources(self):
         """
-        Get all sources from all observatories.
+        Get all sources associated with this project
+        that have a corresponding row in the database.
         """
         # TODO: add cfg_hash to this
         stmt = sa.select(Source).where(Source.project == self.name)

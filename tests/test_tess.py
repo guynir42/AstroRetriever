@@ -8,7 +8,6 @@ from src.utils import OnClose
 from src.database import Session
 
 import src.dataset
-from src.dataset import RawPhotometry
 from src.tess import VirtualTESS
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -27,6 +26,12 @@ def test_tess_download(tess_project, wd_cat):
     idx = wd_cat.data["phot_g_mean_mag"] < 10
     idx = np.where(idx)[0][:3]
     c = wd_cat.make_smaller_catalog(idx)
+
+    with Session() as session:
+        sources = c.get_all_sources()
+        for s in sources:
+            session.delete(s)
+        session.commit()
 
     # download the lightcurve:
     tess_project.catalog = c
