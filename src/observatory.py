@@ -707,7 +707,6 @@ class VirtualObservatory:
                             )
                     finally:
                         lock.release()
-
                     # try to save the source+data to the database
                     session.commit()
                 except Exception:

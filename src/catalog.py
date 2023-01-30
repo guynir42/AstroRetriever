@@ -6,6 +6,9 @@ import shutil
 import hashlib
 from datetime import datetime, timezone
 import dateutil.parser
+
+import sqlalchemy as sa
+
 from astropy.table import Table
 from astropy.coordinates import SkyCoord, Distance
 import astropy.units as u
@@ -17,6 +20,8 @@ import pandas as pd
 from astropy.io import fits
 
 from src.parameters import Parameters
+from src.source import Source
+from src.database import Session, CloseSession
 from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
 
 
@@ -413,6 +418,25 @@ class Catalog:
         c.data = self.get_data_slice(idx)
 
         return c
+
+    def get_all_sources(self, session=None):
+        """
+        Get all sources in the catalog that have a
+        corresponding row in the database.
+
+        """
+        # TODO: add cfg_hash to this
+        names = [str(name) for name in self.data[self.pars.name_column]]
+
+        stmt = sa.select(Source).where(Source.name.in_(names))
+
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+        sources = session.scalars(stmt).all()
+
+        return sources
 
     @staticmethod
     def check_sanitizer(input_str):

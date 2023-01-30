@@ -143,6 +143,16 @@ def ztf_project():
 
 
 @pytest.fixture
+def tess_project():
+    project = Project(
+        name="test_TESS",
+        obs_names="TESS",  # a single observatory named TESS
+        catalog_kwargs={"default": "test"},
+    )
+    return project
+
+
+@pytest.fixture
 def simple_finder():
 
     finder = Finder(project=str(uuid.uuid4()))

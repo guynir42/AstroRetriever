@@ -9,18 +9,17 @@ import json
 import yaml
 import hashlib
 import git
-from collections import OrderedDict
 
 import sqlalchemy as sa
 
 import src.database
-from src.database import Session
-from src.parameters import Parameters, normalize_data_types
-from src.catalog import Catalog, ParsCatalog
+from src.database import Session, CloseSession
+from src.parameters import Parameters
+from src.catalog import Catalog
 from src.observatory import ParsObservatory
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
-from src.analysis import Analysis, ParsAnalysis
+from src.analysis import Analysis
 from src.properties import Properties
 from src.utils import help_with_class, help_with_object
 
@@ -407,14 +406,21 @@ class Project:
 
         return new_obs
 
-    def get_all_sources(self):
+    def get_all_sources(self, session=None):
         """
-        Get all sources from all observatories.
+        Get all sources associated with this project
+        that have a corresponding row in the database.
         """
         # TODO: add cfg_hash to this
         stmt = sa.select(Source).where(Source.project == self.name)
-        with Session() as session:
-            sources = session.scalars(stmt).all()
+
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        sources = session.scalars(stmt).all()
+
         return sources
 
     def delete_all_sources(self):

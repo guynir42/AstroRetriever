@@ -1,7 +1,6 @@
 import warnings
 import sqlalchemy as sa
 
-import matplotlib
 import matplotlib.pyplot as plt
 
 from sqlalchemy import func
@@ -21,8 +20,6 @@ from src.parameters import (
     get_class_from_data_type,
 )
 from src.utils import ra2sex, dec2sex
-
-# matplotlib.use("qt5agg")
 
 
 DEFAULT_PROJECT = "test_project"
