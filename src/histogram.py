@@ -7,6 +7,8 @@ import xarray as xr
 
 from src.parameters import Parameters
 from src.source import Source
+from src.utils import help_with_class, help_with_object, unit_convert_bytes, is_scalar
+
 
 # TODO: should this be saved to the database?
 
@@ -104,7 +106,7 @@ class ParsHistogram(Parameters):
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -250,7 +252,7 @@ class Histogram:
         coords = {}
         for input_ in ("score", "source", "obs"):
             for k, v in getattr(self.pars, f"{input_}_coords").items():
-                coords[k] = self.create_coordinate(k, v)
+                coords[k] = self._create_coordinate(k, v)
                 coords[k].attrs["input"] = input_
 
         data_shape = tuple(
@@ -283,7 +285,7 @@ class Histogram:
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
-    def create_coordinate(self, name, specs):
+    def _create_coordinate(self, name, specs):
         """
         Create a coordinate axis with a preset range
         or make a dynamic axis.
@@ -342,13 +344,13 @@ class Histogram:
                 f"Coordinate specs must be a tuple of length 0 or 3: {specs}"
             )
 
-        ax.attrs["long_name"] = self.get_coordinate_name(name)
+        ax.attrs["long_name"] = self._get_coordinate_name(name)
         ax.attrs["units"] = units
 
         return ax
 
     @staticmethod
-    def get_coordinate_name(name):
+    def _get_coordinate_name(name):
         """
         Get the long name of a coordinate.
         If the name is not recognized (hard coded),
@@ -398,7 +400,7 @@ class Histogram:
         for d in self.data.data_vars.values():
             total_size += d.size * d.dtype.itemsize
 
-        return total_size / self.unit_convert_bytes(units)
+        return total_size / unit_convert_bytes(units)
 
     def get_size_estimate(self, units="mb", dyn_coord_size=3, dyn_score_size=100):
         """
@@ -455,26 +457,7 @@ class Histogram:
         array_names = list(self.data.keys())
         total_size *= self.data[array_names[0]].dtype.itemsize
 
-        return total_size / self.unit_convert_bytes(units)
-
-    @staticmethod
-    def unit_convert_bytes(units):
-        """
-        Convert a number of bytes into another unit.
-        Can choose "kb", "mb", or "gb", which will return
-        the appropriate number of bytes in that unit.
-        If "bytes" or any other string, will return 1,
-        i.e., no conversion.
-        """
-        if units.endswith("s"):
-            units = units[:-1]
-
-        return {
-            "byte": 1,
-            "kb": 1024,
-            "mb": 1024**2,
-            "gb": 1024**3,
-        }.get(units.lower(), 1)
+        return total_size / unit_convert_bytes(units)
 
     def add_data(self, *args, **kwargs):
         """
@@ -531,7 +514,7 @@ class Histogram:
                     values = getattr(obj, axis)
 
                 if values is not None:
-                    if not self.is_scalar(values):
+                    if not is_scalar(values):
                         # an array, but need to check if all are the same
                         if len(np.unique(values)) == 1:
                             input_data[axis] = values[0]
@@ -573,14 +556,14 @@ class Histogram:
                     self.data.coords[axis].size == 0
                     or input_data[axis] not in self.data.coords[axis].values
                 ):
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
 
             # list of strings
             elif hasattr(input_data[axis], "__len__") and all(
                 isinstance(x, str) for x in input_data[axis]
             ):
                 if not set(input_data[axis]).issubset(self.data.coords[axis].values):
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
             else:
                 mx = max(self.data[axis] + self.data[axis].attrs["step"] / 2)
                 mn = min(self.data[axis] - self.data[axis].attrs["step"] / 2)
@@ -591,7 +574,7 @@ class Histogram:
                     new_mx = input_data[axis]
                     new_mn = input_data[axis]
                 if new_mx > mx or new_mn < mn:
-                    self.expand_axis(axis, input_data[axis])
+                    self._expand_axis(axis, input_data[axis])
 
         # here is where we actually increase the bin counts
         for name, da in self.data.data_vars.items():
@@ -601,8 +584,8 @@ class Histogram:
             indices = {}
             array_values = {}
             for ax in da.dims:
-                if self.is_scalar(input_data[ax]):
-                    indices[ax] = self.get_index(ax, input_data[ax])
+                if is_scalar(input_data[ax]):
+                    indices[ax] = self._get_index(ax, input_data[ax])
                 else:
                     array_values[ax] = input_data[ax]
 
@@ -704,7 +687,7 @@ class Histogram:
                                 num_values_to_add * correction
                             )
 
-    def expand_axis(self, axis, new_values):
+    def _expand_axis(self, axis, new_values):
         """
         Expand the axis to include the new values.
         This only works for dynamic axes.
@@ -806,7 +789,7 @@ class Histogram:
         new_dataset.attrs = self.data.attrs.copy()
         self.data = new_dataset
 
-    def get_index(self, axis, value):
+    def _get_index(self, axis, value):
         """
         Find the index of the closest value in a coordinate
         named "axis", to the value given.
@@ -944,16 +927,14 @@ class Histogram:
         if os.path.exists(fullname):
             os.remove(fullname)
 
-    @staticmethod
-    def is_scalar(value):
+    def help(self=None, owner_pars=None):
         """
-        Check if a value is a scalar (string or not has __len__).
-        Returns True if a scalar, False if not.
+        Print the help for this object and objects contained in it.
         """
-        if isinstance(value, str) or not hasattr(value, "__len__"):
-            return True
-        else:
-            return False
+        if isinstance(self, Histogram):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Histogram:
+            help_with_class(Histogram, ParsHistogram)
 
 
 if __name__ == "__main__":

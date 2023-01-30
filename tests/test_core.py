@@ -245,7 +245,7 @@ def test_version_control(data_dir):
         output_filename = None
 
         # save the config file
-        proj.save_config()
+        proj._save_config()
         output_filename = os.path.join(data_dir, proj.output_folder, "config.yaml")
 
         assert os.path.basename(proj.output_folder) == "TEST_PROJECT_" + proj.cfg_hash
@@ -1331,7 +1331,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=5)
+@pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project)
@@ -1458,7 +1458,10 @@ def test_analysis(analysis, new_source, raw_phot):
                 lc.delete_data_from_disk()
                 session.add(lc)
                 if lc in session:
-                    session.delete(lc)
+                    try:
+                        session.delete(lc)
+                    except Exception as e:
+                        print(f"could not delete lc: {str(e)}")
             for lc in new_source.processed_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)

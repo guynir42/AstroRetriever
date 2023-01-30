@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from src.parameters import Parameters
+from src.utils import help_with_class, help_with_object
 
 
 class ParsQuality(Parameters):
@@ -28,7 +29,7 @@ class ParsQuality(Parameters):
         self.load_then_update(kwargs)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -36,6 +37,22 @@ class ParsQuality(Parameters):
 
 
 class QualityChecker:
+    """
+    Applies data quality checks to timeseries data and flags bad data points.
+
+    The quality checks are hard coded into this class,
+    but should be overriden when using more complicated analysis.
+    The exact threshold for each parameter cut is saved in the
+    parameters object, and can be tweaked by the config file or
+    user input to the constructor.
+
+    Epochs with bad data are flagged and not used in
+    subsequent event detection, and the values of each
+    quality check are summed into a histograms object
+    on the analysis object (inside "quality_values").
+
+    """
+
     def __init__(self, **kwargs):
         self.pars = ParsQuality(**kwargs)
 
@@ -107,3 +124,12 @@ class QualityChecker:
         or single sided (False).
         """
         return {"offset": True}
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, QualityChecker):
+            help_with_object(self, owner_pars)
+        elif self is None or self == QualityChecker:
+            help_with_class(QualityChecker, ParsQuality)

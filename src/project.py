@@ -1,3 +1,8 @@
+"""
+The project is used to combine a catalog,
+some observatories, and analysis objects.
+"""
+
 import importlib
 import os
 import json
@@ -11,12 +16,13 @@ import sqlalchemy as sa
 import src.database
 from src.database import Session
 from src.parameters import Parameters, normalize_data_types
-from src.catalog import Catalog
+from src.catalog import Catalog, ParsCatalog
 from src.observatory import ParsObservatory
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
-from src.analysis import Analysis
+from src.analysis import Analysis, ParsAnalysis
 from src.properties import Properties
+from src.utils import help_with_class, help_with_object
 
 
 class ParsProject(Parameters):
@@ -77,7 +83,7 @@ class ParsProject(Parameters):
 
         self.load_then_update(kwargs)
 
-    def verify_observatory_names(self, names):
+    def _verify_observatory_names(self, names):
         """
         Check that the observatory names are a unique set of strings.
 
@@ -111,13 +117,13 @@ class ParsProject(Parameters):
         if key in ("vc", "version_control"):
             key = "version_control"
         if key == "obs_names":
-            self.verify_observatory_names(value)
+            self._verify_observatory_names(value)
             return
 
         super().__setattr__(key, value)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -142,13 +148,13 @@ class ParsProject(Parameters):
             List of Parameters objects.
         """
         pars_list = []
-        ParsProject.update_pars_list(project_obj, pars_list, verbose=verbose)
-        ParsProject.order_pars_list(pars_list, verbose=verbose)
+        ParsProject._update_pars_list(project_obj, pars_list, verbose=verbose)
+        ParsProject._order_pars_list(pars_list, verbose=verbose)
 
         return pars_list
 
     @staticmethod
-    def update_pars_list(obj, pars_list, object_list=None, verbose=False):
+    def _update_pars_list(obj, pars_list, object_list=None, verbose=False):
         """
         Recursively get the parameter objects from
         all sub-objects of the given object.
@@ -201,19 +207,19 @@ class ParsProject(Parameters):
                 if verbose:
                     print(f"loading an iterable: {k}")
                 for item in v:
-                    ParsProject.update_pars_list(item, pars_list, object_list)
+                    ParsProject._update_pars_list(item, pars_list, object_list)
             elif isinstance(v, dict):
                 if verbose:
                     print(f"loading a dict: {k}")
                 for item in v.values():
-                    ParsProject.update_pars_list(item, pars_list, object_list)
+                    ParsProject._update_pars_list(item, pars_list, object_list)
             else:
                 if verbose:
                     print(f"loading a single object: {k}")
-                ParsProject.update_pars_list(v, pars_list, object_list)
+                ParsProject._update_pars_list(v, pars_list, object_list)
 
     @staticmethod
-    def order_pars_list(pars_list, verbose=False):
+    def _order_pars_list(pars_list, verbose=False):
         """
         Reorder a list of Parameter objects such that
         ParsProject is first, then all observatories
@@ -232,18 +238,21 @@ class ParsProject(Parameters):
 
 
 class Project:
+    """
+    Combine a catalog, observatories, and analysis objects.
+
+    The project allows loading of parameters,
+    and saving of results all under one object.
+    Each project should be used for one science case,
+    with a set of sources given by the catalog,
+    a set of observatories given by the obs_names list,
+    and the reduction and analysis to be done
+    on the data from each observatory.
+    """
+
     def __init__(self, name, **kwargs):
         """
         Create a new Project object.
-        The project is used to combine a catalog,
-        some observatories, and analysis objects.
-        It allows loading of parameters saving of results
-        all under one object.
-        Each project should be used for one science case,
-        with a set of sources given by the catalog,
-        a set of observations given by the obs_names list,
-        and the reduction and analysis to be done
-        on the data from each observatory.
 
         Parameters
         ----------
@@ -269,7 +278,7 @@ class Project:
         self.pars.add_defaults_to_dict(catalog_kwargs)
         self.pars.add_defaults_to_dict(analysis_kwargs)
 
-        # filled by setup_output_folder at runtime:
+        # filled by _setup_output_folder at runtime:
         self.output_folder = None
         self.cfg_hash = None  # hash of the config file (for version control)
 
@@ -298,7 +307,7 @@ class Project:
         self.observatories = NamedList(ignorecase=True)
         for obs in self.pars.obs_names:
             self.observatories.append(
-                self.make_observatory(
+                self._make_observatory(
                     name=obs,
                     inputs=obs_kwargs,
                 )
@@ -309,7 +318,42 @@ class Project:
         self.analysis = self.pars.get_class_instance("analysis", **analysis_kwargs)
         self.analysis.observatories = self.observatories
 
-    def make_observatory(self, name, inputs):
+    @staticmethod
+    def _get_observatory_classes(name):
+        """
+        Translate the name of the observatory
+        into the module name, the class name
+        and the class of the parameters object
+        that goes in it.
+
+        Parameters
+        ----------
+        name: str
+            Name of the observatory.
+
+        Returns
+        -------
+        module: module
+            Module containing the observatory class.
+        obs_class: class
+            Class of the observatory object.
+        pars_class: class
+            Class of the parameters object.
+        """
+        if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
+            module = "observatory"
+            class_name = "VirtualDemoObs"
+            pars_name = "ParsDemoObs"
+        else:
+            module = name.lower()
+            class_name = f"Virtual{name.upper()}"
+            pars_name = f"ParsObs{name.upper()}"
+        module = importlib.import_module("." + module, package="src")
+        obs_class = getattr(module, class_name)
+        pars_class = getattr(module, pars_name)
+        return module, obs_class, pars_class
+
+    def _make_observatory(self, name, inputs):
         """
         Produce an Observatory object,
         use the name parameter to figure out
@@ -344,18 +388,11 @@ class Project:
 
         """
 
-        if name.lower() in ["demo", "demoobs"]:  # this is built in to observatory.py
-            module_name = "observatory"
-            class_name = "VirtualDemoObs"
-        else:
-            module_name = name.lower()
-            class_name = f"Virtual{name}"
+        module, obs_class, _ = self._get_observatory_classes(name)
 
         if not isinstance(inputs, dict):
             raise TypeError(f'"inputs" must be a dictionary, not {type(inputs)}')
 
-        module = importlib.import_module("." + module_name, package="src")
-        obs_class = getattr(module, class_name)
         new_obs = obs_class(**inputs)
 
         # TODO: separate reducer and use pars.get_class_instance to load it
@@ -429,7 +466,7 @@ class Project:
 
         """
 
-        self.save_config()
+        self._save_config()
 
         source_names = self.catalog.names
         types = self.pars.data_types
@@ -556,7 +593,7 @@ class Project:
                 session.add(source)
                 session.commit()
 
-    def save_config(self):
+    def _save_config(self):
         """
         Save the configuration file to disk.
         This is the point where the project
@@ -590,13 +627,13 @@ class Project:
         else:
             self.cfg_hash = ""
 
-        self.setup_output_folder()
+        self._setup_output_folder()
 
         # write the config file to disk
         with open(os.path.join(self.output_folder, "config.yaml"), "w") as f:
             yaml.dump(cfg_dict, f, sort_keys=False)
 
-    def setup_output_folder(self):
+    def _setup_output_folder(self):
         """
         Create a folder for the output of this project.
         This will include all the reduced and analyzed data,
@@ -622,6 +659,27 @@ class Project:
         # create the output folder
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
+
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+
+        if isinstance(self, Project):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Project:
+            cls = Project
+            subclasses = [Catalog, Analysis]
+
+            for obs_name in ParsObservatory.allowed_obs_names:
+                _, class_name, pars_name = cls._get_observatory_classes(obs_name)
+                subclasses.append(class_name)
+
+            help_with_class(
+                cls,
+                ParsProject,
+                subclasses,
+            )
 
 
 class NamedList(list):
@@ -660,21 +718,46 @@ class NamedList(list):
 
 
 if __name__ == "__main__":
-    print("Starting a new project")
     proj = Project(
-        name="WD",
-        obs_names="ZTF",  # a single observatory named ZTF
-        catalog_kwargs={"default": "WD"},  # load the default WD catalog
-        verbose=1,  # print out some info
-        obs_kwargs={
-            "ZTF": {  # instructions for ZTF specifically
-                "data_glob": "lightcurves_WD*.h5",  # filename format
-                "catalog_matching": "number",  # match by catalog row number
-                "dataset_identifier": "key",  # use key (HDF5 group name) as identifier
+        name="default_test",  # must give a name to each project
+        description="my project description",  # optional parameter example
+        version_control=False,  # whether to use version control on products
+        obs_names=["ZTF"],  # must give at least one observatory name
+        # parameters to pass to the Analysis object:
+        analysis_kwargs={
+            "num_injections": 3,
+            "finder_kwargs": {  # pass through Analysis into Finder
+                "snr_threshold": 7.5,
             },
-        },  # general parameters to pass to all observatories
+            "finder_module": "src.finder",  # can choose different module
+            "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
+        },
+        analysis_module="src.analysis",  # replace this with your code path
+        analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
+        catalog_kwargs={"default": "WD"},  # load the default WD catalog
+        # parameters to be passed into each observatory class
+        obs_kwargs={
+            "reducer": {
+                "radius": 3,
+                "gap": 40,
+            },
+            "ZTF": {  # specific instructions for the ZTF observatory only
+                "credentials": {
+                    "username": "guy",
+                    "password": "12345",
+                },
+            },
+        },
     )
 
+    # download all data for all sources in the catalog
+    # and reduce the data (skipping raw and reduced data already on file)
+    # and store the results as detection objects in the DB, along with
+    # detection stats in the form of histogram arrays.
+    # proj.run()
+
+    Project.help()
+    proj.help()
     # proj.delete_all_sources()
     # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
     # sources = proj.get_all_sources()

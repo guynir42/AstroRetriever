@@ -17,6 +17,8 @@ import pandas as pd
 from astropy.io import fits
 
 from src.parameters import Parameters
+from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
+
 
 SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_\./\\\\]+|\.\.")
 
@@ -126,7 +128,7 @@ class ParsCatalog(Parameters):
         self.load_then_update(kwargs)
 
     @classmethod
-    def get_default_cfg_key(cls):
+    def _get_default_cfg_key(cls):
         """
         Get the default key to use when loading a config file.
         """
@@ -188,6 +190,30 @@ class ParsCatalog(Parameters):
 
 
 class Catalog:
+    """
+    Container for a table with sources and their magnitudes and coordinates.
+
+    The catalog object can be used to load or even download info on
+    some assortment of astronomical sources. For example, choose
+    default="WD" to download the white dwarf catalog from Fusillo et al 2021.
+
+    If not using the default, please make sure to specify the filename
+    and/or URL to download the catalog from.
+    Other parameters include names of the columns in the raw catalog data,
+    and other definitions useful for finding the sources in the sky.
+
+    The loaded catalog will exist, as a pandas dataframe or numpy named-array,
+    inside the attribute "data".
+
+    Some methods exist to translate a row from the raw data into usable
+    information for e.g., downloading sources.
+
+    A complete list of default options:
+    -"test": make a small catalog with random sources
+    -"WD": load the WD catalog from Fusillo et al 2021
+
+    """
+
     def __init__(self, **kwargs):
         self.pars = ParsCatalog(**kwargs)
 
@@ -212,7 +238,7 @@ class Catalog:
     def __len__(self):
         return len(self.data)
 
-    def guess_file_type(self):
+    def _guess_file_type(self):
         """
         Guess the file type of the catalog.
         If parameters contain a "filetype" key, use that.
@@ -282,11 +308,11 @@ class Catalog:
 
         """
         if self.data is None or force_reload or force_redownload:
-            self.load_from_disk(force_redownload)
+            self._load_from_disk(force_redownload)
         if self.data is not None and len(self.data) > 0:
-            self.make_inverse_index()
+            self._make_inverse_index()
 
-    def load_from_disk(self, force_redownload=False):
+    def _load_from_disk(self, force_redownload=False):
         """
         Load the catalog from disk.
         The filename given in the parameters object
@@ -310,7 +336,7 @@ class Catalog:
             print(f"Loading catalog from {self.get_fullpath()}")
 
         # do the actual loading:
-        type = self.guess_file_type()
+        type = self._guess_file_type()
         if type == "fits":
             if self.pars.use_only_pandas:
                 self.data = Table.read(self.get_fullpath(), format="fits").to_pandas()
@@ -392,7 +418,7 @@ class Catalog:
     def check_sanitizer(input_str):
         return SANITIZE_RE.sub("", input_str)
 
-    def make_inverse_index(self):
+    def _make_inverse_index(self):
         """
         Generate a dictionary that translates
         from object name to row index.
@@ -425,7 +451,7 @@ class Catalog:
             The row index of the object in the catalog.
         """
         if self.inverse_name_index is None:
-            self.make_inverse_index()
+            self._make_inverse_index()
         return self.inverse_name_index[self.name_to_string(name)]
 
     def get_name_from_index(self, number):
@@ -697,7 +723,7 @@ class Catalog:
         filters = np.random.choice(["R", "I", "V"], number)
         names = []
         for i in range(len(ra)):
-            names.append(f"J{Catalog.ra2sex(ra[i])}{Catalog.dec2sex(dec[i])}")
+            names.append(f"J{ra2sex(ra[i])}{dec2sex(dec[i])}")
 
         data = {
             "object_id": names,
@@ -735,123 +761,14 @@ class Catalog:
         elif fmt == "h5":
             df.to_hdf(filename, key="catalog", mode="w")
 
-    @staticmethod
-    def ra2sex(ra):
+    def help(self=None, owner_pars=None):
         """
-        Convert an RA in degrees to a string in sexagesimal format.
+        Print the help for this object and objects contained in it.
         """
-        if ra < 0 or ra > 360:
-            raise ValueError("RA out of range.")
-        ra /= 15.0  # convert to hours
-        return (
-            f"{int(ra):02d}:{int((ra % 1) * 60):02d}:{((ra % 1) * 60) % 1 * 60:05.2f}"
-        )
-
-    @staticmethod
-    def dec2sex(dec):
-        """
-        Convert a Dec in degrees to a string in sexagesimal format.
-        """
-        if dec < -90 or dec > 90:
-            raise ValueError("Dec out of range.")
-        return f"{int(dec):+03d}:{int((dec % 1) * 60):02d}:{((dec % 1) * 60) % 1 * 60:04.1f}"
-
-    @staticmethod
-    def ra2deg(ra):
-        """
-        Convert the input right ascension into a float of decimal degrees.
-        The input can be a string (with hour angle units) or a float (degree units!).
-
-        Parameters
-        ----------
-        ra: scalar float or str
-            Input RA (right ascension).
-            Can be given in decimal degrees or in sexagesimal string (in hours!)
-            Example 1: 271.3
-            Example 2: 18:23:21.1
-
-        Returns
-        -------
-        ra: scalar float
-            The RA as a float, in decimal degrees
-
-        """
-        if type(ra) == str:
-            c = SkyCoord(ra=ra, dec=0, unit=(u.hourangle, u.degree))
-            ra = c.ra.value  # output in degrees
-        else:
-            ra = float(ra)
-
-        if not 0.0 < ra < 360.0:
-            raise ValueError(f"Value of RA ({ra}) is outside range (0 -> 360).")
-
-        return ra
-
-    @staticmethod
-    def dec2deg(dec):
-        """
-        Convert the input right ascension into a float of decimal degrees.
-        The input can be a string (with hour angle units) or a float (degree units!).
-
-        Parameters
-        ----------
-        dec: scalar float or str
-            Input declination.
-            Can be given in decimal degrees or in sexagesimal string (in degrees as well)
-            Example 1: +33.21 (northern hemisphere)
-            Example 2: -22.56 (southern hemisphere)
-            Example 3: +12.34.56.7
-
-        Returns
-        -------
-        dec: scalar float
-            The declination as a float, in decimal degrees
-
-        """
-        if type(dec) == str:
-            c = SkyCoord(ra=0, dec=dec, unit=(u.degree, u.degree))
-            dec = c.dec.value  # output in degrees
-        else:
-            dec = float(dec)
-
-        if not -90.0 < dec < 90.0:
-            raise ValueError(f"Value of dec ({dec}) is outside range (-90 -> +90).")
-
-        return dec
-
-    @staticmethod
-    def date2jd(date):
-        """
-        Parse a string or datetime object into a Julian Date (JD) float.
-        If string, will parse using dateutil.parser.parse.
-        If datetime, will convert to UTC or add that timezone if is naive.
-        If given as float, will just return it as a float.
-
-        Parameters
-        ----------
-        date: float or string or datetime
-            The input date or datetime object.
-
-        Returns
-        -------
-        jd: scalar float
-            The Julian Date associated with the input date.
-
-        """
-        if isinstance(date, datetime):
-            t = date
-        elif isinstance(date, str):
-            t = dateutil.parser.parse(date)
-        else:
-            return float(date)
-
-        if t.tzinfo is None:  # naive datetime (no timezone)
-            # turn a naive datetime into a UTC datetime
-            t = t.replace(tzinfo=timezone.utc)
-        else:  # non naive (has timezone)
-            t = t.astimezone(timezone.utc)
-
-        return Time(t).jd
+        if isinstance(self, Catalog):
+            help_with_object(self, owner_pars)
+        elif self is None or self == Catalog:
+            help_with_class(Catalog, ParsCatalog)
 
 
 if __name__ == "__main__":

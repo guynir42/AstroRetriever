@@ -9,7 +9,9 @@ from ztfquery import lightcurve
 
 from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
-from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
+from src.dataset import RawPhotometry, Lightcurve
+from src.utils import help_with_class, help_with_object
+from src.utils import ra2deg, dec2deg, date2jd
 
 
 class ParsObsZTF(ParsObservatory):
@@ -71,10 +73,14 @@ class ParsObsZTF(ParsObservatory):
         config = self.load_then_update(kwargs)
 
         # apply parameters specific to this class
-        self.apply_specific_pars(config)
+        self._apply_specific_pars(config)
 
 
 class VirtualZTF(VirtualObservatory):
+    """
+    A virtual observatory sub class for getting ZTF data.
+    """
+
     def __init__(self, **kwargs):
         """
         Generate an instance of a VirtualZTF object.
@@ -351,6 +357,15 @@ class VirtualZTF(VirtualObservatory):
 
         return username, password
 
+    def help(self=None, owner_pars=None):
+        """
+        Print the help for this object and objects contained in it.
+        """
+        if isinstance(self, VirtualZTF):
+            help_with_object(self, owner_pars)
+        elif self is None or self == VirtualZTF:
+            help_with_class(VirtualZTF, ParsObsZTF)
+
 
 def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
     """
@@ -404,19 +419,18 @@ def ztf_forced_photometry(ra, dec, start=None, end=None, **kwargs):
     if "verbose" in kwargs and kwargs["verbose"]:
         print(f"Calling the ZTF forced photometry service with coordinates: {ra} {dec}")
 
-    # TODO: update utils to use Catalog instead
-    ra = utils.ra2deg(ra)
-    dec = utils.dec2deg(dec)
+    ra = ra2deg(ra)
+    dec = dec2deg(dec)
 
     if start is None:
         start = "2000-01-01"
-    start_jd = utils.date2jd(start)
+    start_jd = date2jd(start)
 
     if end is None:
         end = datetime.utcnow()
-    end_jd = utils.date2jd(end)
+    end_jd = date2jd(end)
 
-    credentials = utils.get_username_password("ztf")
+    credentials = utils.get_username_password("ztf")  # TODO: fix this!
 
     url = "https://ztfweb.ipac.caltech.edu/cgi-bin/requestForcedPhotometry.cgi"
     auth = ("ztffps", "dontgocrazy!")
