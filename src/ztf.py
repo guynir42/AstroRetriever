@@ -327,6 +327,7 @@ class VirtualZTF(VirtualObservatory):
         ]
         for df in dfs:
             df = df[keep_columns]
+            # df = df.rename(columns={v: k for k, v in dataset.colmap.items()})
             if len(df) > 0:
                 new_datasets.append(Lightcurve(data=df, **init_kwargs))
 

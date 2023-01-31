@@ -878,11 +878,14 @@ class DatasetMixin:
     def find_colmap(self):
         """
         Calculate the column map for the data.
-        This locates columns in the data that
-        correspond to known types of data and
-        assigns them.
+        Locates column names in the data that
+        correspond to standardized column names.
+        This mapping can be used to access data
+        columns with weird, observatory specific
+        naming conventions, using a uniform dict.
+        E.g., ZTF uses "filtercode", but it would
+        be accessed using colmap['filter'].
         """
-
         if isinstance(self._data, pd.DataFrame):
             columns = self._data.columns
         # other datatypes will call this differently...
@@ -1677,7 +1680,7 @@ class Lightcurve(DatasetMixin, Base):
             self.calc_best()
 
             # remove columns we don't use
-            self.drop_columns()
+            self.drop_and_rename_columns()
 
         except Exception:
             # if construction fails, don't want to leave
@@ -1925,12 +1928,41 @@ class Lightcurve(DatasetMixin, Base):
             self.flux_max = np.nanmax(flux)
             self.flux_min = np.nanmin(flux)
 
-    def drop_columns(self):
+    def drop_and_rename_columns(self):
+        """
+        Remove from the underying data the
+        unused columns (those not defined in
+        the colmap) and then rename them to match
+        the names in the colmap (e.g., filtercode-> filter).
 
-        cols = [self.colmap[c] for c in self.colmap.keys()]
+        This also changes the colmap so it has all
+        the new column names (it becomes an identity map),
+        to enable backward compatibility with methods that
+        need to access the data in its original form.
 
-        self.data = self.data[cols]
+        It also adds a column named "mjd" for convenience.
+        """
+        inv_colmap = {v: k for k, v in self.colmap.items()}
+        new_cols = list(inv_colmap.keys())
+        if isinstance(self.data, pd.DataFrame):
+            self.data = self.data[new_cols]
+            self.data.rename(columns=inv_colmap, inplace=True)
+
+            # just in case we still use the colmap, it should
+            # also point back to the new column names
+            self.colmap = {k: k for k in self.colmap.keys()}
+
+            # add a column with the MJD
+            self.data["mjd"] = self.time_info["to mjd"](self.data["time"])
+            self.colmap["mjd"] = "mjd"
+
         # what about other data types, e.g., xarrays?
+        elif isinstance(self.data, np.ndarray):
+            raise ValueError("Not implemented yet.")
+        elif isinstance(self.data, xr.Dataset):
+            raise ValueError("Not implemented yet.")
+        else:
+            raise ValueError(f"Unknown data type: {type(self.data)}")
 
     def copy(self):
         for k, v in self.__dict__.items():

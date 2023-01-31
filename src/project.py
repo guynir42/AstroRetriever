@@ -10,6 +10,8 @@ import yaml
 import hashlib
 import git
 
+import numpy as np
+
 import sqlalchemy as sa
 
 import src.database
@@ -180,6 +182,7 @@ class ParsProject(Parameters):
             not hasattr(obj, "__dict__")
             or callable(obj)
             or type(obj).__module__ == "builtins"
+            or hasattr(obj, "__iter__")
         ):
             return
 
@@ -202,7 +205,11 @@ class ParsProject(Parameters):
         # if object itself is not a Parameters object,
         # maybe one of its attributes is
         for k, v in obj.__dict__.items():
-            if hasattr(v, "__iter__") and not isinstance(v, str):
+            if (
+                hasattr(v, "__iter__")
+                and not isinstance(v, str)
+                and not isinstance(v, np.ndarray)
+            ):
                 if verbose:
                     print(f"loading an iterable: {k}")
                 for item in v:
@@ -482,6 +489,7 @@ class Project:
         with Session() as session:
             # TODO: add batching of sources
             for name in source_names:
+
                 source = session.scalars(
                     sa.select(Source).where(
                         Source.name == name,
@@ -490,48 +498,55 @@ class Project:
                     )
                 ).first()
 
-                # need to generate a new source
-                if source is None:
-                    cat_row = self.catalog.get_row(name, "name", "dict")
-                    source = Source(
-                        name=name,
-                        project=self.name,
-                        cfg_hash=self.cfg_hash,
-                        **cat_row,
-                    )
+                # # need to generate a new source
+                # if source is None:
+                #     cat_row = self.catalog.get_row(name, "name", "dict")
+                #     source = Source(
+                #         project=self.name,
+                #         cfg_hash=self.cfg_hash,
+                #         **cat_row,
+                #     )
 
                 # check if source has already been processed (has properties)
-                if len(source.properties) > 0:
+                if source is not None and source.properties is not None:
                     continue
+
+                # no source found, need to make it (and download data maybe?)
+                cat_row = self.catalog.get_row(name, "name", "dict")
 
                 need_skip = False
                 for obs in self.observatories:
                     if need_skip:
                         continue
 
+                    # try to download the data for this observatory
+                    source = obs.check_and_fetch_source(
+                        cat_row, save=False, session=session
+                    )
+
                     for dt in types:
                         if need_skip:
                             continue
 
                         if dt == "photometry":
-                            # check if raw data is attached to this source
-                            data = [
-                                rd
-                                for rd in source.raw_photometry
-                                if rd.observatory == obs.name
-                            ]
-
-                            # if not, look around the DB for any raw data
-                            # with a matching name and observatory
-                            # (e.g., from another project or version)
-                            if len(data) == 0:
-                                loaded_data = session.scalars(
-                                    sa.select(RawPhotometry).where(
-                                        RawPhotometry.source_name == name,
-                                        RawPhotometry.observatory == obs.name,
-                                    )
-                                ).all()
-                                source.raw_photometry += loaded_data
+                            # # check if raw data is attached to this source
+                            # data = [
+                            #     rd
+                            #     for rd in source.raw_photometry
+                            #     if rd.observatory == obs.name
+                            # ]
+                            #
+                            # # if not, look around the DB for any raw data
+                            # # with a matching name and observatory
+                            # # (e.g., from another project or version)
+                            # if len(data) == 0:
+                            #     loaded_data = session.scalars(
+                            #         sa.select(RawPhotometry).where(
+                            #             RawPhotometry.source_name == name,
+                            #             RawPhotometry.observatory == obs.name,
+                            #         )
+                            #     ).all()
+                            #     source.raw_photometry += loaded_data
 
                             # did we find any raw photometry?
                             data = [
@@ -539,21 +554,23 @@ class Project:
                                 for rp in source.raw_photometry
                                 if rp.observatory == obs.name
                             ]
+
                             if len(data) == 0:
-                                # TODO: need to download the data
-                                raise RuntimeError("Need to implement this!")
+                                raise ValueError(
+                                    f"Could not find any raw photometry on source {name}"
+                                )
 
                             if len(data) > 1:
-                                raise RuntimeError(
+                                raise ValueError(
                                     "Each source should have only one "
                                     "RawPhotometry associated with each observatory. "
                                     f"For source {name} and observatory {obs.name}, "
                                     f"found {len(data)} RawPhotometry objects."
                                 )
+                            data = data[0]
 
                             # check dataset has data on disk/in memory
                             # (if not, skip entire source or raise RuntimeError)
-                            data = data[0]
                             if not data.check_data_exists():
                                 if self.pars.ignore_missing_raw_data:
                                     need_skip = True
@@ -584,7 +601,7 @@ class Project:
                             if len(lcs) == 0:  # reduce data
                                 lcs = obs.reduce(data, to="lcs")
 
-                            source.lightcurves += lcs
+                            source.reduced_lightcurves += lcs
 
                         # add additional elif for other types...
                         else:
@@ -754,6 +771,7 @@ if __name__ == "__main__":
                 },
             },
         },
+        verbose=True,
     )
 
     # download all data for all sources in the catalog
@@ -762,9 +780,15 @@ if __name__ == "__main__":
     # detection stats in the form of histogram arrays.
     # proj.run()
 
-    Project.help()
-    proj.help()
-    # proj.delete_all_sources()
+    # Project.help()
+    # proj.help()
+
+    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
+
+    proj.delete_all_sources()
+    proj.catalog = proj.catalog.make_smaller_catalog(range(20))
+    proj.run()
+
     # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
     # sources = proj.get_all_sources()
     # print(

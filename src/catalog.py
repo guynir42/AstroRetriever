@@ -416,7 +416,7 @@ class Catalog:
         c = Catalog(name=self.pars.catalog_name + "_small")
         c.pars = self.pars.copy()
         c.data = self.get_data_slice(idx)
-
+        c._make_inverse_index()
         return c
 
     def get_all_sources(self, session=None):
@@ -593,7 +593,7 @@ class Catalog:
         if index_type == "number":
             idx = int(loc)
         elif index_type == "name":
-            idx = int([self.get_index_from_name(loc)])
+            idx = int(self.get_index_from_name(loc))
         else:
             raise ValueError('index_type must be "number" or "name"')
 

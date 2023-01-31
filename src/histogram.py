@@ -65,6 +65,12 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the score axes",
         )
+        self.score_names = self.add_par(
+            "score_names",
+            None,
+            (list, None),
+            "Use only these scores (if None, use all)",
+        )
 
         default_source_coords = {
             "mag": (15, 21, 0.5),
@@ -75,6 +81,7 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the source axes",
         )
+        # TODO: we could consider adding a source_names parameter
 
         default_obs_coords = {
             "exptime": (30, 1),
@@ -86,6 +93,7 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the observation axes",
         )
+        # TODO: we could consider adding an obs_names parameter
 
         self.raise_on_repeat_source = self.add_par(
             "raise_on_repeat_source",
@@ -97,11 +105,15 @@ class ParsHistogram(Parameters):
 
         self._enforce_no_new_attrs = True
 
+        self.load_then_update(kwargs)
+
     def __setattr__(self, key, value):
         if key == "dtype" and value not in ("uint16", "uint32"):
             raise ValueError(
                 f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
             )
+        if key in ["score_coords", "source_coords", "obs_coords"]:
+            value = {k: list(v) for k, v in value.items()}
 
         super().__setattr__(key, value)
 
@@ -190,6 +202,9 @@ class Histogram:
         if can_initialize:
             self.initialize()
 
+    # TODO: remove this function as we don't want to remove
+    #  the score coordinates from the pars, as it will be
+    #  written that way to the output config file.
     def pick_out_coords(self, names, input_type="score"):
         """
         Pick only a subset of the coordinate specs based
@@ -252,6 +267,11 @@ class Histogram:
         coords = {}
         for input_ in ("score", "source", "obs"):
             for k, v in getattr(self.pars, f"{input_}_coords").items():
+                # if we have a names override, only use those names
+                names = getattr(self.pars, f"{input_}_names", None)
+                if names is not None and k not in names:
+                    continue
+
                 coords[k] = self._create_coordinate(k, v)
                 coords[k].attrs["input"] = input_
 
@@ -297,11 +317,11 @@ class Histogram:
         name: str
             The name of the coordinate.
         specs:
-            A tuple of (start, stop, step) for a fixed range,
-            or an empty tuple or a 2-tuple (start, step) for a dynamic range.
+            A tuple/list of (start, stop, step) for a fixed range,
+            or an empty tuple/list or a 2-tuple/list (start, step) for a dynamic range.
             An extra last element can be given as a string
             to specify the units of the coordinate.
-            In that case the tuple will be (start, stop, step, units)
+            In that case the tuple/list will be (start, stop, step, units)
             or (start, step, units) or (units).
 
         Returns
@@ -510,7 +530,8 @@ class Histogram:
                 values = None
                 if hasattr(obj, "__contains__") and axis in obj:
                     values = obj[axis]
-                elif hasattr(obj, axis):
+                elif hasattr(obj, axis) and not isinstance(obj, pd.DataFrame):
+                    # only get this attribute if it isn't e.g., "filter"
                     values = getattr(obj, axis)
 
                 if values is not None:
@@ -564,7 +585,7 @@ class Histogram:
             ):
                 if not set(input_data[axis]).issubset(self.data.coords[axis].values):
                     self._expand_axis(axis, input_data[axis])
-            else:
+            else:  # array of numbers
                 mx = max(self.data[axis] + self.data[axis].attrs["step"] / 2)
                 mn = min(self.data[axis] - self.data[axis].attrs["step"] / 2)
                 if hasattr(input_data[axis], "__len__"):
@@ -738,18 +759,19 @@ class Histogram:
                 mx = round(mx / step) * step  # round to nearest step
                 mn = min(min(new_values), min(self.data[axis].values))
                 mn = round(mn / step) * step  # round to nearest step
-
                 # the new values up to the original axis
                 lower = np.arange(mn, min(self.data[axis]), step)
-                if np.isclose(lower[-1], min(self.data[axis])):
-                    lower = lower[:-1]
+                new_coord = self.data[axis]
+                if len(lower) > 0:
+                    if np.isclose(lower[-1], min(self.data[axis])):
+                        lower = lower[:-1]
 
-                new_coord = np.concatenate((lower, self.data[axis]))
+                    new_coord = np.concatenate((lower, new_coord))
 
                 # the new values after the original axis
                 upper = np.arange(max(new_coord) + step, mx + step, step)
-
-                new_coord = np.concatenate((new_coord, upper))
+                if len(upper) > 0:
+                    new_coord = np.concatenate((new_coord, upper))
 
         # make a new array with all the same coords,
         # except replace the one axis with the new coord

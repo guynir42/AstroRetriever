@@ -659,11 +659,12 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
             # make sure it picks out the right points
             assert dff["mjd"].equals(lc.data["mjd"])
             assert dff["mag"].equals(lc.data["mag"])
-            assert dff["mag_err"].equals(lc.data["mag_err"])
+            assert dff["mag_err"].equals(lc.data["magerr"])
 
             # make sure the number of points are correct
             assert lc.number == len(dff)
-            assert lc.shape == (len(dff), len(lc.colmap))
+            # need -1 to remove the one column for MJD we add
+            assert lc.shape == (len(dff), len(lc.colmap) - 1)
 
             # make sure the frame rate and exposure time are correct
             assert lc.exp_time == 30.0

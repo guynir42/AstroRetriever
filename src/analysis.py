@@ -8,7 +8,7 @@ from sqlalchemy.orm.session import make_transient
 from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
-from src.database import Session
+from src.database import Session, CloseSession
 from src.source import Source
 from src.properties import Properties
 from src.utils import help_with_class, help_with_object
@@ -94,7 +94,6 @@ class ParsAnalysis(Parameters):
             "Filename for the histograms file",
         )  # TODO: should this be appended a cfg_hash?
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)
@@ -193,7 +192,8 @@ class Analysis:
         self.quality_values = Histogram(**histogram_kwargs, name="quality_values")
 
         # update the kwargs with the right scores:
-        self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
+        # self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
+        self.quality_values.pars.score_names = self.checker.pars.cut_names
 
         # the finder and simulator
         self.finder = self.pars.get_class_instance("finder", **finder_kwargs)
@@ -201,9 +201,11 @@ class Analysis:
         self.sim = self.pars.get_class_instance("simulator", **simulator_kwargs)
 
         self.all_scores = Histogram(**histogram_kwargs, name="all_scores")
-        self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        # self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.all_scores.pars.score_names = self.finder.pars.score_names
         self.good_scores = Histogram(**histogram_kwargs, name="good_scores")
-        self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        # self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.good_scores.pars.score_names = self.finder.pars.score_names
 
         # this generates the xarrays in each histogram
         self.reset_histograms()
@@ -212,8 +214,18 @@ class Analysis:
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
 
-    def analyze_sources(self, sources):
+    def analyze_sources(self, sources, session=None):
         """
+        Go over a bunch of sources and run
+        quality checks, event detection and
+        properties estimation for each one.
+        Each source must have already been
+        attached some reduced data (e.g.,
+        lightcurves) and will produce
+        processed and simulated data as well.
+        The processed/simulated could be
+        either saved or deleted at the end
+        of the analysis (based on pars).
 
         Parameters
         ----------
@@ -221,6 +233,12 @@ class Analysis:
             A list of sources to run the analysis on.
             After this batch is done will update
             the histogram on disk.
+        session: sqlalchemy session, optional
+            If provided, will use this session to
+            save the data to the database
+            (and will leave the session open).
+            If not given, will open a new session
+            and close it at the end of the analysis.
         """
         if isinstance(sources, Source):
             sources = [sources]
@@ -274,50 +292,53 @@ class Analysis:
         # save the detections to the database
         if self.pars.save_anything and self.pars.need_to_save():
 
-            with Session() as session:
-                try:  # if anything fails, must rollback all
-                    if self.pars.save_histograms:
-                        self._save_histograms(temp=True)
+            if session is None:
+                session = Session()
+                # make sure this session gets closed at end of function
+                _ = CloseSession(session)
 
-                    for source in sources:
-                        session.add(source)
-                        for dt in self.pars.data_types:
-                            for data in getattr(source, f"raw_{dt}"):
-                                if data.filename is None:
-                                    raise ValueError(
-                                        f"raw_{dt} (from {data.observatory}) "
-                                        f"on Source {source.id} has no filename. "
-                                        "Did you forget to save it?"
-                                    )
-                            for i, data in enumerate(getattr(source, f"reduced_{dt}")):
-                                if data.filename is None:
-                                    raise ValueError(
-                                        f"reduced_{dt} (number {i}) on Source {source.id} "
-                                        "has no filename. Did you forget to save it?"
-                                    )
-                            [data.save() for data in getattr(source, f"processed_{dt}")]
-                            [data.save() for data in getattr(source, f"simulated_{dt}")]
+            try:  # if anything fails, must rollback all
+                if self.pars.save_histograms:
+                    self._save_histograms(temp=True)
 
-                    session.commit()
+                for source in sources:
+                    session.add(source)
+                    for dt in self.pars.data_types:
+                        for data in getattr(source, f"raw_{dt}"):
+                            if data.filename is None:
+                                raise ValueError(
+                                    f"raw_{dt} (from {data.observatory}) "
+                                    f"on Source {source.id} has no filename. "
+                                    "Did you forget to save it?"
+                                )
 
-                    # if all the file saving and DB interactions work,
-                    # then we can commit the histograms (rename temp files)
-                    self._commit_histograms()
-                except Exception:
-                    self._rollback_histograms()
-                    session.rollback()
-                    for source in sources:
-                        for dt in self.pars.data_types:
-                            [
-                                lc.delete_data_from_disk()
-                                for lc in getattr(source, f"processed_{dt}")
-                            ]
-                            [
-                                lc.delete_data_from_disk()
-                                for lc in getattr(source, f"simulated_{dt}")
-                            ]
+                        # [data.save() for data in getattr(source, f"reduced_{dt}")] # saved earlier?
+                        for i, data in enumerate(getattr(source, f"reduced_{dt}")):
+                            if data.filename is None:
+                                raise ValueError(
+                                    f"reduced_{dt} (number {i}) on Source {source.id} "
+                                    "has no filename. Did you forget to save it?"
+                                )
+                        # these datasets are removed if we don't want to save them
+                        [data.save() for data in getattr(source, f"processed_{dt}")]
+                        [data.save() for data in getattr(source, f"simulated_{dt}")]
 
-                    raise  # finally re-raise the exception
+                session.commit()
+
+                # if all the file saving and DB interactions work,
+                # then we can commit the histograms (rename temp files)
+                self._commit_histograms()
+            except Exception:
+                self._rollback_histograms()
+                session.rollback()
+                for source in sources:
+                    for dt in self.pars.data_types:
+                        for lc in getattr(source, f"processed_{dt}"):
+                            lc.delete_data_from_disk()
+                        for lc in getattr(source, f"simulated_{dt}"):
+                            lc.delete_data_from_disk()
+
+                raise  # finally re-raise the exception
 
     def _analyze_photometry(self, source):
         """

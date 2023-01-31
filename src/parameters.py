@@ -749,15 +749,17 @@ class Parameters:
 
         desc = default = types = ""
         value = self[name]
-        if isinstance(value, str):
-            value = f'"{value}"'
 
         if name in self.__docstrings__:
             desc = self.__docstrings__[name].strip()
             if desc.endswith("."):
                 desc = desc[:-1]
         if name in self.__defaultpars__:
-            default = f"default= {self.__defaultpars__[name]}"
+            def_value = self.__defaultpars__[name]
+            if def_value == value:
+                default = "default"
+            else:
+                default = f"default= {def_value}"
         if name in self.__typecheck__:
             types = self.__typecheck__[name]
             if not isinstance(types, tuple):
@@ -768,6 +770,8 @@ class Parameters:
         if extra:
             extra = f" [{extra}]"
 
+        if isinstance(value, str):
+            value = f'"{value}"'
         s = f"= {value} % {desc}{extra}"
 
         return s
