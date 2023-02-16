@@ -19,7 +19,7 @@ from src.parameters import (
     convert_data_type,
     get_class_from_data_type,
 )
-from src.utils import ra2sex, dec2sex
+from src.utils import ra2sex, dec2sex, add_alias
 
 
 DEFAULT_PROJECT = "test_project"
@@ -106,82 +106,85 @@ class Source(Base, conesearch_alchemy.Point):
         ),
     )
 
-    name = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Name of the source",
-    )
+    if True:  # put all column definitions on one block
+        name = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Name of the source",
+        )
 
-    # ra and dec are included from the Point class
+        # ra and dec are included from the Point class
 
-    project = sa.Column(
-        sa.String,
-        nullable=False,
-        default=DEFAULT_PROJECT,
-        index=True,
-        doc="Project name to which this source is associated with",
-    )
+        project = sa.Column(
+            sa.String,
+            nullable=False,
+            default=DEFAULT_PROJECT,
+            index=True,
+            doc="Project name to which this source is associated with",
+        )
 
-    cfg_hash = sa.Column(
-        sa.String,
-        nullable=False,
-        default="",
-        index=True,
-        doc="Hash of the configuration used to create this source "
-        "(leave empty if not using version control)",
-    )
+        cfg_hash = sa.Column(
+            sa.String,
+            nullable=False,
+            default="",
+            index=True,
+            doc="Hash of the configuration used to create this source "
+            "(leave empty if not using version control)",
+        )
 
-    origin = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Where this source came from in a general sense",
-    )
+        origin = sa.Column(
+            sa.String,
+            nullable=True,
+            index=True,
+            doc="Where this source came from in a general sense",
+        )
 
-    classification = sa.Column(
-        sa.String, nullable=True, doc="Classification of the source"
-    )
+        classification = sa.Column(
+            sa.String, nullable=True, doc="Classification of the source"
+        )
 
-    aliases = sa.Column(
-        sa.ARRAY(sa.String),
-        nullable=False,
-        default=[],
-        doc="A list of additional names for this source",
-    )
+        aliases = sa.Column(
+            sa.ARRAY(sa.String),
+            nullable=False,
+            default=[],
+            doc="A list of additional names for this source",
+        )
 
-    # magnitude of the source
-    mag = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Magnitude of the source",
-    )
-    mag_err = sa.Column(
-        sa.Float, nullable=True, doc="Error in the magnitude of the source"
-    )
-    mag_filter = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Filter used to measure the magnitude of the source",
-    )
+        # magnitude of the source
+        mag = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Magnitude of the source",
+        )
+        mag_err = sa.Column(
+            sa.Float, nullable=True, doc="Error in the magnitude of the source"
+        )
+        mag_filter = sa.Column(
+            sa.String,
+            nullable=True,
+            doc="Filter used to measure the magnitude of the source",
+        )
 
-    # catalog related stuff
-    cat_index = sa.Column(
-        sa.Integer,
-        nullable=True,
-        index=True,
-        doc="Index of the source in the catalog",
-    )
-    cat_id = sa.Column(
-        sa.String, nullable=True, index=True, doc="ID of the source in the catalog"
-    )
-    cat_name = sa.Column(
-        sa.String, nullable=True, doc="Name of the catalog to which this source belongs"
-    )
-    cat_row = sa.Column(
-        JSONB, nullable=True, doc="Row from the catalog used to create this source"
-    )
+        # catalog related stuff
+        cat_index = sa.Column(
+            sa.Integer,
+            nullable=True,
+            index=True,
+            doc="Index of the source in the catalog",
+        )
+        cat_id = sa.Column(
+            sa.String, nullable=True, index=True, doc="ID of the source in the catalog"
+        )
+        cat_name = sa.Column(
+            sa.String,
+            nullable=True,
+            doc="Name of the catalog to which this source belongs",
+        )
+        cat_row = sa.Column(
+            JSONB, nullable=True, doc="Row from the catalog used to create this source"
+        )
 
     # NOTE: all the source relationships are defined
     # where the data is defined, e.g., dataset.py and detection.py
@@ -201,6 +204,14 @@ class Source(Base, conesearch_alchemy.Point):
         self.alias = kwargs.pop("alias", None)
         self.cat_index = kwargs.pop("cat_index", None)
         self.cfg_hash = ""
+
+        # these are connected to the DB relationships
+        # if there is a viable database connection
+        self._reduced_photometry = None
+        self._processed_photometry = None
+        self._simulated_photometry = None
+        self._detections = None
+        self._properties = None
 
         # assign this coordinate a healpix ID
         if self.ra is not None and self.dec is not None:
@@ -227,7 +238,180 @@ class Source(Base, conesearch_alchemy.Point):
 
         return string
 
-    def get_raw_data(self, obs, data_type=None, session=None):
+    @property
+    def reduced_photometry(self):
+        try:
+            if self._reduced_photometry is None:
+                self._reduced_photometry = self._reduced_photometry_from_db
+        except Exception:
+            pass
+
+        return self._reduced_photometry
+
+    @reduced_photometry.setter
+    def reduced_photometry(self, value):
+        self._reduced_photometry = value
+
+    reduced_lightcurves = add_alias("reduced_photometry")
+
+    def save_reduced_photometry(self, session=None):
+        """
+        Save the reduced photometry to the database.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        self._reduced_photometry_from_db = self.reduced_photometry
+        try:
+            for lc in self.reduced_photometry:
+                lc.save()
+                session.add(lc)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+
+    @property
+    def processed_photometry(self):
+        try:
+            if self._processed_photometry is None:
+                self._processed_photometry = self._processed_photometry_from_db
+        except Exception:
+            pass
+
+        return self._processed_photometry
+
+    @processed_photometry.setter
+    def processed_photometry(self, value):
+        self._processed_photometry = value
+
+    processed_lightcurves = add_alias("processed_photometry")
+
+    def save_processed_photometry(self, session=None):
+        """
+        Save the processed photometry to the database.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        self._processed_photometry_from_db = self.processed_photometry
+        try:
+            for lc in self.processed_photometry:
+                lc.save()
+                session.add(lc)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+
+    @property
+    def simulated_photometry(self):
+        try:
+            if self._simulated_photometry is None:
+                self._simulated_photometry = self._simulated_photometry_from_db
+        except Exception:
+            pass
+
+        return self._simulated_photometry
+
+    @simulated_photometry.setter
+    def simulated_photometry(self, value):
+        self._simulated_photometry = value
+
+    simulated_lightcurves = add_alias("simulated_photometry")
+
+    def save_simulated_photometry(self, session=None):
+        """
+        Save the simulated photometry to the database.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        self._simulated_photometry_from_db = self.simulated_photometry
+        try:
+            for lc in self.simulated_photometry:
+                lc.save()
+                session.add(lc)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+
+    @property
+    def detections(self):
+        try:
+            if self._detections is None:
+                self._detections = self._detections_from_db
+        except Exception:
+            pass
+
+        return self._detections
+
+    @detections.setter
+    def detections(self, value):
+        self._detections = value
+
+    def save_detections(self, session=None):
+        """
+        Save the detections to the database.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        self._detections_from_db = self.detections
+
+        for det in self.detections:
+            session.add(det)
+
+        session.commit()
+
+    @property
+    def properties(self):
+        try:
+            if self._properties is None:
+                self._properties = self._properties_from_db
+        except Exception:
+            pass
+
+        return self._properties
+
+    @properties.setter
+    def properties(self, value):
+        self._properties = value
+
+    def save(self, session=None, properties=True):
+        """Save the source to the database"""
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        session.add(self)
+        if properties:
+            self.properties.source = self
+            self._properties_from_db = self.properties
+            session.add(self.properties)
+
+        session.commit()
+
+    def get_data(
+        self,
+        obs,
+        data_type=None,
+        level="raw",
+        session=None,
+        check_files=True,
+        search_orphans=True,
+        delete_missing=True,
+    ):
         """
         Get the raw data object associated with this source,
         the observatory named by "obs" and the data type
@@ -249,14 +433,35 @@ class Source(Base, conesearch_alchemy.Point):
             associated with this source.
             If there is more than one type of data,
             will raise an error.
+        level: str
+            Processing level of the data: "raw", "reduced",
+            "processed" or "simulated". Default is "raw".
         session: sqlalchemy session object (optional)
             If given, will also search the DB for matching
             raw data objects, if none are found attached
             to the source.
+        check_files: bool
+            If True, will check that the files exist on disk
+            and that they contain the correct key (e.g., for HDF5 files).
+            If no data is found, the function will delete any DB objects
+            that don't have corresponding data. Default is True.
+        search_orphans: bool
+            If True, will search the data directory for files
+            that match the source name and the observatory name,
+            and in the case of reduced/process/simulated data,
+            will search the data folder of the project. Default is True.
+            This allows capturing data that was downloaded/processed
+            but got detached from the corresponding DB objects.
+            THIS IS NOT YET IMPLEMENTED...
+        delete_missing: bool
+            If True, will delete any DB objects that don't have
+            corresponding data. Default is True.
+            This will allow the calling code to re-create new
+            objects that are associated with newly downloaded data.
 
         Returns
         -------
-        raw_data: a RawPhotometry or similar object
+        data: a RawPhotometry or similar object
             The object containing the data that matches
             this source and the required observatory
             and data type.
@@ -271,45 +476,91 @@ class Source(Base, conesearch_alchemy.Point):
         else:
             # for each data type, check if there is that sort of data
             # on this source, if it is not an empty list, add it
-            types = {t for t in allowed_data_types if getattr(self, f"raw_{t}", [])}
+            types = {t for t in allowed_data_types if getattr(self, f"{level}_{t}", [])}
             if len(types) == 0:
                 raise ValueError("No data types found for this source.")
             elif len(types) > 1:
-                raise ValueError("More than one data type found for this source.")
+                raise ValueError(
+                    "More than one data type found for this source. "
+                    "Please provide a data type explicitly"
+                )
             else:
                 data_type = list(types)[0]
 
-        data_class = get_class_from_data_type(data_type)
+        # Class of the data requested, e.g., RawPhotometry
+        DataClass = get_class_from_data_type(data_type, level=level)
         # if source existed in DB it should have raw data objects
         # if it doesn't that means the data needs to be downloaded
-        raw_data = [  # e.g., go over all raw_photometry...
+        found_data = [  # e.g., go over all raw_photometry...
             data
             for data in getattr(self, f"raw_{data_type}")
             if data.observatory == obs
         ]
-        if len(raw_data) == 0:
-            raw_data = None
-        elif len(raw_data) == 1:
-            raw_data = raw_data[0]
-        else:
+        if level == "raw" and len(found_data) > 1:
             raise RuntimeError(
                 f"Source {self.name} has more than one "
-                f"{data_class.__name__} object from this observatory."
+                f"{DataClass.__name__} object from this observatory."
             )
 
-        # try to recover the raw data from the DB directly
-        # this may find data that was associated with the
-        # same source but in a different project or cfg_hash (version)
-        if raw_data is None and session is not None:
-            raw_data = session.scalars(
-                sa.select(data_class).where(
-                    data_class.source_name == self.name,
-                    data_class.observatory == obs,
-                )
-            ).first()
+        if len(found_data) > 0:
+            return found_data
 
-        return raw_data
+        # try to recover the data from the DB directly
+        if session is not None:
+            if level == "raw":
+                found_data = session.scalars(
+                    sa.select(DataClass).where(
+                        DataClass.source_name == self.name,
+                        DataClass.observatory == obs,
+                    )
+                ).all()
+            else:
+                # search for data with the correct level,
+                # the same project name and cfg_hash,
+                # and only look for un-processed data
+                found_data = session.scalars(
+                    sa.select(DataClass).where(
+                        DataClass.source_name == self.name,
+                        DataClass.observatory == obs,
+                        DataClass.project == self.project,
+                        DataClass.cfg_hash == self.cfg_hash,
+                        DataClass.was_processed == False,
+                    )
+                ).all()
 
+        # check if the loaded objects have
+        # corresponding files with data in them
+        if check_files:
+            for data in found_data:
+                if not data.check_file_exists():
+                    if delete_missing:
+                        if session is not None:
+                            session.delete(data)
+                        found_data.remove(data)
+                else:
+                    try:  # verify the data is really there
+                        data.load()
+                    except KeyError as e:
+                        if "No object named" in str(e):
+                            # This does not exist in the file
+                            if delete_missing:
+                                if session is not None:
+                                    session.delete(data)
+                                found_data.remove(data)
+                    else:
+                        raise
+
+        if len(found_data) > 0:
+            return found_data
+
+        # if no data was found, try to search for orphans
+        if search_orphans:
+            pass  # TODO: need to figure out how to search for files
+            #      that are not associated with DB objects
+
+        return found_data
+
+    # TODO: why is this even needed? should we expand to cover reduced/processed data too?
     def remove_raw_data(self, obs, data_type=None, session=None):
         """
         Remove from this source the raw data object associated
@@ -370,6 +621,7 @@ class Source(Base, conesearch_alchemy.Point):
             getattr(self, f"raw_{data_type}").remove(raw_data)
             if session is not None:
                 session.delete(raw_data)
+                session.flush()
             return True
         else:
             raise RuntimeError(

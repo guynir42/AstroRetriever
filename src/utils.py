@@ -303,3 +303,11 @@ def is_scalar(value):
         return True
     else:
         return False
+
+
+def add_alias(att):
+    return property(
+        fget=lambda self: getattr(self, att),
+        fset=lambda self, value: setattr(self, att, value),
+        doc=f'Alias for "{att}"',
+    )

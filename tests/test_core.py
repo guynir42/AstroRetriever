@@ -12,6 +12,7 @@ from astropy.time import Time
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from src.utils import OnClose
 from src.parameters import Parameters
@@ -432,15 +433,21 @@ def test_add_source_and_data(data_dir):
             assert start_time == new_data.time_start
             assert end_time == new_data.time_end
 
-            new_source.raw_photometry.append(new_data)
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
 
             # this should not work because
             # no filename was specified
             with pytest.raises(ValueError):
                 session.commit()
             session.rollback()
+
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
 
             new_data.filename = "test_data.h5"
             # this should not work because the file
@@ -453,6 +460,9 @@ def test_add_source_and_data(data_dir):
             new_data.filename = None  # reset the filename
 
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
 
             # filename should be auto-generated
             new_data.save()  # must save to allow RawPhotometry to be added to DB
@@ -474,7 +484,9 @@ def test_add_source_and_data(data_dir):
         # check that the data is in the database
         with Session() as session:
             sources = session.scalars(
-                sa.select(Source).where(Source.name == source_name)
+                sa.select(Source)
+                .options(joinedload(Source.raw_photometry))
+                .where(Source.name == source_name)
             ).first()
 
             assert sources is not None
@@ -591,7 +603,12 @@ def test_raw_photometry_relationships(new_source, new_source2, raw_phot):
     with Session() as session:
         new_source.raw_photometry = [raw_phot]
         new_source2.raw_photometry = [raw_phot]
+        session.add(new_source)
+        session.add(new_source2)
+
+        # must add the raw photometry explicitly, cascades are disabled
         session.add(raw_phot)
+
         raw_phot.save()
         session.commit()
 
@@ -632,11 +649,14 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         with pytest.raises(ValueError) as exc:
             obs.reduce(source=new_source, data_type="photometry")
         assert "No exposure time" in str(exc.value)
+
         # add exposure time to the dataframe:
         new_source.raw_photometry[0].data["exp_time"] = 30.0
         lightcurves = obs.reduce(source=new_source, data_type="photometry")
 
         session.add(new_source)
+        session.add(raw_phot_no_exptime)
+        session.add_all(lightcurves)
         with pytest.raises(ValueError) as exc:
             session.commit()
         assert "No filename" in str(exc.value)
@@ -647,6 +667,8 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         filenames = [lc.get_fullname() for lc in lightcurves]
 
         session.add(new_source)
+        session.add(raw_phot_no_exptime)
+        session.add_all(lightcurves)
         session.commit()
 
         # check that the data has been reduced as expected
@@ -692,9 +714,9 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
             assert lc.source_id == new_source.id
             assert lc.raw_data_id == raw_phot_no_exptime.id
 
-        # make sure deleting the source also cleans up the data
-        # session.execute(sa.delete(Source).where(Source.name == source_id))
         session.delete(new_source)
+        session.delete(raw_phot_no_exptime)
+        [session.delete(lc) for lc in lightcurves]
         session.commit()
 
         data = session.scalars(
@@ -869,6 +891,8 @@ def test_reducer_with_outliers(test_project, new_source):
             lc.save()
 
             session.add(new_source)
+            session.add(new_data)
+            session.add(lc)
             session.commit()
 
             # check the data has been reduced as expected
@@ -926,7 +950,7 @@ def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     with Session() as session:
         lc1.save()
         session.add(lc1)
-        session.flush()
+        session.add(lc1.source)
         session.commit()
 
     # with session closed, check file is there
@@ -975,6 +999,7 @@ def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
         try:  # cleanup at the end
             lc1.save()
             session.add(lc1)
+            session.add(lc1.source)
             session.commit()
             lc3 = Lightcurve(lc1)
             assert lc3.id is None
@@ -1332,38 +1357,39 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=8)
+# @pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
+    obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False
-    obs = VirtualDemoObs(project=analysis.pars.project)
     new_source.raw_photometry.append(raw_phot)
 
     # there shouldn't be any detections:
     obs.reduce(new_source, "photometry")
+    print("analysis called, no saving")
     analysis.analyze_sources(new_source)
     assert new_source.properties is not None
+    assert len(new_source.reduced_lightcurves) == 3
     assert len(analysis.detections) == 0
 
     # add a "flare" to the lightcurve:
-    assert len(new_source.reduced_lightcurves) == 3
     lc = new_source.reduced_lightcurves[0]
-    new_source.reset_analysis()
     n_sigma = 10
     std_flux = lc.data.flux.std()
     flare_flux = std_flux * n_sigma
     lc.data.loc[4, "flux"] += flare_flux
+
+    new_source.reset_analysis()  # get rid of existing results
+    print("analysis called, no saving")
     analysis.analyze_sources(new_source)
 
     assert len(analysis.detections) == 1
-    assert analysis.detections[0].source_name == lc.source_name
-    assert analysis.detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
-    assert (
-        analysis.detections[0].peak_time
-        == Time(lc.data.mjd.iloc[4], format="mjd").datetime
-    )
+    det = analysis.detections[0]
+    assert det.source_name == lc.source_name
+    assert det.snr - n_sigma < 2.0  # no more than the S/N we put in
+    assert det.peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
     assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
-    assert len(new_source.processed_lightcurves) == 0  # should be empty if not saving
-    assert len(new_source.detections) == 0  # should be empty if not saving
+    assert len(new_source.processed_lightcurves) == 3
+    assert len(new_source.detections) == 1
 
     # check that nothing was saved
     with Session() as session:
@@ -1384,26 +1410,18 @@ def test_analysis(analysis, new_source, raw_phot):
         analysis.pars.save_anything = True
         analysis.reset_histograms()
         new_source.reset_analysis()
-        # make sure to save the raw/reduced data first
-        raw_phot.save()
-        for lc in new_source.reduced_lightcurves:
-            lc.save()
+        assert len(new_source.detections) == 0
 
+        print("analysis called, saving")
         analysis.analyze_sources(new_source)
         assert len(new_source.detections) == 1
+
         assert new_source.properties is not None
         assert len(new_source.reduced_lightcurves) == 3
         assert len(new_source.processed_lightcurves) == 3
 
         with Session() as session:
             # check lightcurves
-            lcs = session.scalars(
-                sa.select(Lightcurve).where(
-                    Lightcurve.source_name == new_source.name,
-                    Lightcurve.was_processed.is_(False),
-                )
-            ).all()
-            assert len(lcs) == 3
             lcs = session.scalars(
                 sa.select(Lightcurve).where(
                     Lightcurve.source_name == new_source.name,
@@ -1419,7 +1437,7 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(detections) == 1
             assert detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
 
-            lcs = detections[0].reduced_photometry
+            lcs = detections[0].processed_photometry
             assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
 
             # check properties
@@ -1429,7 +1447,9 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(properties) == 1
 
             # manually set the first lightcurve time_start to be after the others
-            detections[0].reduced_photometry[0].time_start = datetime.datetime.utcnow()
+            detections[0].processed_photometry[
+                0
+            ].time_start = datetime.datetime.utcnow()
 
             session.add(detections[0])
             session.commit()
@@ -1439,7 +1459,7 @@ def test_analysis(analysis, new_source, raw_phot):
             detections = session.scalars(
                 sa.select(Detection).where(Detection.source_name == new_source.name)
             ).all()
-            lcs = detections[0].reduced_photometry
+            lcs = detections[0].processed_photometry
 
             assert len(lcs) == 3  # still three
             # order should be different (loaded sorted by time_start)
@@ -1466,9 +1486,14 @@ def test_analysis(analysis, new_source, raw_phot):
             for lc in new_source.processed_lightcurves:
                 lc.delete_data_from_disk()
                 session.add(lc)
-                session.delete(lc)
+                if lc in session:
+                    try:
+                        session.delete(lc)
+                    except Exception as e:
+                        print(f"could not delete lc: {str(e)}")
 
             session.commit()
+
         analysis.remove_all_histogram_files(remove_backup=True)
 
 
@@ -1531,11 +1556,13 @@ def test_quality_checks(analysis, new_source, raw_phot):
     assert det.snr - 12 < 2.0  # no more than the S/N we put in
     assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
     assert (
-        det.reduced_photometry[0].data.loc[9, "qflag"] == 1
+        det.processed_photometry[0].data.loc[9, "qflag"] == 1
     )  # flagged because of offset
-    assert det.reduced_photometry[0].data.loc[9, "offset"] > 2  # this one has an offset
-    assert det.reduced_photometry[0].data.loc[8, "qflag"] == 0  # unflagged
-    assert det.reduced_photometry[0].data.loc[8, "offset"] < 2  # no offset
+    assert (
+        det.processed_photometry[0].data.loc[9, "offset"] > 2
+    )  # this one has an offset
+    assert det.processed_photometry[0].data.loc[8, "qflag"] == 0  # unflagged
+    assert det.processed_photometry[0].data.loc[8, "offset"] < 2  # no offset
 
     assert det.quality_flag == 1  # still flagged, even though the peak is not
     assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset

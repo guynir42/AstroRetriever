@@ -83,11 +83,19 @@ def normalize_data_types(data_types):
     return sorted(convert_data_type(dt) for dt in data_types)
 
 
-def get_class_from_data_type(data_type):
-    from src.dataset import RawPhotometry
+def get_class_from_data_type(data_type, level="raw"):
+    from src.dataset import RawPhotometry, Lightcurve
 
     if data_type == "photometry":
-        return RawPhotometry
+        if level == "raw":
+            return RawPhotometry
+        elif level in ["reduced", "processed", "simulated"]:
+            return Lightcurve
+        else:
+            raise ValueError(
+                f"Unknown level {level}. "
+                "Use 'raw', 'reduced', 'processed' or 'simulated'."
+            )
     # elif data_type == "spectra":
     #     return RawSpectra
     # add more data types here

@@ -96,6 +96,13 @@ class ParsObservatory(Parameters):
             str,
             "What column in the catalog is used to match sources to datasets",
         )
+        self.check_data_files = self.add_par(
+            "check_data_files",
+            True,
+            bool,
+            "For any datasets found on a source, "
+            "check if the data files exist on disk.",
+        )
         self.overwrite_files = self.add_par(
             "overwrite_files", True, bool, "Overwrite existing files"
         )
@@ -144,6 +151,10 @@ class ParsObservatory(Parameters):
             bool,
             "Check if the download parameters have changed since the last download"
             "and if so, re-download the data",
+        )
+
+        self.save_reduced = self.add_par(
+            "save_reduced", True, bool, "Save reduced data to disk"
         )
 
         self._default_cfg_key = "observatories"
@@ -311,6 +322,62 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
+    # this should just be merged with check_and_fetch_source
+    def get_source(self, cat_row, session=None, download=True, reduce=True):
+        """
+        Get a Source object for the given catalog row.
+        If the source exists in the DB it is loaded
+        using the session (if no session is given,
+        a new one will be opened).
+        By default, will create the source and
+        make sure it has the raw data associated
+        with this observatory (if not, it is downloaded).
+        The same is true for the reduced data.
+        If no reduced data is available, it will be
+        created using the reducer methods.
+        TODO: will the reduced data always get saved to disk?
+
+        Parameters
+        ----------
+        cat_row: dict
+            Dictionary with the catalog row data
+            (including name, ra/dec, mag, etc.).
+        session: Session, optional
+            Database session to use. If not given,
+            a new one will be created.
+            In that case it will also make sure
+            to close the session at the end of
+            the function.
+        download: bool, optional
+            If True, will download the raw data
+            if it is not available.
+        reduce: bool, optional
+            If True, will reduce the raw data
+            if it is not available.
+
+        Returns
+        -------
+        source: Source
+            Source object for the given catalog row.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        # TODO: add cfg hash
+        source = session.scalars(
+            sa.select(Source).where(
+                Source.name == cat_row["name"], Source.project == self.pars.project
+            )
+        ).first()
+        if source is None:
+            if download:
+                pass
+            else:
+                return  # TODO: should raise or just ignore?
+
+    # TODO: can we get rid of this?
     def run_analysis(self):
         """
         Perform analysis on each object in the catalog.
@@ -517,7 +584,14 @@ class VirtualObservatory:
         return sources
 
     def check_and_fetch_source(
-        self, cat_row, save=True, session=None, fetch_args={}, dataset_args={}
+        self,
+        cat_row,
+        save=True,
+        reduce=True,
+        session=None,
+        fetch_args={},
+        reducer_args={},
+        dataset_args={},
     ):
         """
         Check if a source exists in the database,
@@ -530,8 +604,12 @@ class VirtualObservatory:
             Must contain at least an object ID
             or RA/Dec coordinates.
         save: bool
-            If True, save the data to disk and the
-            raw data / Source objects to database.
+            If True, save the Source and associated
+            data to disk and to database.
+        reduce: bool
+            If True, reduce the data and save the
+            reduced data to disk and to DB
+            (if save=True).
         session: Session, optional
             Database session. If not provided,
             will open a session and close it at end
@@ -540,6 +618,9 @@ class VirtualObservatory:
         fetch_args: dict
             Additional keyword arguments to pass to the
             fetch_data_from_observatory method.
+        reducer_args: dict
+            Additional keyword arguments to pass to the
+            reduce method. Only used if reduce=True.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -551,6 +632,8 @@ class VirtualObservatory:
             one raw data object attached, from this
             observatory for each data type required by pars.
             (it may have more data from other observatories).
+            It could also have reduced data (if reduced=True).
+            The source+data will be saved to disk/DB if save=True.
 
         """
 
@@ -564,49 +647,62 @@ class VirtualObservatory:
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
+        # check if source exists already exists
         source = session.scalars(
             sa.select(Source).where(
                 Source.name == cat_row["name"]
             )  # TODO: add cfg_hash
         ).first()
+
+        # if not, create one now
         if source is None:
             source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
             source.cat_row = cat_row  # save the raw catalog row as well
 
         new_data = []
         for dt in self.pars.data_types:
-            data_class = get_class_from_data_type(dt)
+            # class of raw data (e.g., RawPhotometry)
+            DataClass = get_class_from_data_type(dt)
+
             # if source existed in DB it should have raw data objects
             # if it doesn't that means the data needs to be downloaded
-            raw_data = source.get_raw_data(obs=self.name, data_type=dt, session=session)
+            raw_data = source.get_data(
+                obs=self.name,
+                data_type=dt,
+                level="raw",
+                session=session,
+                check_files=self.pars.check_data_files,
+            )
+            raw_data = raw_data[0] if len(raw_data) > 0 else None
 
-            if raw_data is not None and not raw_data.check_file_exists():
-                # session.delete(raw_data)
-                # raw_data = None
-                raise RuntimeError(
-                    f"{data_class} object for source {source.name} "
-                    "exists in DB but file does not exist."
-                )
-
-            # file exists, try to load it:
-            if raw_data is not None:
-                lock.acquire()
-                try:
-                    raw_data.load()
-                except KeyError as e:
-                    if "No object named" in str(e):
-                        # This does not exist in the file
-
-                        # TODO: is delete the right thing to do?
-                        source.remove_raw_data(
-                            obs=self.name, data_type=dt, session=session
-                        )
-                        session.flush()
-                        raw_data = None
-                    else:
-                        raise e
-                finally:
-                    lock.release()
+            # if raw_data is not None and not raw_data.check_file_exists():
+            #     # TODO: should this be customizable behavior??
+            #     # session.delete(raw_data)
+            #     # raw_data = None
+            #     raise RuntimeError(
+            #         f"{DataClass} object for source {source.name} "
+            #         "exists in DB but file does not exist."
+            #     )
+            #
+            # # file exists, try to load it:
+            # if raw_data is not None:
+            #     lock.acquire()
+            #     try:
+            #         raw_data.load()
+            #     except KeyError as e:
+            #         if "No object named" in str(e):
+            #             # This does not exist in the file
+            #
+            #             # TODO: is delete the right thing to do?
+            #             source.remove_raw_data(
+            #                 obs=self.name, data_type=dt, session=session
+            #             )
+            #             session.flush()
+            #             raw_data = None
+            #         else:
+            #             raise e
+            #     finally:
+            #         lock.release()
 
             if raw_data is not None and self.pars.check_download_pars:
                 # check if the download parameters used to save
@@ -614,7 +710,6 @@ class VirtualObservatory:
                 if "download_pars" not in raw_data.altdata:
                     # TODO: is delete the right thing to do?
                     source.remove_raw_data(obs=self.name, data_type=dt, session=session)
-                    session.flush()
                     raw_data = None
                 else:
                     for key in self.pars.download_pars_list:
@@ -624,10 +719,10 @@ class VirtualObservatory:
                             != download_pars[key]
                         ):
                             # TODO: is delete the right thing to do?
+                            print("removing data")
                             source.remove_raw_data(
                                 obs=self.name, data_type=dt, session=session
                             )
-                            session.flush()
                             raw_data = None
                             break
 
@@ -643,14 +738,16 @@ class VirtualObservatory:
                 # save the parameters involved with the download
                 altdata["download_pars"] = download_pars
 
-                raw_data = data_class(
+                # create a raw data for this class (e.g., RawPhotometry)
+
+                raw_data = DataClass(
                     data=data,
                     altdata=altdata,
                     observatory=self.name,
                     source_name=cat_row["name"],
                     **dataset_args,
                 )
-                # keep track of new dataset that need
+                # keep track of new dataset that needs
                 # to be saved to disk and DB
                 new_data.append(raw_data)
 
@@ -660,6 +757,24 @@ class VirtualObservatory:
             ):
                 getattr(source, f"raw_{dt}").append(raw_data)
 
+            if raw_data is None:
+                raise ValueError("Raw data can not be None at this point!")
+
+            if reduce:  # reduce the data
+                # DataClass = get_class_from_data_type(dt, 'reduced')
+                # reduced_datasets = session.scalars(sa.select(DataClass).where(DataClass.source_name == source.name)).all()
+                reduced_datasets = source.get_data(
+                    obs=self.name,
+                    data_type=dt,
+                    level="reduced",
+                    session=session,
+                    check_files=self.pars.check_data_files,
+                )
+
+                if len(reduced_datasets) == 0:
+                    reduced_datasets = self.reduce(raw_data, **reducer_args)
+
+            # TODO: we can remove this if we cancel all the relationship cascades
             # here we explicitly set all relational collections
             # to an empty list, so they are accessible (and empty)
             # even if the source is no longer attached to the DB.
@@ -690,6 +805,7 @@ class VirtualObservatory:
 
                 try:
                     session.add(source)
+                    session.add(raw_data)
                     # try to save the data to disk
                     lock.acquire()  # thread blocks at this line until it can obtain lock
                     try:
@@ -953,7 +1069,7 @@ class VirtualObservatory:
 
         # TODO: is here the point where we also do analysis?
 
-    def reduce(self, source, data_type=None, output_type=None, **kwargs):
+    def reduce(self, source, data_type=None, output_type=None, session=None, **kwargs):
         """
         Reduce raw data into more useful,
         second level (reduced) data products.
@@ -1006,7 +1122,9 @@ class VirtualObservatory:
         # this is called without a session,
         # so raw data must be attached to source
         if isinstance(source, Source):
-            dataset = source.get_raw_data(obs=self.name, data_type=data_type)
+            dataset = source.get_data(obs=self.name, data_type=data_type, level="raw")[
+                0
+            ]
             data_type = convert_data_type(data_type)
         elif isinstance(source, DatasetMixin):
             dataset = source
@@ -1069,8 +1187,28 @@ class VirtualObservatory:
 
         # make sure each reduced dataset has a serial number:
         for i, d in enumerate(new_datasets):
-            d.reduction_number = i + 1
-            d.reduction_total = len(new_datasets)
+            d.series_number = i + 1
+            d.series_total = len(new_datasets)
+
+        if self.pars.save_reduced:
+            if session is None:
+                session = Session()
+                # make sure this session gets closed at end of function
+                _ = CloseSession(session)
+            try:
+                if source is not None:
+                    session.add(source)
+
+                for d in new_datasets:
+                    d.save()
+                    session.add(d)
+
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                for d in new_datasets:
+                    d.delete_data_from_disk()
+                raise e
 
         return new_datasets
 

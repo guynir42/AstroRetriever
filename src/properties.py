@@ -22,7 +22,7 @@ class Properties(Base):
 
     source = orm.relationship(
         "Source",
-        back_populates="properties",
+        back_populates="_properties_from_db",
         cascade="all",
         foreign_keys="Properties.source_id",
     )
@@ -63,7 +63,7 @@ class Properties(Base):
     )
 
 
-Source.properties = orm.relationship(
+Source._properties_from_db = orm.relationship(
     "Properties",
     back_populates="source",
     cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
