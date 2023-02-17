@@ -83,6 +83,8 @@ def test_ztf_reduction(ztf_project, new_source):
     ztf = ztf_project.observatories["ztf"]
     assert isinstance(ztf, VirtualZTF)
 
+    ztf.pars.save_reduced = False
+
     # load the data into a RawData object
     new_source.project = "test_ZTF"
     raw_data = RawPhotometry(observatory="ztf")

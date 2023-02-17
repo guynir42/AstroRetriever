@@ -249,6 +249,9 @@ class VirtualObservatory:
         self.sources = []
         self.datasets = []
 
+        self.latest_source = None
+        self.latest_reductions = None
+
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
 
@@ -831,6 +834,8 @@ class VirtualObservatory:
                         data.delete_data_from_disk()
                     raise
 
+        self.latest_source = source
+
         return source
 
     def fetch_data_from_observatory(self, cat_row, **kwargs):
@@ -1211,6 +1216,8 @@ class VirtualObservatory:
                 for d in new_datasets:
                     d.delete_data_from_disk()
                 raise e
+
+        self.latest_reductions = new_datasets
 
         return new_datasets
 
