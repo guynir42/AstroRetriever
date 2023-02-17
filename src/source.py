@@ -421,7 +421,7 @@ class Source(Base, conesearch_alchemy.Point):
         data_type=None,
         level="raw",
         session=None,
-        check_files=True,
+        check_data=True,
         search_orphans=True,
         delete_missing=True,
     ):
@@ -453,7 +453,7 @@ class Source(Base, conesearch_alchemy.Point):
             If given, will also search the DB for matching
             raw data objects, if none are found attached
             to the source.
-        check_files: bool
+        check_data: bool
             If True, will check that the files exist on disk
             and that they contain the correct key (e.g., for HDF5 files).
             If no data is found, the function will delete any DB objects
@@ -506,7 +506,7 @@ class Source(Base, conesearch_alchemy.Point):
         # if it doesn't that means the data needs to be downloaded
         found_data = [  # e.g., go over all raw_photometry...
             data
-            for data in getattr(self, f"raw_{data_type}")
+            for data in getattr(self, f"{level}_{data_type}")
             if data.observatory == obs
         ]
         if level == "raw" and len(found_data) > 1:
@@ -515,11 +515,8 @@ class Source(Base, conesearch_alchemy.Point):
                 f"{DataClass.__name__} object from this observatory."
             )
 
-        if len(found_data) > 0:
-            return found_data
-
         # try to recover the data from the DB directly
-        if session is not None:
+        if len(found_data) == 0 and session is not None:
             if level == "raw":
                 found_data = session.scalars(
                     sa.select(DataClass).where(
@@ -543,31 +540,39 @@ class Source(Base, conesearch_alchemy.Point):
 
         # check if the loaded objects have
         # corresponding files with data in them
-        if check_files:
+        if check_data:
             for data in found_data:
-                if not data.check_file_exists():
-                    if delete_missing:
-                        if session is not None:
-                            session.delete(data)
-                        found_data.remove(data)
-                else:
-                    try:  # verify the data is really there
-                        data.load()
-                    except KeyError as e:
-                        if "No object named" in str(e):
-                            # This does not exist in the file
-                            if delete_missing:
-                                if session is not None:
+                # data must exist either in memory (in .data) or on disk
+                if not data.is_data_loaded:
+                    if not data.check_file_exists():
+                        if delete_missing:
+                            if session is not None:
+                                try:
                                     session.delete(data)
-                                found_data.remove(data)
+                                    session.commit()
+                                except Exception:
+                                    session.rollback()
+                            found_data.remove(data)
                     else:
-                        raise
+                        try:  # verify the data is really there
+                            data.load()
+                        except KeyError as e:
+                            if "No object named" in str(e):
+                                # This does not exist in the file
+                                if delete_missing:
+                                    if session is not None:
+                                        try:
+                                            session.delete(data)
+                                            session.commit()
+                                        except Exception:
+                                            session.rollback()
+                                    found_data.remove(data)
 
-        if len(found_data) > 0:
-            return found_data
+                        except Exception as e:
+                            raise e
 
         # if no data was found, try to search for orphans
-        if search_orphans:
+        if len(found_data) == 0 and search_orphans:
             pass  # TODO: need to figure out how to search for files
             #      that are not associated with DB objects
 
@@ -619,7 +624,7 @@ class Source(Base, conesearch_alchemy.Point):
             else:
                 data_type = list(types)[0]
 
-        data_class = get_class_from_data_type(data_type)
+        data_class = get_class_from_data_type(data_type, level="raw")
         # if source existed in DB it should have raw data objects
         # if it doesn't that means the data needs to be downloaded
         raw_data = [  # e.g., go over all raw_photometry...

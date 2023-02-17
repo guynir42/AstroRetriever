@@ -82,7 +82,7 @@ def clear_tables():
     except:
         pass
     try:
-        source_raw_photometry_association.drop(engine)
+        source_raw_photometry_association.drop_all(engine)
     except:
         pass
 

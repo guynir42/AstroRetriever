@@ -1134,6 +1134,10 @@ class DatasetMixin:
         pass
 
     @property
+    def is_data_loaded(self):
+        return self._data is not None
+
+    @property
     def data(self):
         if self._data is None and self.autoload and self.filename is not None:
             self.load()
@@ -1244,8 +1248,11 @@ class RawPhotometry(DatasetMixin, Base):
     def __repr__(self):
         string = f"{self.__class__.__name__}(type={self.type}"
 
-        if len(self.sources) > 0:
-            f", source={self.sources[0].name}"
+        try:  # this could fail if object is detached from session
+            if len(self.sources) > 0:
+                f", source={self.sources[0].name}"
+        except Exception:
+            pass
 
         if self.observatory:
             string += f" ({self.observatory.upper()})"

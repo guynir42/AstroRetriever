@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 import src.database
 from src.database import Session, CloseSession
-from src.parameters import Parameters
+from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
 from src.source import Source
@@ -430,15 +430,56 @@ class Project:
 
         return sources
 
-    def delete_all_sources(self):
+    def delete_all_sources(
+        self, remove_all_data=False, remove_raw_data=False, session=None
+    ):
         """
         Delete all sources associated with this project.
+
+        Parameters
+        ----------
+        remove_all_data: bool
+            If True, remove all data associated with this project.
+            This includes reduced, processed and simulated data,
+            of all types (e.g., photometry, spectra, images).
+            This also removes data from disk, not just the database.
+            Raw data is not removed from disk, as it is harder to recover,
+            and is often shared between projects.
+        remove_raw_data: bool
+            If True, remove all raw data associated with this project.
+            This can include large amounts of data on disk, that can be
+            shared with other projects, so it should be used with caution!
+            Will only remove raw data associated with sources from this project.
         """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
         # TODO: add cfg_hash to this
-        stmt = sa.delete(Source).where(Source.project == self.name)
-        with Session() as session:
-            session.execute(stmt)
-            session.commit()
+        sources = session.scalars(
+            sa.select(Source).where(Source.project == self.name)
+        ).all()
+
+        if remove_all_data:
+            for source in sources:
+                for dt in self.pars.data_types:
+                    # the reduced level class is the same for processed/simulated
+                    DataClass = get_class_from_data_type(dt, level="reduced")
+                    data = session.scalars(
+                        sa.select(DataClass).where(DataClass.source_id == source.id)
+                    ).all()
+                    for d in data:
+                        d.delete_data_from_disk()
+                        session.delete(d)
+                    if remove_raw_data:
+                        # only remove data in a relationship with source
+                        for d in getattr(source, f"raw_{dt}"):
+                            d.delete_data_from_disk()
+                            session.delete(d)
+                session.delete(source)
+
+        session.commit()
 
     def run(self, **kwargs):
         """

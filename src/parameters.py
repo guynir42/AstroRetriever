@@ -344,6 +344,8 @@ class Parameters:
         """
         if name in self.__typecheck__:
             raise ValueError(f"Parameter {name} already exists.")
+        if isinstance(par_types, (set, list)):
+            par_types = tuple(par_types)
         if not isinstance(par_types, tuple):
             par_types = (par_types,)
         par_types = tuple(type(pt) if pt is None else pt for pt in par_types)

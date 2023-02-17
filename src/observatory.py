@@ -96,8 +96,8 @@ class ParsObservatory(Parameters):
             str,
             "What column in the catalog is used to match sources to datasets",
         )
-        self.check_data_files = self.add_par(
-            "check_data_files",
+        self.check_data_exists = self.add_par(
+            "check_data_exists",
             True,
             bool,
             "For any datasets found on a source, "
@@ -449,6 +449,9 @@ class VirtualObservatory:
             and wants to know when to stop.
 
         """
+        if self.pars.verbose > 3:
+            print("Downloading all sources...")
+
         cat_length = len(self.catalog)
         start = 0 if start is None else start
         stop = cat_length if stop is None else stop
@@ -463,7 +466,8 @@ class VirtualObservatory:
 
             if i >= cat_length:
                 break
-
+            if self.pars.verbose > 5:
+                print(f"Source number {i} of {cat_length}")
             # if temporary sources/datasets are full,
             # clear the lists before adding more
             if len(self.sources) > self.pars.download_batch_size:
@@ -472,15 +476,7 @@ class VirtualObservatory:
 
             num_threads = min(self.pars.num_threads_download, stop - i)
 
-            if num_threads > 1:
-                sources = self._fetch_data_asynchronous(
-                    start=i,
-                    stop=i + num_threads,
-                    save=save,
-                    fetch_args=fetch_args,
-                    dataset_args=dataset_args,
-                )
-            else:  # single threaded execution
+            if num_threads <= 1:  # single threaded execution
                 cat_row = self.catalog.get_row(i, "number", "dict")
                 s = self.check_and_fetch_source(
                     cat_row=cat_row,
@@ -489,6 +485,14 @@ class VirtualObservatory:
                     dataset_args=dataset_args,
                 )
                 sources = [s]
+            else:  # multiple threads
+                sources = self._fetch_data_asynchronous(
+                    start=i,
+                    stop=i + num_threads,
+                    save=save,
+                    fetch_args=fetch_args,
+                    dataset_args=dataset_args,
+                )
 
             raw_data = []
             for s in sources:
@@ -640,6 +644,8 @@ class VirtualObservatory:
 
         """
 
+        if self.pars.verbose > 6:
+            print(f'check_and_fetch_source: {cat_row["name"]}')
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
         download_pars.update(
             {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
@@ -650,15 +656,19 @@ class VirtualObservatory:
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # check if source exists already exists
+        # check if source already exists
         source = session.scalars(
             sa.select(Source).where(
                 Source.name == cat_row["name"]
             )  # TODO: add cfg_hash
         ).first()
+        if self.pars.verbose > 9:
+            print(f"Is source found in database: {source is not None}")
 
         # if not, create one now
         if source is None:
+            if self.pars.verbose > 9:
+                print(f'Creating new source: {cat_row["name"]}')
             source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
             source.cat_row = cat_row  # save the raw catalog row as well
 
@@ -674,10 +684,11 @@ class VirtualObservatory:
                 data_type=dt,
                 level="raw",
                 session=session,
-                check_files=self.pars.check_data_files,
+                check_data=self.pars.check_data_exists,
             )
             raw_data = raw_data[0] if len(raw_data) > 0 else None
-
+            if self.pars.verbose > 9:
+                print(f"Is raw {dt} found in database: {raw_data is not None}")
             # if raw_data is not None and not raw_data.check_file_exists():
             #     # TODO: should this be customizable behavior??
             #     # session.delete(raw_data)
@@ -753,7 +764,6 @@ class VirtualObservatory:
                 # keep track of new dataset that needs
                 # to be saved to disk and DB
                 new_data.append(raw_data)
-
             # this dataset is not appended to source yet:
             if not any(
                 [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
@@ -771,7 +781,7 @@ class VirtualObservatory:
                     data_type=dt,
                     level="reduced",
                     session=session,
-                    check_files=self.pars.check_data_files,
+                    check_data=self.pars.check_data_exists,
                 )
 
                 if len(reduced_datasets) == 0:
@@ -781,11 +791,11 @@ class VirtualObservatory:
             # here we explicitly set all relational collections
             # to an empty list, so they are accessible (and empty)
             # even if the source is no longer attached to the DB.
-            for name in ["reduced", "processed", "simulated"]:
-                if len(getattr(source, f"{name}_{dt}")) == 0:
-                    setattr(source, f"{name}_{dt}", [])
-            if len(source.detections) == 0:
-                source.detections = []
+            # for name in ["reduced", "processed", "simulated"]:
+            #     if len(getattr(source, f"{name}_{dt}")) == 0:
+            #         setattr(source, f"{name}_{dt}", [])
+            # if len(source.detections) == 0:
+            #     source.detections = []
             # add more collections here...
 
             # if debugging or saving outside this object, save=False
@@ -1404,6 +1414,9 @@ class VirtualDemoObs(VirtualObservatory):
             Additional data to be stored in the RawPhotometry object.
 
         """
+        if self.pars.verbose > 9:
+            print(f"fetch_data_from_observatory for {cat_row['name']}")
+
         if wait_time is None:
             wait_time = self.pars.wait_time
         if wait_time_poisson is None:
@@ -1429,7 +1442,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["cat_index"]} '
+                f'Finished fetching data for source {cat_row["cat_index"]} '
                 f"after {total_wait_time_seconds} seconds"
             )
 
