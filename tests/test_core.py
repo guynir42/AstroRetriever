@@ -772,6 +772,7 @@ def test_filter_mapping(raw_phot):
 
     # make a demo observatory with a string filtmap:
     obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+    obs.pars.save_reduced = False  # do not save automatically
 
     # check parameter is propagated correctly
     assert obs.pars.filtmap is not None
@@ -796,8 +797,6 @@ def test_filter_mapping(raw_phot):
     obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
 
     lcs = obs.reduce(raw_phot)
-    [print(lc.data._is_view) for lc in lcs]
-    [print(lc.data._is_copy) for lc in lcs]
     assert len(lcs) == 2  # two filters
 
     lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
@@ -1535,7 +1534,7 @@ def test_analysis(analysis, new_source, raw_phot):
 @pytest.mark.flaky(max_runs=5)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
-    obs = VirtualDemoObs(project=analysis.pars.project)
+    obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     new_source.raw_photometry.append(raw_phot)
     obs.reduce(new_source, "photometry")
 

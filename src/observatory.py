@@ -722,7 +722,7 @@ class VirtualObservatory:
                             != download_pars[key]
                         ):
                             # TODO: is delete the right thing to do?
-                            print("removing data")
+                            # print("removing data")
                             source.remove_raw_data(
                                 obs=self.name, data_type=dt, session=session
                             )
