@@ -600,11 +600,7 @@ class DatasetMixin:
 
         """
         if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:
-            basename = os.path.splitext(self.raw_data_filename)[0]
-            if hasattr(self, "was_processed") and self.was_processed:
-                self.filename = basename + "_processed"
-            else:
-                self.filename = basename + "_reduced"
+            self.filename, _ = os.path.splitext(self.raw_data_filename)
         else:
             if source_name is None:
                 source_name = self.get_source_name()
@@ -637,6 +633,13 @@ class DatasetMixin:
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
             data_type = self.type if self.type is not None else "data"
             self.filename = os.path.join(binning, f"{obs}_{data_type}_{source_name}")
+
+        # check if need to add reduced/processed
+        if isinstance(self, Lightcurve):
+            if hasattr(self, "was_processed") and self.was_processed:
+                self.filename += "_processed"
+            else:
+                self.filename += "_reduced"
 
         # add extension
         self.filename += self.guess_extension()

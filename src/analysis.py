@@ -389,7 +389,6 @@ class Analysis:
         source.processed_lightcurves = lcs
         self._check_lightcurves(lcs, source)
         self._process_lightcurves(lcs, source)
-        print(f"analysis0: source.detections_from_db: {source._detections_from_db}")
         new_det = self._detect_in_lightcurves(lcs, source)
         # make sure to mark these as processed
         [setattr(lc, "was_processed", True) for lc in lcs]
@@ -411,10 +410,8 @@ class Analysis:
 
             # find detections in the simulated data
             sim_det += self._detect_in_lightcurves(sim_lcs, source, sim_pars)
-        print(f"analysis1: source.detections_from_db: {source._detections_from_db}")
         det = new_det + sim_det
         source.detections = det
-        print(f"analysis2: source.detections_from_db: {source._detections_from_db}")
         return det
 
     def _check_lightcurves(self, lightcurves, source, sim=None):

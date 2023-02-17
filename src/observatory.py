@@ -1093,6 +1093,8 @@ class VirtualObservatory:
             (e.g., a RawPhotometry object) instead.
             If so, the data_type will be inferred from the object.
             In this case no source is given to the reduction function.
+            If no source is given, the reduced data is not saved,
+            regardless of the save_reduced parameter.
         data_type: str (optional)
             The type of data to reduce.
             Can be one of 'photometry', 'spectroscopy', 'images', 'cutouts'.
@@ -1190,7 +1192,7 @@ class VirtualObservatory:
             d.series_number = i + 1
             d.series_total = len(new_datasets)
 
-        if self.pars.save_reduced:
+        if self.pars.save_reduced and source is not None:
             if session is None:
                 session = Session()
                 # make sure this session gets closed at end of function

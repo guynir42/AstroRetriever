@@ -54,8 +54,8 @@ def clear_tables():
     from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association
     from src.detection import (
         Detection,
-        detection_raw_photometry_association,
-        detection_processed_photometry_association,
+        # detection_raw_photometry_association,
+        # detection_processed_photometry_association,
     )
     from src.properties import Properties
 
@@ -65,8 +65,8 @@ def clear_tables():
         pass
     try:
         Detection.metadata.drop_all(engine)
-        detection_raw_photometry_association.metadata.drop_all(engine)
-        detection_processed_photometry_association.metadata.drop_all(engine)
+        # detection_raw_photometry_association.metadata.drop_all(engine)
+        # detection_processed_photometry_association.metadata.drop_all(engine)
     except:
         pass
     try:

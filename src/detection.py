@@ -252,55 +252,55 @@ Source._detections_from_db = orm.relationship(
 )
 
 # relationships to photometric datasets
-detection_raw_photometry_association = sa.Table(
-    "detection_raw_photometry_association",
-    Base.metadata,
-    sa.Column(
-        "detection_id",
-        sa.Integer,
-        sa.ForeignKey("detections.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    sa.Column(
-        "raw_photometry_id",
-        sa.Integer,
-        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
+# detection_raw_photometry_association = sa.Table(
+#     "detection_raw_photometry_association",
+#     Base.metadata,
+#     sa.Column(
+#         "detection_id",
+#         sa.Integer,
+#         sa.ForeignKey("detections.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+#     sa.Column(
+#         "raw_photometry_id",
+#         sa.Integer,
+#         sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+# )
 
-Detection.raw_photometry = orm.relationship(
-    "RawPhotometry",
-    cascade="",
-    secondary=detection_raw_photometry_association,
-    order_by="RawPhotometry.time_start",
-    doc="raw photometric data in which this detection was found",
-)
+# Detection.raw_photometry = orm.relationship(
+#     "RawPhotometry",
+#     cascade="",
+#     secondary=detection_raw_photometry_association,
+#     order_by="RawPhotometry.time_start",
+#     doc="raw photometric data in which this detection was found",
+# )
 
-detection_processed_photometry_association = sa.Table(
-    "detection_processed_photometry_association",
-    Base.metadata,
-    sa.Column(
-        "detection_id",
-        sa.Integer,
-        sa.ForeignKey("detections.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    sa.Column(
-        "processed_photometry_id",
-        sa.Integer,
-        sa.ForeignKey("lightcurves.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
-Detection.processed_photometry = orm.relationship(
-    "Lightcurve",
-    cascade="",
-    secondary=detection_processed_photometry_association,
-    order_by="Lightcurve.time_start",
-    doc="processed or simulated " "photometric data in which this detection was found",
-)
+# detection_processed_photometry_association = sa.Table(
+#     "detection_processed_photometry_association",
+#     Base.metadata,
+#     sa.Column(
+#         "detection_id",
+#         sa.Integer,
+#         sa.ForeignKey("detections.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+#     sa.Column(
+#         "processed_photometry_id",
+#         sa.Integer,
+#         sa.ForeignKey("lightcurves.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+# )
+#
+# Detection.processed_photometry = orm.relationship(
+#     "Lightcurve",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     secondary=detection_processed_photometry_association,
+#     order_by="Lightcurve.time_start",
+#     doc="processed or simulated " "photometric data in which this detection was found",
+# )
 
 
 # make sure all the tables exist

@@ -3,7 +3,7 @@ import sqlalchemy as sa
 
 import matplotlib.pyplot as plt
 
-from sqlalchemy import func
+from sqlalchemy import func, orm
 from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -237,6 +237,19 @@ class Source(Base, conesearch_alchemy.Point):
         string += f", datasets= {len(self.raw_photometry)})"  # TODO: what about other kinds of data?
 
         return string
+
+    @orm.reconstructor
+    def init_on_load(self):
+        """
+        This is called when the object
+        is loaded from the database.
+        ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
+        """
+        self._reduced_photometry = None
+        self._processed_photometry = None
+        self._simulated_photometry = None
+        self._detections = None
+        self._properties = None
 
     @property
     def reduced_photometry(self):

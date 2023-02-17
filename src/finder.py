@@ -277,9 +277,12 @@ class Finder:
         det = Detection()
         det.method = "peak finding"
         det.data_types = self.pars.data_types
-        print(f"finder1: source.detections_from_db: {source._detections_from_db}")
         det.source = source
-        print(f"finder2: source.detections_from_db: {source._detections_from_db}")
+        if sim is None:
+            det.processed_photometry = source.processed_photometry
+        else:  # simulation!
+            # TODO: which simulated set of lightcurves are saved??
+            det.processed_photometry = source.simulated_photometry
         det.project = self.pars.project
         det.cfg_hash = source.cfg_hash
 
