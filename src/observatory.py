@@ -1432,7 +1432,7 @@ class VirtualDemoObs(VirtualObservatory):
                 f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
             )
         total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
-        data = self.simulate_lightcurve(**sim_args)
+        data = self.simulate_lightcurve(cat_row, **sim_args)
         altdata = {
             "demo_boolean": self.pars.demo_boolean,
             "wait_time": total_wait_time_seconds,
@@ -1450,6 +1450,7 @@ class VirtualDemoObs(VirtualObservatory):
 
     @staticmethod
     def simulate_lightcurve(
+        cat_row,
         num_points=100,
         mjd_range=(57000, 58000),
         shuffle_time=False,
@@ -1465,8 +1466,14 @@ class VirtualDemoObs(VirtualObservatory):
 
         mag_err = np.random.uniform(mag_err_range[0], mag_err_range[1], num_points)
         mag = np.random.normal(mean_mag, mag_err, num_points)
+        ra = cat_row["ra"] + np.random.normal(0, 0.0001, num_points)
+        ra = np.mod(ra, 360)
+        dec = cat_row["dec"] + np.random.normal(0, 0.0001, num_points)
+        dec = np.clip(dec, -90, 90)  # TODO: more realistic to "bounce back" from edges
         flag = np.zeros(num_points, dtype=bool)
-        test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
+        test_data = dict(
+            mjd=mjd, mag=mag, mag_err=mag_err, ra=ra, dec=dec, filter=filter, flag=flag
+        )
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
 

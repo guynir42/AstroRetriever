@@ -1708,21 +1708,31 @@ class Lightcurve(DatasetMixin, Base):
             raise
 
     def __repr__(self):
-        string = (
+        string = []
+        string.append(
             f"{self.__class__.__name__}("
             f"id={self.id}, "
             f"source={self.source_name}, "
             f"epochs={self.number}"
         )
+        if self.was_processed:
+            string.append("processed")
+            if self.is_simulated:
+                string[-1] += " (sim)"
+        else:
+            string.append("reduced")
+
         if self.observatory:
-            string += f" ({self.observatory.upper()})"
+            string.append(self.observatory.upper())
         if self.mag_mean_robust is not None and self.mag_rms_robust is not None:
-            string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
-        string += f", file: {self.filename}"
+            string.append(
+                f"mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f}"
+            )
+        string.append(f"file: {self.filename}")
 
         if self.filekey:
-            string += f" (key: {self.filekey})"
-
+            string.append(f"key: {self.filekey}")
+        string = ", ".join(string)
         string += ")"
 
         return string
@@ -2239,7 +2249,7 @@ def insert_new_dataset(mapper, connection, target):
         else:
             if target.filename is None:
                 raise ValueError(
-                    "No filename specified for this dataset. "
+                    f"No filename specified for {target}. "
                     "Save the dataset to disk to generate a filename. "
                 )
             raise ValueError(

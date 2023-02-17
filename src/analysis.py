@@ -388,7 +388,18 @@ class Analysis:
         # "reduced_lightcurves" to use as "processed_lightcurves"
         source.processed_lightcurves = lcs
         self._check_lightcurves(lcs, source)
+
+        # verify quality checker produced columns needed for histograms
+        for name in self.quality_values.pars.score_names:
+            if name not in lcs[0].data.columns:
+                raise ValueError(f'Score "{name}" not found in lightcurve data!')
+
         self._process_lightcurves(lcs, source)
+        # verify finder produced columns needed for histograms
+        for name in self.good_scores.pars.score_names:
+            if name not in lcs[0].data.columns:
+                raise ValueError(f'Score "{name}" not found in lightcurve data!')
+
         new_det = self._detect_in_lightcurves(lcs, source)
         # make sure to mark these as processed
         [setattr(lc, "was_processed", True) for lc in lcs]

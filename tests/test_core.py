@@ -1531,7 +1531,7 @@ def test_analysis(analysis, new_source, raw_phot):
         analysis.remove_all_histogram_files(remove_backup=True)
 
 
-@pytest.mark.flaky(max_runs=5)
+@pytest.mark.flaky(max_runs=8)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)

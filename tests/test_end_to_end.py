@@ -28,7 +28,10 @@ def test_project_download_small_catalog():
         obs = proj.observatories["demo"]
         assert isinstance(obs, VirtualDemoObs)
         obs.pars.check_data_exists = True
-        obs.download_all_sources()
+        proj.run()
+        # obs.download_all_sources()
+
+        print(f"Number of sources in observatory: {len(obs.sources)}")
 
         for s in obs.sources:
             assert len(s.raw_photometry) == 1
