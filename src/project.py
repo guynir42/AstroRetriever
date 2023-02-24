@@ -691,6 +691,9 @@ class Project:
         else:
             self.cfg_hash = ""
 
+        for obs in self.observatories:
+            obs.cfg_hash = self.cfg_hash
+
         self._setup_output_folder()
 
         # write the config file to disk
@@ -782,53 +785,61 @@ class NamedList(list):
 
 
 if __name__ == "__main__":
-    proj = Project(
-        name="default_test",  # must give a name to each project
-        description="my project description",  # optional parameter example
-        version_control=False,  # whether to use version control on products
-        obs_names=["ZTF"],  # must give at least one observatory name
-        # parameters to pass to the Analysis object:
-        analysis_kwargs={
-            "num_injections": 3,
-            "finder_kwargs": {  # pass through Analysis into Finder
-                "snr_threshold": 7.5,
-            },
-            "finder_module": "src.finder",  # can choose different module
-            "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
-        },
-        analysis_module="src.analysis",  # replace this with your code path
-        analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
-        catalog_kwargs={"default": "WD"},  # load the default WD catalog
-        # parameters to be passed into each observatory class
-        obs_kwargs={
-            "reducer": {
-                "radius": 3,
-                "gap": 40,
-            },
-            "ZTF": {  # specific instructions for the ZTF observatory only
-                "credentials": {
-                    "username": "guy",
-                    "password": "12345",
-                },
-            },
-        },
-        verbose=True,
-    )
 
+    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
+
+    # proj = Project(
+    #     name="default_test",  # must give a name to each project
+    #     description="my project description",  # optional parameter example
+    #     version_control=False,  # whether to use version control on products
+    #     obs_names=["ZTF"],  # must give at least one observatory name
+    #     # parameters to pass to the Analysis object:
+    #     analysis_kwargs={
+    #         "num_injections": 3,
+    #         "finder_kwargs": {  # pass through Analysis into Finder
+    #             "snr_threshold": 7.5,
+    #         },
+    #         "finder_module": "src.finder",  # can choose different module
+    #         "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
+    #     },
+    #     analysis_module="src.analysis",  # replace this with your code path
+    #     analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
+    #     catalog_kwargs={"default": "WD"},  # load the default WD catalog
+    #     # parameters to be passed into each observatory class
+    #     obs_kwargs={
+    #         "reducer": {
+    #             "radius": 3,
+    #             "gap": 40,
+    #         },
+    #         "ZTF": {  # specific instructions for the ZTF observatory only
+    #             "credentials": {
+    #                 "username": "guy",
+    #                 "password": "12345",
+    #             },
+    #         },
+    #     },
+    #     verbose=True,
+    # )
+    proj = Project(
+        name="default_test",
+        obs_names=["demo"],
+        analysis_kwargs={"num_injections": 3},
+        obs_kwargs={},
+        catalog_kwargs={"default": "test"},
+        verbose=0,
+    )
     # download all data for all sources in the catalog
     # and reduce the data (skipping raw and reduced data already on file)
     # and store the results as detection objects in the DB, along with
     # detection stats in the form of histogram arrays.
-    # proj.run()
+    proj.run()
 
     # Project.help()
     # proj.help()
 
-    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
-
-    proj.delete_all_sources()
-    proj.catalog = proj.catalog.make_smaller_catalog(range(20))
-    proj.run()
+    # proj.delete_all_sources()
+    # proj.catalog = proj.catalog.make_smaller_catalog(range(20))
+    # proj.run()
 
     # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
     # sources = proj.get_all_sources()

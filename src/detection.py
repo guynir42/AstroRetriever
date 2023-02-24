@@ -32,23 +32,19 @@ class Detection(Base):
             doc="The data types the detection is based on.",
         )
 
-        source_id = sa.Column(
-            sa.ForeignKey("sources.id"),
-            index=True,
-            doc="ID of the source this detection is associated with",
-        )
+        # source_id = sa.Column(
+        #     sa.ForeignKey("sources.id"),
+        #     index=True,
+        #     doc="ID of the source this detection is associated with",
+        # )
+        #
+        # source = orm.relationship(
+        #     "Source",
+        #     cascade="all",
+        #     foreign_keys="Detection.source_id",
+        #     viewonly=True,
+        # )
 
-        source = orm.relationship(
-            "Source",
-            # back_populates="_detections_from_db",
-            cascade="",
-            foreign_keys="Detection.source_id",
-            viewonly=True,
-        )
-
-        # prefer to have this as column (not association_proxy) so
-        # we can still attach a detection that was removed from a source.
-        # automatically filled when setting source:
         source_name = sa.Column(
             sa.String,
             nullable=False,
@@ -241,15 +237,15 @@ class Detection(Base):
 
 
 # add relationships!
-Source._detections_from_db = orm.relationship(
-    "Detection",
-    # back_populates="source",
-    cascade="save-update, merge, refresh-expire, expunge",
-    lazy="selectin",
-    single_parent=True,
-    # passive_deletes=True,
-    doc="Detections associated with this source",
-)
+# Source._detections_from_db = orm.relationship(
+#     "Detection",
+#     # back_populates="source",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     doc="Detections associated with this source",
+# )
 
 # relationships to photometric datasets
 # detection_raw_photometry_association = sa.Table(

@@ -19,7 +19,7 @@ from src.parameters import (
     convert_data_type,
     get_class_from_data_type,
 )
-from src.utils import ra2sex, dec2sex, add_alias
+from src.utils import ra2sex, dec2sex, add_alias, UniqueList
 
 
 DEFAULT_PROJECT = "test_project"
@@ -205,13 +205,12 @@ class Source(Base, conesearch_alchemy.Point):
         self.cat_index = kwargs.pop("cat_index", None)
         self.cfg_hash = ""
 
-        # these are connected to the DB relationships
-        # if there is a viable database connection
-        self._reduced_photometry = None
-        self._processed_photometry = None
-        self._simulated_photometry = None
-        self._detections = None
-        self._properties = None
+        self.raw_photometry = []
+        self.reduced_photometry = []
+        self.processed_photometry = []
+        self.simulated_photometry = []
+        self.detections = None
+        self.properties = None
 
         # assign this coordinate a healpix ID
         if self.ra is not None and self.dec is not None:
@@ -245,25 +244,50 @@ class Source(Base, conesearch_alchemy.Point):
         is loaded from the database.
         ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
         """
-        self._reduced_photometry = None
-        self._processed_photometry = None
-        self._simulated_photometry = None
-        self._detections = None
-        self._properties = None
+        self.raw_photometry = []
+        self.reduced_photometry = []
+        self.processed_photometry = []
+        self.simulated_photometry = []
+        self.detections = None
+        self.properties = None
 
-    @property
-    def reduced_photometry(self):
-        try:
-            if self._reduced_photometry is None:
-                self._reduced_photometry = self._reduced_photometry_from_db
-        except Exception:
-            pass
+    # @property
+    # def reduced_photometry(self):
+    #     try:
+    #         if self._reduced_photometry is None:
+    #             self._reduced_photometry = self._reduced_photometry_from_db
+    #     except Exception:
+    #         pass
+    #
+    #     return self._reduced_photometry
+    #
+    # @reduced_photometry.setter
+    # def reduced_photometry(self, value):
+    #     self._reduced_photometry = value
 
-        return self._reduced_photometry
+    def __setattr__(self, key, value):
+        if key == "raw_photometry":
+            if not isinstance(value, list):
+                raise ValueError("raw_photometry must be a list")
+            new_value = UniqueList(["observatory"])
+            for item in value:
+                item.source = self
+                new_value.append(item)
+            value = new_value
+        if key in [
+            "reduced_photometry",
+            "processed_photometry",
+            "simulated_photometry",
+        ]:
+            if not isinstance(value, list):
+                raise ValueError(f"{key} must be a list")
+            new_value = UniqueList(["observatory", "source_name"])
+            for item in value:
+                item.source = self
+                new_value.append(item)
+            value = new_value
 
-    @reduced_photometry.setter
-    def reduced_photometry(self, value):
-        self._reduced_photometry = value
+        super().__setattr__(key, value)
 
     reduced_lightcurves = add_alias("reduced_photometry")
 
@@ -276,7 +300,7 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        self._reduced_photometry_from_db = self.reduced_photometry
+        # self._reduced_photometry_from_db = self.reduced_photometry
         try:
             for lc in self.reduced_photometry:
                 lc.save()
@@ -286,20 +310,20 @@ class Source(Base, conesearch_alchemy.Point):
             session.rollback()
             raise e
 
-    @property
-    def processed_photometry(self):
-        try:
-            if self._processed_photometry is None:
-                self._processed_photometry = self._processed_photometry_from_db
-        except Exception:
-            pass
-
-        return self._processed_photometry
-
-    @processed_photometry.setter
-    def processed_photometry(self, value):
-        self._processed_photometry = value
-
+    # @property
+    # def processed_photometry(self):
+    #     try:
+    #         if self._processed_photometry is None:
+    #             self._processed_photometry = self._processed_photometry_from_db
+    #     except Exception:
+    #         pass
+    #
+    #     return self._processed_photometry
+    #
+    # @processed_photometry.setter
+    # def processed_photometry(self, value):
+    #     self._processed_photometry = value
+    #
     processed_lightcurves = add_alias("processed_photometry")
 
     def save_processed_photometry(self, session=None):
@@ -311,7 +335,7 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        self._processed_photometry_from_db = self.processed_photometry
+        # self._processed_photometry_from_db = self.processed_photometry
         try:
             for lc in self.processed_photometry:
                 lc.save()
@@ -321,19 +345,19 @@ class Source(Base, conesearch_alchemy.Point):
             session.rollback()
             raise e
 
-    @property
-    def simulated_photometry(self):
-        try:
-            if self._simulated_photometry is None:
-                self._simulated_photometry = self._simulated_photometry_from_db
-        except Exception:
-            pass
-
-        return self._simulated_photometry
-
-    @simulated_photometry.setter
-    def simulated_photometry(self, value):
-        self._simulated_photometry = value
+    # @property
+    # def simulated_photometry(self):
+    #     try:
+    #         if self._simulated_photometry is None:
+    #             self._simulated_photometry = self._simulated_photometry_from_db
+    #     except Exception:
+    #         pass
+    #
+    #     return self._simulated_photometry
+    #
+    # @simulated_photometry.setter
+    # def simulated_photometry(self, value):
+    #     self._simulated_photometry = value
 
     simulated_lightcurves = add_alias("simulated_photometry")
 
@@ -346,7 +370,7 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        self._simulated_photometry_from_db = self.simulated_photometry
+        # self._simulated_photometry_from_db = self.simulated_photometry
         try:
             for lc in self.simulated_photometry:
                 lc.save()
@@ -356,19 +380,19 @@ class Source(Base, conesearch_alchemy.Point):
             session.rollback()
             raise e
 
-    @property
-    def detections(self):
-        try:
-            if self._detections is None:
-                self._detections = self._detections_from_db
-        except Exception:
-            pass
-
-        return self._detections
-
-    @detections.setter
-    def detections(self, value):
-        self._detections = value
+    # @property
+    # def detections(self):
+    #     try:
+    #         if self._detections is None:
+    #             self._detections = self._detections_from_db
+    #     except Exception:
+    #         pass
+    #
+    #     return self._detections
+    #
+    # @detections.setter
+    # def detections(self, value):
+    #     self._detections = value
 
     def save_detections(self, session=None):
         """
@@ -379,28 +403,28 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        self._detections_from_db = self.detections
+        # self._detections_from_db = self.detections
 
         for det in self.detections:
             session.add(det)
 
         session.commit()
 
-    @property
-    def properties(self):
-        try:
-            if self._properties is None:
-                self._properties = self._properties_from_db
-        except Exception:
-            pass
+    # @property
+    # def properties(self):
+    #     try:
+    #         if self._properties is None:
+    #             self._properties = self._properties_from_db
+    #     except Exception:
+    #         pass
+    #
+    #     return self._properties
+    #
+    # @properties.setter
+    # def properties(self, value):
+    #     self._properties = value
 
-        return self._properties
-
-    @properties.setter
-    def properties(self, value):
-        self._properties = value
-
-    def save(self, session=None, properties=True):
+    def save(self, session=None):
         """Save the source to the database"""
         if session is None:
             session = Session()
@@ -408,10 +432,10 @@ class Source(Base, conesearch_alchemy.Point):
             _ = CloseSession(session)
 
         session.add(self)
-        if properties:
-            self.properties.source = self
-            self._properties_from_db = self.properties
-            session.add(self.properties)
+        # if properties:
+        #     self.properties.source = self
+        #     self._properties_from_db = self.properties
+        #     session.add(self.properties)
 
         session.commit()
 
@@ -424,6 +448,7 @@ class Source(Base, conesearch_alchemy.Point):
         check_data=True,
         search_orphans=True,
         delete_missing=True,
+        append=True,
     ):
         """
         Get the raw data object associated with this source,
@@ -575,6 +600,12 @@ class Source(Base, conesearch_alchemy.Point):
         if len(found_data) == 0 and search_orphans:
             pass  # TODO: need to figure out how to search for files
             #      that are not associated with DB objects
+
+        for d in found_data:
+            d.source = self
+
+        if append:  # append this data on the source (should check for repeats)
+            getattr(self, f"{level}_{data_type}").extend(found_data)
 
         return found_data
 

@@ -8,8 +8,8 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import xarray as xr
+import threading
 
-import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -23,9 +23,11 @@ from sqlalchemy.ext.associationproxy import association_proxy
 
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base, Session, engine
+from src.database import Base, Session, engine, CloseSession
 from src.source import Source
-from src.utils import add_alias
+
+
+lock = threading.Lock()
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -80,6 +82,42 @@ def get_time_offset(time_str):
         return float(val.group(0).replace(" ", ""))
 
 
+def commit_and_save(datasets, session=None, save_kwargs={}):
+    """
+    Commit all datasets to the database, and then
+    save all datasets to disk.
+    If anything fails, will rollback the session
+    and delete the data from disk.
+    """
+    if session is None:
+        session = Session()
+        # make sure this session gets closed at end of function
+        _ = CloseSession(session)
+
+    if not isinstance(datasets, list):
+        datasets = [datasets]
+
+    if any([not isinstance(d, DatasetMixin) for d in datasets]):
+        raise ValueError("All datasets must be of type DatasetMixin")
+
+    for dataset in datasets:
+        try:
+            session.add(dataset)
+            session.flush()
+            if not dataset.check_data_exists():
+                lock.acquire()  # thread blocks at this line until it can obtain lock
+                try:
+                    dataset.save(**save_kwargs)
+                finally:
+                    lock.release()
+
+            session.commit()
+        except Exception:
+            session.rollback()
+            dataset.delete_data_from_disk()
+            raise
+
+
 class DatasetMixin:
     """
     A Dataset object maps a location on disk
@@ -112,6 +150,13 @@ class DatasetMixin:
     """
 
     if True:  # put all column definitions in a single block
+        source_name = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Name of the source for which this observation was taken",
+        )
+
         observatory = sa.Column(
             sa.String,
             nullable=False,
@@ -238,6 +283,7 @@ class DatasetMixin:
         self.colmap = {}
         self._times = None
         self._mjds = None
+        self.source = None
         self.time_info = {}
 
         # these are only set when generating a new
@@ -305,6 +351,7 @@ class DatasetMixin:
         self._times = None
         self._mjds = None
         self.time_info = {}
+        self.source = None
 
     def guess_format(self):
         """
@@ -508,26 +555,25 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    def get_source_name(self):
-        """
-        Get the name of the source as a string.
-
-        """
-        if hasattr(self, "source") and self.source is not None:
-            source_name = self.source.name
-        elif hasattr(self, "sources") and len(self.sources) > 0:
-            source_name = self.sources[0].name
-        else:
-            source_name = None
-
-        if source_name is not None:
-            if isinstance(source_name, bytes):
-                source_name = source_name.decode("utf-8")
-
-            if not isinstance(source_name, str):
-                raise TypeError("source name must be a string")
-
-        return source_name
+    # @property
+    # def source_name(self):
+    #     """
+    #     Get the name of the source as a string.
+    #
+    #     """
+    #     if self.source is not None:
+    #         source_name = self.source.name
+    #     else:
+    #         source_name = None
+    #
+    #     if source_name is not None:
+    #         if isinstance(source_name, bytes):
+    #             source_name = source_name.decode("utf-8")
+    #
+    #         if not isinstance(source_name, str):
+    #             raise TypeError("source name must be a string")
+    #
+    #     return source_name
 
     def invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
@@ -603,7 +649,7 @@ class DatasetMixin:
             self.filename, _ = os.path.splitext(self.raw_data_filename)
         else:
             if source_name is None:
-                source_name = self.get_source_name()
+                source_name = self.source_name
             if source_name is None:
                 source_name = self.random_string()
             # need to make up a file name in a consistent way
@@ -671,10 +717,7 @@ class DatasetMixin:
             The key to use for the data in the file.
         """
         if source_name is None:
-            if hasattr(self, "source") and self.source is not None:
-                source_name = self.source.name
-            elif hasattr(self, "sources") and len(self.sources) > 0:
-                source_name = self.sources[0].name
+            source_name = self.source_name
 
         if source_name is not None:
             if isinstance(source_name, bytes):
@@ -755,10 +798,8 @@ class DatasetMixin:
             raise ValueError("No data to save!")
 
         if ra_deg is None:
-            if hasattr(self, "source") and self.source is not None:
+            if self.source is not None:
                 ra_deg = self.source.ra
-            elif hasattr(self, "sources") and len(self.sources) > 0:
-                ra_deg = self.sources[0].ra
 
         # if no filename/key are given, make them up
         if self.filename is None:
@@ -1248,11 +1289,8 @@ class RawPhotometry(DatasetMixin, Base):
     def __repr__(self):
         string = f"{self.__class__.__name__}(type={self.type}"
 
-        try:  # this could fail if object is detached from session
-            if len(self.sources) > 0:
-                f", source={self.sources[0].name}"
-        except Exception:
-            pass
+        if self.source_name is not None:
+            string += f", source={self.source_name}"
 
         if self.observatory:
             string += f" ({self.observatory.upper()})"
@@ -1372,22 +1410,22 @@ class Lightcurve(DatasetMixin, Base):
     #     UniqueConstraint("source_id", "observatory", "series_number", "simulation_number", "was_processed", "cfg_hash", name="_lightcurve_uc"),
     # )
     if True:  # put all the column definitions in one block
-        source_id = sa.Column(
-            sa.Integer,
-            sa.ForeignKey("sources.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-            doc="ID of the source this dataset is associated with",
-        )
-
-        source = orm.relationship(
-            "Source",
-            doc="Source associated with this lightcurve dataset",
-            cascade="all",
-            foreign_keys="Lightcurve.source_id",
-        )
-
-        source_name = association_proxy("source", "name")
+        # source_id = sa.Column(
+        #     sa.Integer,
+        #     sa.ForeignKey("sources.id", ondelete="CASCADE"),
+        #     nullable=False,
+        #     index=True,
+        #     doc="ID of the source this dataset is associated with",
+        # )
+        #
+        # source = orm.relationship(
+        #     "Source",
+        #     doc="Source associated with this lightcurve dataset",
+        #     cascade="all",
+        #     foreign_keys="Lightcurve.source_id",
+        # )
+        #
+        # source_name = association_proxy("source", "name")
 
         project = sa.Column(
             sa.String,
@@ -2120,93 +2158,93 @@ Lightcurve.metadata.create_all(engine)
 # from different projects/git hashes can access
 # the same raw data
 # ref: https://docs.sqlalchemy.org/en/14/orm/basic_relationships.html#many-to-many
-source_raw_photometry_association = sa.Table(
-    "source_raw_photometry_association",
-    Base.metadata,
-    sa.Column(
-        "source_id",
-        sa.Integer,
-        sa.ForeignKey("sources.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    sa.Column(
-        "raw_photometry_id",
-        sa.Integer,
-        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
+# source_raw_photometry_association = sa.Table(
+#     "source_raw_photometry_association",
+#     Base.metadata,
+#     sa.Column(
+#         "source_id",
+#         sa.Integer,
+#         sa.ForeignKey("sources.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+#     sa.Column(
+#         "raw_photometry_id",
+#         sa.Integer,
+#         sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+# )
+#
+# Source.raw_photometry = orm.relationship(
+#     "RawPhotometry",
+#     secondary=source_raw_photometry_association,
+#     back_populates="sources",
+#     lazy="selectin",
+#     cascade="",
+#     order_by="RawPhotometry.time_start",
+#     doc="Raw photometry associated with this source",
+# )
+#
+#
+# RawPhotometry.sources = orm.relationship(
+#     "Source",
+#     secondary=source_raw_photometry_association,
+#     back_populates="raw_photometry",
+#     lazy="selectin",
+#     cascade="",
+#     doc="Sources associated with this raw photometry",
+# )
 
-Source.raw_photometry = orm.relationship(
-    "RawPhotometry",
-    secondary=source_raw_photometry_association,
-    back_populates="sources",
-    lazy="selectin",
-    cascade="",
-    order_by="RawPhotometry.time_start",
-    doc="Raw photometry associated with this source",
-)
 
-
-RawPhotometry.sources = orm.relationship(
-    "Source",
-    secondary=source_raw_photometry_association,
-    back_populates="raw_photometry",
-    lazy="selectin",
-    cascade="",
-    doc="Sources associated with this raw photometry",
-)
-
-
-Source._reduced_photometry_from_db = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==False, "
-    "Lightcurve.is_simulated==False)",
-    back_populates="source",
-    overlaps="_processed_photometry_from_db, _simulated_photometry_from_db",
-    cascade="save-update, merge, refresh-expire, expunge",
-    lazy="selectin",
-    single_parent=True,
-    # passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced photometric datasets associated with this source",
-)
+# Source._reduced_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==False, "
+#     "Lightcurve.is_simulated==False)",
+#     back_populates="source",
+#     overlaps="_processed_photometry_from_db, _simulated_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced photometric datasets associated with this source",
+# )
 
 # Source.redu_lcs = add_alias("reduced_photometry")
 
 
-Source._processed_photometry_from_db = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==True, "
-    "Lightcurve.is_simulated==False)",
-    back_populates="source",
-    overlaps="_reduced_photometry_from_db, _simulated_photometry_from_db",
-    cascade="save-update, merge, refresh-expire, expunge",
-    lazy="selectin",
-    single_parent=True,
-    # passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced and processed photometric datasets associated with this source",
-)
+# Source._processed_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==True, "
+#     "Lightcurve.is_simulated==False)",
+#     back_populates="source",
+#     overlaps="_reduced_photometry_from_db, _simulated_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced and processed photometric datasets associated with this source",
+# )
 
 # Source.proc_lcs = add_alias("processed_photometry")
 
-Source._simulated_photometry_from_db = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==True, "
-    "Lightcurve.is_simulated==True)",
-    back_populates="source",
-    overlaps="_reduced_photometry_from_db, _processed_photometry_from_db",
-    cascade="save-update, merge, refresh-expire, expunge",
-    lazy="selectin",
-    single_parent=True,
-    # passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced and simulated photometric datasets associated with this source",
-)
+# Source._simulated_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==True, "
+#     "Lightcurve.is_simulated==True)",
+#     back_populates="source",
+#     overlaps="_reduced_photometry_from_db, _processed_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced and simulated photometric datasets associated with this source",
+# )
 
 # Source.sim_lcs = add_alias("simulated_photometry")
 

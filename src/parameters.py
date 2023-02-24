@@ -233,6 +233,7 @@ class Parameters:
             "If None, the default file named as the project will be used. "
             "If False, no file will be loaded.",
         )
+
         self.data_types = self.add_par(
             "data_types",
             "photometry",

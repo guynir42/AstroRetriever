@@ -19,7 +19,7 @@ from src.parameters import (
     get_class_from_data_type,
 )
 from src.source import Source, get_source_identifiers
-from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
 from src.utils import help_with_class, help_with_object
 
@@ -325,7 +325,7 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
-    # this should just be merged with check_and_fetch_source
+    # TODO: this should just be merged with fetch_source
     def get_source(self, cat_row, session=None, download=True, reduce=True):
         """
         Get a Source object for the given catalog row.
@@ -478,7 +478,7 @@ class VirtualObservatory:
 
             if num_threads <= 1:  # single threaded execution
                 cat_row = self.catalog.get_row(i, "number", "dict")
-                s = self.check_and_fetch_source(
+                s = self.fetch_source(
                     cat_row=cat_row,
                     save=save,
                     fetch_args=fetch_args,
@@ -565,7 +565,7 @@ class VirtualObservatory:
                 )
                 futures.append(
                     executor.submit(
-                        self.check_and_fetch_source,
+                        self.fetch_source,
                         cat_row=cat_row,
                         save=save,
                         fetch_args=fetch_args,
@@ -590,7 +590,7 @@ class VirtualObservatory:
 
         return sources
 
-    def check_and_fetch_source(
+    def fetch_source(
         self,
         cat_row,
         save=True,
@@ -645,7 +645,7 @@ class VirtualObservatory:
         """
 
         if self.pars.verbose > 6:
-            print(f'check_and_fetch_source: {cat_row["name"]}')
+            print(f'fetch_source: {cat_row["name"]}')
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
         download_pars.update(
             {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
@@ -659,8 +659,9 @@ class VirtualObservatory:
         # check if source already exists
         source = session.scalars(
             sa.select(Source).where(
-                Source.name == cat_row["name"]
-            )  # TODO: add cfg_hash
+                Source.name == cat_row["name"],
+                Source.cfg_hash == self.cfg_hash,
+            )
         ).first()
         if self.pars.verbose > 9:
             print(f"Is source found in database: {source is not None}")
@@ -669,10 +670,9 @@ class VirtualObservatory:
         if source is None:
             if self.pars.verbose > 9:
                 print(f'Creating new source: {cat_row["name"]}')
-            source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
+            source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
             source.cat_row = cat_row  # save the raw catalog row as well
 
-        new_data = []
         for dt in self.pars.data_types:
             # class of raw data (e.g., RawPhotometry)
             DataClass = get_class_from_data_type(dt)
@@ -740,10 +740,10 @@ class VirtualObservatory:
                             raw_data = None
                             break
 
-            # no data on DB/file, must re-fetch from observatory website:
+            # no data on DB/file, must re-download from observatory website:
             if raw_data is None:
-                # <-- magic happens here! -- >
-                data, altdata = self.fetch_data_from_observatory(cat_row, **fetch_args)
+                # <-- magic happens here! -- > #
+                data, altdata = self.download_from_observatory(cat_row, **fetch_args)
 
                 # save the catalog info
                 # TODO: should we get the full catalog row?
@@ -753,17 +753,14 @@ class VirtualObservatory:
                 altdata["download_pars"] = download_pars
 
                 # create a raw data for this class (e.g., RawPhotometry)
-
                 raw_data = DataClass(
                     data=data,
                     altdata=altdata,
                     observatory=self.name,
                     source_name=cat_row["name"],
                     **dataset_args,
-                )
-                # keep track of new dataset that needs
-                # to be saved to disk and DB
-                new_data.append(raw_data)
+                )  # Raw data doesn't have cfg_hash!
+
             # this dataset is not appended to source yet:
             if not any(
                 [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
@@ -774,8 +771,6 @@ class VirtualObservatory:
                 raise ValueError("Raw data can not be None at this point!")
 
             if reduce:  # reduce the data
-                # DataClass = get_class_from_data_type(dt, 'reduced')
-                # reduced_datasets = session.scalars(sa.select(DataClass).where(DataClass.source_name == source.name)).all()
                 reduced_datasets = source.get_data(
                     obs=self.name,
                     data_type=dt,
@@ -784,71 +779,49 @@ class VirtualObservatory:
                     check_data=self.pars.check_data_exists,
                 )
 
+                # could not find reduced data, so reduce it now
                 if len(reduced_datasets) == 0:
                     reduced_datasets = self.reduce(raw_data, **reducer_args)
 
-            # TODO: we can remove this if we cancel all the relationship cascades
-            # here we explicitly set all relational collections
-            # to an empty list, so they are accessible (and empty)
-            # even if the source is no longer attached to the DB.
-            # for name in ["reduced", "processed", "simulated"]:
-            #     if len(getattr(source, f"{name}_{dt}")) == 0:
-            #         setattr(source, f"{name}_{dt}", [])
-            # if len(source.detections) == 0:
-            #     source.detections = []
-            # add more collections here...
+                # make sure to append new data unto source
+                for d in reduced_datasets:
+                    old_data = getattr(source, f"reduced_{dt}")
+                    if not any(
+                        [
+                            o.observatory == self.name
+                            and o.series_number == d.series_number
+                            for o in old_data
+                        ]
+                    ):
+                        getattr(source, f"reduced_{dt}").append(d)
 
-            # if debugging or saving outside this object, save=False
+            # if debugging or saving outside this function, set save=False
             if save:
-                if source.ra is not None:
-                    ra = source.ra
-                    ra_deg = np.floor(ra)
-                    if self.pars.save_ra_minutes:
-                        ra_minute = np.floor((ra - ra_deg) * 60)
-                    else:
-                        ra_minute = None
-                    if self.pars.save_ra_seconds:
-                        ra_second = np.floor((ra - ra_deg - ra_minute / 60) * 3600)
-                    else:
-                        ra_second = None
-                else:
-                    ra_deg = None
-                    ra_minute = None
-                    ra_second = None
-
                 try:
                     session.add(source)
-                    session.add(raw_data)
-                    # try to save the data to disk
-                    lock.acquire()  # thread blocks at this line until it can obtain lock
-                    try:
-                        for data in new_data:
-                            data.save(
-                                overwrite=self.pars.overwrite_files,
-                                source_name=source.name,
-                                ra_deg=ra_deg,
-                                ra_minute=ra_minute,
-                                ra_second=ra_second,
-                                key_prefix=self.pars.filekey_prefix,
-                                key_suffix=self.pars.filekey_suffix,
-                            )
-                    finally:
-                        lock.release()
-                    # try to save the source+data to the database
                     session.commit()
                 except Exception:
                     session.rollback()
-                    # if saving to disk or database fails,
-                    # make sure we do not leave orphans
-                    for data in new_data:
-                        data.delete_data_from_disk()
                     raise
+
+                # try to save the raw data
+                save_kwargs = dict(
+                    overwrite=self.pars.overwrite_files,
+                    key_prefix=self.pars.filekey_prefix,
+                    key_suffix=self.pars.filekey_suffix,
+                )
+                commit_and_save(raw_data, session=session, save_kwargs=save_kwargs)
+
+                if reduce and self.pars.save_reduced:
+                    commit_and_save(
+                        reduced_datasets, session=session, save_kwargs=save_kwargs
+                    )
 
         self.latest_source = source
 
         return source
 
-    def fetch_data_from_observatory(self, cat_row, **kwargs):
+    def download_from_observatory(self, cat_row, **kwargs):
         """
         Fetch data from the observatory for a given source.
         Must return a dataframe (or equivalent), even if it is an empty one.
@@ -987,6 +960,7 @@ class VirtualObservatory:
 
         return value
 
+    # TODO: can we get rid of this?
     def commit_source(
         self, data, data_type, cat_id, source_ids, filename, key, session
     ):
@@ -1207,25 +1181,25 @@ class VirtualObservatory:
             d.series_number = i + 1
             d.series_total = len(new_datasets)
 
-        if self.pars.save_reduced and source is not None:
-            if session is None:
-                session = Session()
-                # make sure this session gets closed at end of function
-                _ = CloseSession(session)
-            try:
-                if source is not None:
-                    session.add(source)
-
-                for d in new_datasets:
-                    d.save()
-                    session.add(d)
-
-                session.commit()
-            except Exception as e:
-                session.rollback()
-                for d in new_datasets:
-                    d.delete_data_from_disk()
-                raise e
+        # if self.pars.save_reduced and source is not None:
+        #     if session is None:
+        #         session = Session()
+        #         # make sure this session gets closed at end of function
+        #         _ = CloseSession(session)
+        #     try:
+        #         if source is not None:
+        #             session.add(source)
+        #
+        #         for d in new_datasets:
+        #             d.save()
+        #             session.add(d)
+        #
+        #         session.commit()
+        #     except Exception as e:
+        #         session.rollback()
+        #         for d in new_datasets:
+        #             d.delete_data_from_disk()
+        #         raise e
 
         self.latest_reductions = new_datasets
 

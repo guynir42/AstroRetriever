@@ -311,3 +311,56 @@ def add_alias(att):
         fset=lambda self, value: setattr(self, att, value),
         doc=f'Alias for "{att}"',
     )
+
+
+class UniqueList(list):
+    """
+    A list that checks if an appended object is already part of the list.
+
+    If appending or setting one of the elements,
+    all elements of the list are checked against the new
+    object, using the list of comparison_attributes specified.
+    """
+
+    def __init__(self, comparison_attributes=[]):
+        self.comparison_attributes = comparison_attributes
+        if len(comparison_attributes) == 0:
+            self.comparison_attributes = ["name"]
+        super().__init__()
+
+    def __setitem__(self, key, value):
+        self._check_and_remove(value)
+        super().__setitem__(key, value)
+
+    def append(self, value):
+        self._check_and_remove(value)
+        super().append(value)
+
+    def extend(self, value):
+        for v in value:
+            self._check_and_remove(v)
+        super().extend(value)
+
+    def plus(self, value):
+        self.extend(value)
+
+    def _check_and_remove(self, value):
+        """
+        Removes from the list all instances that
+        are the same as "value", using the _check function.
+        """
+        for i in range(len(self)):
+            if self._check(value, self[i]):
+                self.pop(i)
+
+    def _check(self, value, other):
+        """
+        Check if the value is the same as the other object.
+        Only if all the comparison_attributes are the same,
+        the check returns True. If any are different, returns False.
+        """
+        for att in self.comparison_attributes:
+            if getattr(value, att) != getattr(other, att):
+                return False
+
+        return True

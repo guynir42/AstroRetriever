@@ -3,7 +3,6 @@ import yaml
 import time
 import uuid
 import pytest
-import datetime
 from pprint import pprint
 
 import numpy as np
@@ -12,12 +11,10 @@ from astropy.time import Time
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
 
-from src.utils import OnClose
+from src.utils import OnClose, UniqueList
 from src.parameters import Parameters
 from src.project import Project
-from src.observatory import VirtualDemoObs
 from src.ztf import VirtualZTF
 
 from src.database import Session
@@ -403,6 +400,7 @@ def test_add_source_and_data(data_dir):
                 ra=np.random.uniform(0, 360),
                 dec=np.random.uniform(-90, 90),
             )
+            assert isinstance(new_source.raw_photometry, UniqueList)
 
             # add some data to the source
             num_points = 10
@@ -437,6 +435,12 @@ def test_add_source_and_data(data_dir):
             # must add this separately, as cascades are cancelled
             session.add(new_data)
             new_source.raw_photometry = [new_data]
+            assert isinstance(new_source.raw_photometry, UniqueList)
+            assert len(new_source.raw_photometry) == 1
+
+            # check that re-appending this same data does not add another copy to list
+            new_source.raw_photometry.append(new_data)
+            assert len(new_source.raw_photometry) == 1
 
             # this should not work because
             # no filename was specified
@@ -468,7 +472,7 @@ def test_add_source_and_data(data_dir):
             new_data.save()  # must save to allow RawPhotometry to be added to DB
             session.commit()  # this should now work fine
             assert new_source.id is not None
-            assert new_source.id == new_data.sources[0].id
+            assert new_source.id == new_data.source.id
 
             # try to recover the data
             filename = new_data.filename
@@ -483,19 +487,22 @@ def test_add_source_and_data(data_dir):
 
         # check that the data is in the database
         with Session() as session:
-            sources = session.scalars(
-                sa.select(Source)
-                .options(joinedload(Source.raw_photometry))
-                .where(Source.name == source_name)
+            source = session.scalars(
+                sa.select(Source).where(Source.name == source_name)
             ).first()
 
-            assert sources is not None
-            assert len(sources.raw_photometry) == 1
-            assert sources.raw_photometry[0].filename == filename
-            assert sources.raw_photometry[0].filekey == new_data.filekey
-            assert sources.raw_photometry[0].sources[0].id == new_source.id
+            assert source is not None
+            assert source.id == new_source.id
+            source.get_data(
+                obs="demo", data_type="photometry", level="raw", session=session
+            )
+            assert len(source.raw_photometry) == 1
+            assert source.raw_photometry[0].filename == filename
+            assert source.raw_photometry[0].filekey == new_data.filekey
+            assert source.raw_photometry[0].source.id == new_source.id
+
             # this autoloads the data:
-            assert sources.raw_photometry[0].data.equals(df)
+            assert source.raw_photometry[0].data.equals(df)
 
     finally:
         if os.path.isfile(fullname):
@@ -512,18 +519,25 @@ def test_add_source_and_data(data_dir):
             sa.select(Source).where(Source.name == source_name)
         ).first()
         assert source is not None
+
+        # get_data will load a RawPhotometry file without checking if it has data
+        source.get_data(
+            obs="demo",
+            data_type="photometry",
+            level="raw",
+            session=session,
+            check_data=False,
+            delete_missing=False,
+        )
+        assert len(source.raw_photometry) == 1
         assert len(source.raw_photometry) == 1
         with pytest.raises(FileNotFoundError):
             source.raw_photometry[0].data.equals(df)
 
-    # make sure deleting the source also cleans up the data
+    # cleanup
     with Session() as session:
         session.execute(sa.delete(Source).where(Source.name == source_name))
         session.commit()
-        data = session.scalars(
-            sa.select(RawPhotometry).where(RawPhotometry.filekey == new_data.filekey)
-        ).first()
-        assert not any([s.name == source_name for s in data.sources])
 
 
 def test_source_unique_constraint():
