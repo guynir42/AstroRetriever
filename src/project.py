@@ -717,6 +717,8 @@ class Project:
         for obs in self.observatories:
             obs.cfg_hash = self.cfg_hash
 
+        self.catalog.cfg_hash = self.cfg_hash
+
         self._setup_output_folder()
 
         # write the config file to disk

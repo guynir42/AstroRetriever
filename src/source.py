@@ -35,14 +35,16 @@ warnings.filterwarnings(
 utcnow = func.timezone("UTC", func.current_timestamp())
 
 
-def get_source_identifiers(project_name, column="id"):
+def get_source_identifiers(project_name, cfg_hash=None, column="id"):
     """
     Get all source identifiers from a given project.
-    # TODO: add option to filter on cfg_hash too
+
     Parameters
     ----------
     project_name: str
         Name of the project.
+    cfg_hash: str, optional
+        Hash of the configuration file.
     column: str
         Name of the column to get identifiers from.
         Default is "id". Also useful is "name".
@@ -53,9 +55,10 @@ def get_source_identifiers(project_name, column="id"):
         Set of identifiers.
     """
 
+    hash = cfg_hash if cfg_hash is not None else ""
     with Session() as session:
         stmt = sa.select([getattr(Source, column)])
-        stmt = stmt.where(Source.project == project_name)
+        stmt = stmt.where(Source.project == project_name, Source.cfg_hash == hash)
         source_ids = session.execute(stmt).all()
 
         return {s[0] for s in source_ids}
@@ -748,7 +751,6 @@ class Source(Base, conesearch_alchemy.Point):
         """
         Check if this source is a duplicate of another source,
         by using a cone search on other sources from the same project.
-        # TODO: should also be able to limit to sources with the same cfg_hash
 
         Parameters
         ----------
@@ -771,7 +773,7 @@ class Source(Base, conesearch_alchemy.Point):
             project = DEFAULT_PROJECT
 
         stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
-        stmt = stmt.where(Source.project == project)
+        stmt = stmt.where(Source.project == project, Source.cfg_hash == self.cfg_hash)
 
         if session is None:
             session = Session()

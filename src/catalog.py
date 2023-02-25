@@ -243,6 +243,7 @@ class Catalog:
         self.inverse_name_index = None
         self.names = None
         self.cat_hash = None
+        self.cfg_hash = None
 
     def __len__(self):
         return len(self.data)
@@ -423,21 +424,27 @@ class Catalog:
         c._make_inverse_index()
         return c
 
-    def get_all_sources(self, session=None):
+    def get_all_sources(self, session=None, project=None):
         """
         Get all sources in the catalog that have a
         corresponding row in the database.
 
         """
-        # TODO: add cfg_hash to this
-        names = [str(name) for name in self.data[self.pars.name_column]]
 
-        stmt = sa.select(Source).where(Source.name.in_(names))
-
+        if project is None:
+            project = self.pars.project
+        hash = self.cfg_hash if self.cfg_hash is not None else ""
         if session is None:
             session = Session()
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
+
+        names = [str(name) for name in self.data[self.pars.name_column]]
+
+        stmt = sa.select(Source).where(
+            Source.name.in_(names), Source.project == project, Source.cfg_hash == hash
+        )
+
         sources = session.scalars(stmt).all()
 
         return sources
