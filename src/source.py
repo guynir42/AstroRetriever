@@ -1,5 +1,6 @@
 import warnings
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 import matplotlib.pyplot as plt
 
@@ -281,12 +282,15 @@ class Source(Base, conesearch_alchemy.Point):
         ]:
             if not isinstance(value, list):
                 raise ValueError(f"{key} must be a list")
-            new_value = UniqueList(["observatory", "source_name"])
+            new_value = UniqueList(["observatory", "source_name", "series_number"])
             for item in value:
                 item.source = self
                 new_value.append(item)
             value = new_value
-
+        if key == "properties" and value is not None:
+            value.source_name = self.name
+            value.project = self.project
+            value.cfg_hash = self.cfg_hash
         super().__setattr__(key, value)
 
     reduced_lightcurves = add_alias("reduced_photometry")
@@ -432,10 +436,7 @@ class Source(Base, conesearch_alchemy.Point):
             _ = CloseSession(session)
 
         session.add(self)
-        # if properties:
-        #     self.properties.source = self
-        #     self._properties_from_db = self.properties
-        #     session.add(self.properties)
+        session.add(self.properties)
 
         session.commit()
 
@@ -692,8 +693,30 @@ class Source(Base, conesearch_alchemy.Point):
             If given, will also remove the analysis results
             from the database.
         """
+
+        # TODO: need to check if we actually need this session stuff
+        if session is not None:
+            session.merge(self)
+
+            if inspect(self.properties).persistent:
+                session.delete(self.properties)
+
+            for d in self.detections:
+                if inspect(d).persistent:
+                    session.delete(d)
+
+            for dt in allowed_data_types:
+                for d in getattr(self, f"processed_{dt}"):
+                    if inspect(d).persistent:
+                        session.delete(d)
+
+                for d in getattr(self, f"simulated_{dt}"):
+                    if inspect(d).persistent:
+                        session.delete(d)
+
         self.properties = None
         self.detections = []
+
         for dt in allowed_data_types:
             setattr(self, f"processed_{dt}", [])
             setattr(self, f"simulated_{dt}", [])

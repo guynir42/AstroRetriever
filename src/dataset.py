@@ -103,8 +103,7 @@ def commit_and_save(datasets, session=None, save_kwargs={}):
     for dataset in datasets:
         try:
             session.add(dataset)
-            session.flush()
-            if not dataset.check_data_exists():
+            if not dataset.check_file_exists():
                 lock.acquire()  # thread blocks at this line until it can obtain lock
                 try:
                     dataset.save(**save_kwargs)
@@ -328,7 +327,7 @@ class DatasetMixin:
         if key == "filename":
             if isinstance(value, str) and os.path.isabs(value):
                 raise ValueError("Filename must be a relative path, not absolute")
-        elif key == "folder":
+        if key == "folder":
             # if given as absolute path that overlaps with DATA_ROOT,
             # convert to relative path, so it is portable
             if isinstance(value, str) and os.path.isabs(value):
@@ -336,6 +335,10 @@ class DatasetMixin:
                     value = value[len(src.database.DATA_ROOT) :]
                     if value.startswith("/"):
                         value = value[1:]
+        if key == "source" and value is not None:
+            if not isinstance(value, Source):
+                raise ValueError(f"Source must be a Source object, not {type(value)}")
+            self.source_name = value.name
 
         super().__setattr__(key, value)
 

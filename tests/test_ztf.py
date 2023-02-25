@@ -31,7 +31,7 @@ def test_ztf_download(ztf_project, wd_cat):
     # download the lightcurve:
     ztf_project.catalog = c
     ztf.catalog = c
-    ztf.download_all_sources()
+    ztf.fetch_all_sources()
 
     def cleanup():  # to be called at the end
         with Session() as session:

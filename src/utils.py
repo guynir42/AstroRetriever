@@ -329,7 +329,12 @@ class UniqueList(list):
         super().__init__()
 
     def __setitem__(self, key, value):
-        self._check_and_remove(value)
+        for i in range(len(self)):
+            if i != key:
+                if self._check(value, self[i]):
+                    raise ValueError(
+                        f"Cannot assign to index {key}, with duplicate in index {i}."
+                    )
         super().__setitem__(key, value)
 
     def append(self, value):
@@ -349,7 +354,8 @@ class UniqueList(list):
         Removes from the list all instances that
         are the same as "value", using the _check function.
         """
-        for i in range(len(self)):
+        # go over list in reverse in case some get popped out
+        for i in range(len(self)).__reversed__():
             if self._check(value, self[i]):
                 self.pop(i)
 

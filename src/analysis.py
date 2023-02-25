@@ -303,7 +303,6 @@ class Analysis:
                     self._save_histograms(temp=True)
 
                 for source in sources:
-                    # session.add(source)
                     source.save(session=session)
                     source.save_detections(session=session)
 

@@ -100,7 +100,7 @@ class VirtualTESS(VirtualObservatory):
         """
         raise NotImplementedError()
 
-    def fetch_data_from_observatory(
+    def download_from_observatory(
         self,
         cat_row,
         verbose=0,

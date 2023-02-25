@@ -97,7 +97,7 @@ class VirtualZTF(VirtualObservatory):
         self.pars = ParsObsZTF(**kwargs)
         super().__init__(name="ztf")
 
-    def fetch_data_from_observatory(self, cat_row, verbose=False):
+    def download_from_observatory(self, cat_row, verbose=False):
         """
         Fetch data from the ZTF archive for a given source.
 
@@ -496,6 +496,6 @@ if __name__ == "__main__":
     }
 
     ztf.pars.cone_search_radius = 10
-    data, altdata = ztf.fetch_data_from_observatory(cat_row, verbose=True)
+    data, altdata = ztf.download_from_observatory(cat_row, verbose=True)
     data2 = data[data["filtercode"] == "zg"]
     plt.plot(data2["mjd"], data2["mag"], "o")

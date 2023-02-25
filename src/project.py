@@ -418,8 +418,11 @@ class Project:
         Get all sources associated with this project
         that have a corresponding row in the database.
         """
-        # TODO: add cfg_hash to this
-        stmt = sa.select(Source).where(Source.project == self.name)
+
+        hash = self.cfg_hash if self.cfg_hash else ""
+        stmt = sa.select(Source).where(
+            Source.project == self.name, Source.cfg_hash == hash
+        )
 
         if session is None:
             session = Session()
@@ -456,25 +459,39 @@ class Project:
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # TODO: add cfg_hash to this
+        hash = self.cfg_hash if self.cfg_hash else ""
         sources = session.scalars(
-            sa.select(Source).where(Source.project == self.name)
+            sa.select(Source).where(
+                Source.project == self.name, Source.cfg_hash == hash
+            )
         ).all()
 
         if remove_all_data:
+            obs_names = [obs.name for obs in self.observatories]
             for source in sources:
                 for dt in self.pars.data_types:
                     # the reduced level class is the same for processed/simulated
                     DataClass = get_class_from_data_type(dt, level="reduced")
                     data = session.scalars(
-                        sa.select(DataClass).where(DataClass.source_id == source.id)
+                        sa.select(DataClass).where(
+                            DataClass.source_name == source.name,
+                            DataClass.project == self.name,
+                            DataClass.cfg_hash == hash,
+                            DataClass.observatory.in_(obs_names),
+                        )
                     ).all()
                     for d in data:
                         d.delete_data_from_disk()
                         session.delete(d)
                     if remove_raw_data:
-                        # only remove data in a relationship with source
-                        for d in getattr(source, f"raw_{dt}"):
+                        DataClass = get_class_from_data_type(dt, level="raw")
+                        data = session.scalars(
+                            sa.select(DataClass).where(
+                                DataClass.source_name == source.name,
+                                DataClass.observatory.in_(obs_names),
+                            )
+                        )
+                        for d in data:
                             d.delete_data_from_disk()
                             session.delete(d)
                 session.delete(source)
@@ -527,15 +544,19 @@ class Project:
         if isinstance(types, str):
             types = [types]
 
+        for obs in self.observatories:
+            obs.sources = []
+            obs.datasets = []
+
         with Session() as session:
             # TODO: add batching of sources
             for name in source_names:
-
+                hash = self.cfg_hash if self.cfg_hash else ""
                 source = session.scalars(
                     sa.select(Source).where(
                         Source.name == name,
                         Source.project == self.name,
-                        Source.cfg_hash == self.cfg_hash,
+                        Source.cfg_hash == hash,
                     )
                 ).first()
 
@@ -561,9 +582,7 @@ class Project:
                         continue
 
                     # try to download the data for this observatory
-                    source = obs.check_and_fetch_source(
-                        cat_row, save=False, session=session
-                    )
+                    source = obs.fetch_source(cat_row, save=True, session=session)
 
                     for dt in types:
                         if need_skip:
@@ -630,12 +649,13 @@ class Project:
                                 if lc.observatory == obs.name
                             ]
                             if len(lcs) == 0:  # try to load from DB
+                                hash = self.cfg_hash if self.cfg_hash else ""
                                 lcs = session.scalars(
                                     sa.select(Lightcurve).where(
                                         Lightcurve.source_name == name,
                                         Lightcurve.observatory == obs.name,
                                         Lightcurve.project == self.name,
-                                        Lightcurve.cfg_hash == self.cfg_hash,
+                                        Lightcurve.cfg_hash == hash,
                                         Lightcurve.was_processed.is_(False),
                                     )
                                 ).all()
@@ -647,6 +667,9 @@ class Project:
                         # add additional elif for other types...
                         else:
                             raise ValueError(f"Unknown data type: {dt}")
+
+                    obs.sources.append(source)
+                    # TODO: add the new datasets too?
 
                 # finished looping on observatories and data types
 

@@ -325,79 +325,14 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
-    # TODO: this should just be merged with fetch_source
-    def get_source(self, cat_row, session=None, download=True, reduce=True):
-        """
-        Get a Source object for the given catalog row.
-        If the source exists in the DB it is loaded
-        using the session (if no session is given,
-        a new one will be opened).
-        By default, will create the source and
-        make sure it has the raw data associated
-        with this observatory (if not, it is downloaded).
-        The same is true for the reduced data.
-        If no reduced data is available, it will be
-        created using the reducer methods.
-        TODO: will the reduced data always get saved to disk?
-
-        Parameters
-        ----------
-        cat_row: dict
-            Dictionary with the catalog row data
-            (including name, ra/dec, mag, etc.).
-        session: Session, optional
-            Database session to use. If not given,
-            a new one will be created.
-            In that case it will also make sure
-            to close the session at the end of
-            the function.
-        download: bool, optional
-            If True, will download the raw data
-            if it is not available.
-        reduce: bool, optional
-            If True, will reduce the raw data
-            if it is not available.
-
-        Returns
-        -------
-        source: Source
-            Source object for the given catalog row.
-        """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-
-        # TODO: add cfg hash
-        source = session.scalars(
-            sa.select(Source).where(
-                Source.name == cat_row["name"], Source.project == self.pars.project
-            )
-        ).first()
-        if source is None:
-            if download:
-                pass
-            else:
-                return  # TODO: should raise or just ignore?
-
-    # TODO: can we get rid of this?
-    def run_analysis(self):
-        """
-        Perform analysis on each object in the catalog.
-
-        """
-        self.analysis.load_simulator()
-        self.reset_histograms()
-
-        for row in self.catalog:
-            source = self.get_source(row)
-            if source is not None:
-                for d in source.datasets:
-                    d.load()
-                self.analysis.run(source, histograms=self.histograms)
-
-    def download_all_sources(
-        self, start=0, stop=None, save=True, fetch_args={}, dataset_args={}
+    def fetch_all_sources(
+        self,
+        start=0,
+        stop=None,
+        save=True,
+        reduce=True,
+        download_args={},
+        dataset_args={},
     ):
         """
         Download data from the observatory.
@@ -431,9 +366,12 @@ class VirtualObservatory:
             objects to the database (default).
             If False, do not save the data to disk or the
             raw data objects to the database (debugging only).
-        fetch_args: dict, optional
+        reduce: bool
+            If True, reduce the data (e.g., subtract
+            background, etc).
+        download_args: dict, optional
             Additional arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -481,16 +419,18 @@ class VirtualObservatory:
                 s = self.fetch_source(
                     cat_row=cat_row,
                     save=save,
-                    fetch_args=fetch_args,
+                    reduce=reduce,
+                    download_args=download_args,
                     dataset_args=dataset_args,
                 )
                 sources = [s]
             else:  # multiple threads
-                sources = self._fetch_data_asynchronous(
+                sources = self._fetch_sources_asynchronous(
                     start=i,
                     stop=i + num_threads,
                     save=save,
-                    fetch_args=fetch_args,
+                    reduce=reduce,
+                    download_args=download_args,
                     dataset_args=dataset_args,
                 )
 
@@ -516,7 +456,9 @@ class VirtualObservatory:
 
         return num_loaded
 
-    def _fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
+    def _fetch_sources_asynchronous(
+        self, start, stop, save, reduce, download_args, dataset_args
+    ):
         """
         Get data for a few sources, either by loading them
         from disk or by fetching the data online from
@@ -541,9 +483,12 @@ class VirtualObservatory:
         save: bool
             If True, save the data to disk and the
             raw data / Source objects to database.
-        fetch_args: dict
+        reduce: bool
+            If True, reduce the data (e.g., subtract
+            background, etc).
+        download_args: dict
             Additional keyword arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -568,7 +513,8 @@ class VirtualObservatory:
                         self.fetch_source,
                         cat_row=cat_row,
                         save=save,
-                        fetch_args=fetch_args,
+                        reduce=reduce,
+                        download_args=download_args,
                         dataset_args=dataset_args,
                     )
                 )
@@ -596,7 +542,7 @@ class VirtualObservatory:
         save=True,
         reduce=True,
         session=None,
-        fetch_args={},
+        download_args={},
         reducer_args={},
         dataset_args={},
     ):
@@ -622,9 +568,9 @@ class VirtualObservatory:
             will open a session and close it at end
             of function call. If given an active session,
             will leave it open for use by external code.
-        fetch_args: dict
+        download_args: dict
             Additional keyword arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
         reducer_args: dict
             Additional keyword arguments to pass to the
             reduce method. Only used if reduce=True.
@@ -648,7 +594,11 @@ class VirtualObservatory:
             print(f'fetch_source: {cat_row["name"]}')
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
         download_pars.update(
-            {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
+            {
+                k: download_args[k]
+                for k in self.pars.download_pars_list
+                if k in download_args
+            }
         )
 
         if session is None:
@@ -657,10 +607,11 @@ class VirtualObservatory:
             _ = CloseSession(session)
 
         # check if source already exists
+        hash = self.cfg_hash if self.cfg_hash is not None else ""
         source = session.scalars(
             sa.select(Source).where(
                 Source.name == cat_row["name"],
-                Source.cfg_hash == self.cfg_hash,
+                Source.cfg_hash == hash,
             )
         ).first()
         if self.pars.verbose > 9:
@@ -743,7 +694,7 @@ class VirtualObservatory:
             # no data on DB/file, must re-download from observatory website:
             if raw_data is None:
                 # <-- magic happens here! -- > #
-                data, altdata = self.download_from_observatory(cat_row, **fetch_args)
+                data, altdata = self.download_from_observatory(cat_row, **download_args)
 
                 # save the catalog info
                 # TODO: should we get the full catalog row?
@@ -781,7 +732,7 @@ class VirtualObservatory:
 
                 # could not find reduced data, so reduce it now
                 if len(reduced_datasets) == 0:
-                    reduced_datasets = self.reduce(raw_data, **reducer_args)
+                    reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
 
                 # make sure to append new data unto source
                 for d in reduced_datasets:
@@ -845,7 +796,7 @@ class VirtualObservatory:
 
         """
         raise NotImplementedError(
-            "fetch_data_from_observatory() must be implemented in subclass"
+            "download_from_observatory() must be implemented in subclass"
         )
 
     # TODO: this should be replaced by populate raw data?
@@ -960,104 +911,6 @@ class VirtualObservatory:
 
         return value
 
-    # TODO: can we get rid of this?
-    def commit_source(
-        self, data, data_type, cat_id, source_ids, filename, key, session
-    ):
-        """
-        Save a source to the database,
-        using the dataset loaded from file,
-        and matching it to the catalog.
-        If the source already exists in the database, nothing happens.
-        If the source does not exist in the database,
-        it is created, and its id is added to the source_ids.
-
-        Parameters
-        ----------
-        data: dataframe or other data types
-            Data loaded from file.
-            For HDF5 files this is a dataframe.
-        data_type: str
-            The type of data loaded from file,
-            e.g., 'photometry', 'spectroscopy', etc.
-        cat_id: str or int
-            The identifier that connects the data
-            to the catalog row. Can be a string
-            (the name of the source) or an integer
-            (the index of the source in the catalog).
-        source_ids: set of str or int
-            Set of identifiers for sources that already
-            exist in the database.
-            Any new data with the same identifier is skipped,
-            and any new data not in the set is added.
-        filename: str
-            Full path to the file from which the data was loaded.
-        key: str
-            Key inside the file if multiple datasets are in each file.
-        session: sqlalchemy.orm.session.Session
-            The current session to which we add
-            newly created sources.
-
-        """
-        if self.pars.verbose > 1:
-            print(
-                f"Loaded data for source {cat_id} | "
-                f"len(data): {len(data)} | "
-                f"id in source_ids: {cat_id in source_ids}"
-            )
-
-        if len(data) <= 0:
-            return  # no data
-
-        if cat_id in source_ids:
-            return  # source already exists
-
-        row = self.catalog.get_row(cat_id, self.pars.catalog_matching)
-
-        (
-            index,
-            name,
-            ra,
-            dec,
-            mag,
-            mag_err,
-            filter_name,
-            alias,
-        ) = self.catalog.values_from_row(row)
-
-        new_source = Source(
-            name=name,
-            ra=ra,
-            dec=dec,
-            project=self.project,
-            alias=[alias] if alias else None,
-            mag=mag,
-            mag_err=mag_err,
-            mag_filter=filter_name,
-        )
-        new_source.cat_id = name
-        new_source.cat_index = index
-        new_source.cat_name = self.catalog.pars.catalog_name
-
-        data_class = get_class_from_data_type(data_type)
-        raw_data = data_class(
-            data=data,
-            observatory=self.name,
-            filename=filename,
-            key=key,
-        )
-
-        setattr(new_source, f"raw_{data_type}", [raw_data])
-        setattr(new_source, f"reduced_{data_type}", self.reduce(new_source))
-        for d in getattr(new_source, f"reduced_{data_type}"):
-            d.save()
-
-        session.add(new_source)
-        session.commit()
-        source_ids.add(cat_id)
-
-        # TODO: is here the point where we also do analysis?
-
     def reduce(self, source, data_type=None, output_type=None, session=None, **kwargs):
         """
         Reduce raw data into more useful,
@@ -1116,6 +969,8 @@ class VirtualObservatory:
             dataset = source.get_data(obs=self.name, data_type=data_type, level="raw")[
                 0
             ]
+            if data_type is None:
+                raise ValueError("Must provide a data_type if supplying a Source!")
             data_type = convert_data_type(data_type)
         elif isinstance(source, DatasetMixin):
             dataset = source
@@ -1162,6 +1017,16 @@ class VirtualObservatory:
         new_datasets = reducer(dataset, source, init_kwargs, **kwargs)
         new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
 
+        # make sure each reduced dataset has a serial number:
+        for i, d in enumerate(new_datasets):
+            d.series_number = i + 1
+            d.series_total = len(new_datasets)
+
+        if source is not None:
+            for d in new_datasets:
+                d.source_name = source.name
+                getattr(source, f"reduced_{data_type}").append(d)
+
         # copy some properties of the observatory into the new datasets
         copy_attrs = ["project", "cfg_hash"]
         for d in new_datasets:
@@ -1171,35 +1036,6 @@ class VirtualObservatory:
         # make sure each reduced dataset is associated with a source
         for d in new_datasets:
             d.source = source
-
-        if source is not None:
-            old_datasets = getattr(source, f"reduced_{output_type}")
-            setattr(source, f"reduced_{output_type}", old_datasets + new_datasets)
-
-        # make sure each reduced dataset has a serial number:
-        for i, d in enumerate(new_datasets):
-            d.series_number = i + 1
-            d.series_total = len(new_datasets)
-
-        # if self.pars.save_reduced and source is not None:
-        #     if session is None:
-        #         session = Session()
-        #         # make sure this session gets closed at end of function
-        #         _ = CloseSession(session)
-        #     try:
-        #         if source is not None:
-        #             session.add(source)
-        #
-        #         for d in new_datasets:
-        #             d.save()
-        #             session.add(d)
-        #
-        #         session.commit()
-        #     except Exception as e:
-        #         session.rollback()
-        #         for d in new_datasets:
-        #             d.delete_data_from_disk()
-        #         raise e
 
         self.latest_reductions = new_datasets
 
@@ -1341,7 +1177,7 @@ class VirtualDemoObs(VirtualObservatory):
         # call this only after a pars object is set up
         super().__init__(name="demo")
 
-    def fetch_data_from_observatory(
+    def download_from_observatory(
         self,
         cat_row,
         wait_time=None,
@@ -1389,7 +1225,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         """
         if self.pars.verbose > 9:
-            print(f"fetch_data_from_observatory for {cat_row['name']}")
+            print(f"download_from_observatory for {cat_row['name']}")
 
         if wait_time is None:
             wait_time = self.pars.wait_time

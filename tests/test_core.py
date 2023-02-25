@@ -352,7 +352,7 @@ def test_observatory_filename_conventions(test_project):
     cat_row = cat.get_row(num, "number", "dict")
 
     # test the filename conventions
-    source = obs.check_and_fetch_source(cat_row, save=False)
+    source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
@@ -368,7 +368,7 @@ def test_observatory_filename_conventions(test_project):
     _ = int(name)  # make sure conversion to int works
 
     # test the filename conventions
-    source = obs.check_and_fetch_source(cat_row, save=False)
+    source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
@@ -612,42 +612,50 @@ def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
         session.commit()
 
 
-def test_raw_photometry_relationships(new_source, new_source2, raw_phot):
+def test_data_file_paths(raw_phot, data_dir):
+    try:  # at end, delete the temp files
+        raw_phot.save(overwrite=True)
+        assert raw_phot.filename is not None
+        assert "photometry" in raw_phot.filename
+        assert raw_phot.filename.endswith(".h5")
 
-    with Session() as session:
-        new_source.raw_photometry = [raw_phot]
-        new_source2.raw_photometry = [raw_phot]
-        session.add(new_source)
-        session.add(new_source2)
+    finally:
+        raw_phot.delete_data_from_disk()
+        assert not os.path.isfile(raw_phot.get_fullname())
 
-        # must add the raw photometry explicitly, cascades are disabled
-        session.add(raw_phot)
+    # just a filename does not affect folder
+    # default folder is given as 'DATA'
+    raw_phot.folder = None
+    raw_phot.filename = "test.h5"
+    assert raw_phot.folder is None
+    assert raw_phot.filename == "test.h5"
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "DEMO/test.h5")
 
-        raw_phot.save()
-        session.commit()
+    # no folder is given, but has observatory name to use as default
+    raw_phot.observatory = "ztf"
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/test.h5")
 
-        ids = [new_source.id, new_source2.id]
-        names = [new_source.name, new_source2.name]
+    # give the folder explicitly, will override the default
+    raw_phot.folder = "test"
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "test/test.h5")
 
-        # check the linking is ok
-        assert new_source.id is not None
-        assert new_source2.id is not None
+    # adding a path to filename puts that path into "folder"
+    raw_phot.folder = None
+    raw_phot.filename = "path/to/test/test.h5"
 
-        # check all sources are linked to raw_phot
-        assert all([s.id in ids for s in raw_phot.sources])
-        assert all([s.name in names for s in raw_phot.sources])
+    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/path/to/test/test.h5")
 
-        # TODO: make some reduced lightcurves:
+    # an absolute path in "folder" will ignore DATA_ROOT
+    raw_phot.folder = "/path"
+    raw_phot.filename = "to/test/test.h5"
+    assert raw_phot.get_fullname() == "/path/to/test/test.h5"
 
-        # TODO: test processed lightcurves show up as well
 
-
-def test_data_reduction_no_save(test_project, new_source, raw_phot_no_exptime):
+def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
     with Session() as session:
 
         # add the data to a database mapped object
-        source_id = new_source.id
         new_source.project = test_project.name
         raw_phot_no_exptime.save(overwrite=True)
         new_source.raw_photometry.append(raw_phot_no_exptime)
@@ -658,7 +666,6 @@ def test_data_reduction_no_save(test_project, new_source, raw_phot_no_exptime):
         assert obs_key == "demo"
         obs = test_project.observatories[obs_key]
         assert isinstance(obs, VirtualDemoObs)
-        obs.pars.save_reduced = False  # do not save automatically
 
         # cannot generate photometric data without an exposure time
         with pytest.raises(ValueError) as exc:
@@ -725,10 +732,6 @@ def test_data_reduction_no_save(test_project, new_source, raw_phot_no_exptime):
             assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
             assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
 
-            # make sure relationships are correct
-            assert lc.source_id == new_source.id
-            assert lc.raw_data_id == raw_phot_no_exptime.id
-
         session.delete(new_source)
         session.delete(raw_phot_no_exptime)
         [session.delete(lc) for lc in lightcurves]
@@ -741,128 +744,17 @@ def test_data_reduction_no_save(test_project, new_source, raw_phot_no_exptime):
         ).first()
         assert data is None
         data = session.scalars(
-            sa.select(Lightcurve).where(Lightcurve.source_id == source_id)
+            sa.select(Lightcurve).where(Lightcurve.source_name == new_source.name)
         ).all()
         assert len(data) == 0
         assert not any([os.path.isfile(f) for f in filenames])
-
-
-def test_data_reduction_with_save(test_project, new_source, raw_phot):
-    try:
-        # add the data to a database mapped object
-        source_name = new_source.name
-        new_source.project = test_project.name
-        raw_phot.save(overwrite=True)
-        new_source.raw_photometry.append(raw_phot)
-
-        # reduce the data using the demo observatory
-        assert len(test_project.observatories) == 1
-        obs_key = list(test_project.observatories.keys())[0]
-        assert obs_key == "demo"
-        obs = test_project.observatories[obs_key]
-        assert isinstance(obs, VirtualDemoObs)
-        obs.pars.save_reduced = True  # do save automatically
-
-        lightcurves = obs.reduce(source=new_source, data_type="photometry")
-        ids = [lc.id for lc in lightcurves]
-        with Session() as session:
-            # check the lightcurves are in the database
-            lcs = session.scalars(
-                sa.select(Lightcurve).where(Lightcurve.source_name == source_name)
-            ).all()
-            assert len(lcs) == len(lightcurves)
-            assert all([lc.id in ids for lc in lcs])
-
-    finally:  # cleanup
-        with Session() as session:
-            for lc in lightcurves:
-                lc.delete_data_from_disk()
-                session.delete(lc)
-
-            session.commit()
-
-
-def test_filter_mapping(raw_phot):
-
-    # make a demo observatory with a string filtmap:
-    obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
-    obs.pars.save_reduced = False  # do not save automatically
-
-    # check parameter is propagated correctly
-    assert obs.pars.filtmap is not None
-
-    N1 = len(raw_phot.data) // 2
-    N2 = len(raw_phot.data)
-
-    raw_phot.data.loc[0:N1, "filter"] = "g"
-    raw_phot.data.loc[N1:N2, "filter"] = "r"
-    raw_phot.observatory = obs.name
-
-    lcs = obs.reduce(raw_phot)
-    assert len(lcs) == 2  # two filters
-
-    lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
-    assert all(filt == "demo-g" for filt in lc_g.data["filter"])
-
-    lc_r = [lc for lc in lcs if lc.filter == "demo-r"][0]
-    assert all(filt == "demo-r" for filt in lc_r.data["filter"])
-
-    # now use a dictionary filtmap
-    obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
-
-    lcs = obs.reduce(raw_phot)
-    assert len(lcs) == 2  # two filters
-
-    lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
-    assert all(filt == "Demo/G" for filt in lc_g.data["filter"])
-
-    lc_r = [lc for lc in lcs if lc.filter == "Demo/R"][0]
-    assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
-
-
-def test_data_file_paths(raw_phot, data_dir):
-    try:  # at end, delete the temp files
-        raw_phot.save(overwrite=True)
-        assert raw_phot.filename is not None
-        assert "photometry" in raw_phot.filename
-        assert raw_phot.filename.endswith(".h5")
-
-    finally:
-        raw_phot.delete_data_from_disk()
-        assert not os.path.isfile(raw_phot.get_fullname())
-
-    # just a filename does not affect folder
-    # default folder is given as 'DATA'
-    raw_phot.folder = None
-    raw_phot.filename = "test.h5"
-    assert raw_phot.folder is None
-    assert raw_phot.filename == "test.h5"
-    assert raw_phot.get_fullname() == os.path.join(data_dir, "DEMO/test.h5")
-
-    # no folder is given, but has observatory name to use as default
-    raw_phot.observatory = "ztf"
-    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/test.h5")
-
-    # give the folder explicitly, will override the default
-    raw_phot.folder = "test"
-    assert raw_phot.get_fullname() == os.path.join(data_dir, "test/test.h5")
-
-    # adding a path to filename puts that path into "folder"
-    raw_phot.folder = None
-    raw_phot.filename = "path/to/test/test.h5"
-
-    assert raw_phot.get_fullname() == os.path.join(data_dir, "ZTF/path/to/test/test.h5")
-
-    # an absolute path in "folder" will ignore DATA_ROOT
-    raw_phot.folder = "/path"
-    raw_phot.filename = "to/test/test.h5"
-    assert raw_phot.get_fullname() == "/path/to/test/test.h5"
 
 
 def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
     obs = test_project.observatories["demo"]
     new_source.raw_photometry.append(raw_phot)
+    raw_phot.source = new_source
 
     try:  # at end, delete the temp file
         raw_phot.save(overwrite=True)
@@ -871,6 +763,7 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
         lcs = obs.reduce(source=new_source, data_type="photometry")
 
         for lc in lcs:
+            lc.save(overwrite=True)
             assert basename in lc.filename
 
         # make sure all filenames are the same
@@ -886,12 +779,8 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
         raw_phot.delete_data_from_disk()
         filename = lcs[0].get_fullname()
 
-        with Session() as session:
-            for lc in lcs:
-                lc.delete_data_from_disk()
-                session.delete(lc)
-
-            session.commit()
+        for lc in lcs:
+            lc.delete_data_from_disk()
 
     assert not os.path.isfile(raw_phot.get_fullname())
     assert not os.path.isfile(filename)
@@ -925,13 +814,13 @@ def test_reducer_with_outliers(test_project, new_source):
                 folder="data_temp",
                 altdata=dict(exptime="25.0"),
             )
-            new_data.save()
+            new_data.source = new_source
             new_source.raw_photometry.append(new_data)
+            new_data.save()
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
-            obs_key = list(test_project.observatories.keys())[0]
-            obs = test_project.observatories[obs_key]  # key should be "demo"
+            obs = test_project.observatories["demo"]
             assert isinstance(obs, VirtualDemoObs)
 
             obs.pars.reducer["drop_flagged"] = False
@@ -943,6 +832,7 @@ def test_reducer_with_outliers(test_project, new_source):
 
             session.add(new_source)
             session.add(new_data)
+            lc.save()
             session.add(lc)
             session.commit()
 
@@ -993,9 +883,47 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
+def test_filter_mapping(raw_phot):
+
+    # make a demo observatory with a string filtmap:
+    obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+    obs.pars.save_reduced = False  # do not save automatically
+
+    # check parameter is propagated correctly
+    assert obs.pars.filtmap is not None
+
+    N1 = len(raw_phot.data) // 2
+    N2 = len(raw_phot.data)
+
+    raw_phot.data.loc[0:N1, "filter"] = "g"
+    raw_phot.data.loc[N1:N2, "filter"] = "r"
+    raw_phot.observatory = obs.name
+
+    lcs = obs.reduce(raw_phot)
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
+    assert all(filt == "demo-g" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "demo-r"][0]
+    assert all(filt == "demo-r" for filt in lc_r.data["filter"])
+
+    # now use a dictionary filtmap
+    obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
+
+    lcs = obs.reduce(raw_phot)
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
+    assert all(filt == "Demo/G" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "Demo/R"][0]
+    assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
+
+
 def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
-    lc1.source = saved_phot.sources[0]
+    lc1.source = saved_phot.source
     lc1.raw_data = saved_phot
 
     with Session() as session:
@@ -1017,7 +945,7 @@ def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
 
 def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
-    lc1.source = saved_phot.sources[0]
+    lc1.source = saved_phot.source
     lc1.raw_data = saved_phot
 
     lc1.altdata = {"exptime": 30.0}
@@ -1074,7 +1002,7 @@ def test_demo_observatory_download_time(test_project):
 
     t0 = time.time()
     obs.pars.num_threads_download = 0  # no multithreading
-    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 1})
+    obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 1})
     assert len(obs.sources) == 10
     assert len(obs.datasets) == 10
     single_tread_time = time.time() - t0
@@ -1084,7 +1012,7 @@ def test_demo_observatory_download_time(test_project):
     obs.sources = []
     obs.datasets = []
     obs.pars.num_threads_download = 5  # five multithreading cores
-    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 5})
+    obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 5})
     assert len(obs.sources) == 10
     assert len(obs.datasets) == 10
     multitread_time = time.time() - t0
@@ -1092,16 +1020,12 @@ def test_demo_observatory_download_time(test_project):
 
 
 def test_demo_observatory_save_downloaded(test_project):
-    # make random sources unique to this test
-    test_project.catalog.make_test_catalog()
-    test_project.catalog.load()
     obs = test_project.observatories["demo"]
     try:
-        obs.download_all_sources(0, 10, save=True, fetch_args={"wait_time": 0})
-
+        obs.fetch_all_sources(0, 10, save=True, download_args={"wait_time": 0})
         # reloading these sources should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 10, fetch_args={"wait_time": 10})
+        obs.fetch_all_sources(0, 10, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
@@ -1124,11 +1048,11 @@ def test_download_pars(test_project):
     obs = test_project.observatories["demo"]
     try:
         # download the first source only
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 0})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 0})
 
         # reloading this source should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
@@ -1137,13 +1061,13 @@ def test_download_pars(test_project):
 
         # reloading
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time > 1  # should take about 3s to re-download
 
         # reloading this source should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
@@ -1346,7 +1270,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert det[0].peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
 
@@ -1358,7 +1282,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 2
-    assert det[1].source_id == lc.source_id
+    assert det[1].source_name == lc.source_name
     assert abs(det[1].snr + n_sigma) < 1.0  # more or less n sigma
     assert det[1].peak_time == Time(lc.data.mjd.iloc[96], format="mjd").datetime
 
@@ -1386,7 +1310,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert det[0].peak_time == Time(lc.data.mjd.iloc[50], format="mjd").datetime
 
@@ -1401,7 +1325,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert lc.data.mjd.iloc[10] < Time(det[0].peak_time).mjd < lc.data.mjd.iloc[15]
     assert np.isclose(Time(det[0].time_start).mjd, lc.data.mjd.iloc[10])
@@ -1439,6 +1363,7 @@ def test_analysis(analysis, new_source, raw_phot):
     assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
     assert len(new_source.processed_lightcurves) == 3
     assert len(new_source.detections) == 1
+    assert new_source.properties is not None
 
     # check that nothing was saved
     with Session() as session:
@@ -1456,19 +1381,20 @@ def test_analysis(analysis, new_source, raw_phot):
         assert len(properties) == 0
 
     try:  # now save everything
-        analysis.pars.save_anything = True
-        analysis.reset_histograms()
-        new_source.reset_analysis()
-        assert len(new_source.detections) == 0
-
-        analysis.analyze_sources(new_source)
-        assert len(new_source.detections) == 1
-
-        assert new_source.properties is not None
-        assert len(new_source.reduced_lightcurves) == 3
-        assert len(new_source.processed_lightcurves) == 3
 
         with Session() as session:
+            analysis.pars.save_anything = True
+            analysis.reset_histograms()
+            new_source.reset_analysis()
+            assert len(new_source.detections) == 0
+
+            analysis.analyze_sources(new_source)
+            assert len(new_source.detections) == 1
+
+            assert new_source.properties is not None
+            assert len(new_source.reduced_lightcurves) == 3
+            assert len(new_source.processed_lightcurves) == 3
+
             # check lightcurves
             lcs = session.scalars(
                 sa.select(Lightcurve).where(
@@ -1493,7 +1419,6 @@ def test_analysis(analysis, new_source, raw_phot):
                 sa.select(Properties).where(Properties.source_name == new_source.name)
             ).all()
             assert len(properties) == 1
-
             # # manually set the first lightcurve time_start to be after the others
             # detections[0].processed_photometry[
             #     0
@@ -1522,27 +1447,32 @@ def test_analysis(analysis, new_source, raw_phot):
         assert len(new_source.raw_photometry[0].data) == num_offset_values
 
     finally:  # remove all generated lightcurves and detections etc.
-        with Session() as session:
-            session.merge(new_source)
-            for lc in new_source.reduced_lightcurves:
-                lc.delete_data_from_disk()
-                if lc in session:
-                    try:
-                        session.delete(lc)
-                    except Exception as e:
-                        print(f"could not delete lc: {str(e)}")
-            for lc in new_source.processed_lightcurves:
-                lc.delete_data_from_disk()
-                # session.add(lc)
-                if lc in session:
-                    try:
-                        session.delete(lc)
-                    except Exception as e:
-                        print(f"could not delete lc: {str(e)}")
-
-            session.commit()
-
         analysis.remove_all_histogram_files(remove_backup=True)
+
+        try:
+            with Session() as session:
+                session.merge(new_source)
+                session.commit()
+                for lc in new_source.reduced_lightcurves:
+                    lc.delete_data_from_disk()
+                    if lc in session:
+                        try:
+                            session.delete(lc)
+                        except Exception as e:
+                            print(f"could not delete lc: {str(e)}")
+                for lc in new_source.processed_lightcurves:
+                    lc.delete_data_from_disk()
+                    # session.add(lc)
+                    if lc in session:
+                        try:
+                            session.delete(lc)
+                        except Exception as e:
+                            print(f"could not delete lc: {str(e)}")
+
+                session.commit()
+        except Exception as e:
+            # print(str(e))
+            raise e
 
 
 @pytest.mark.flaky(max_runs=8)

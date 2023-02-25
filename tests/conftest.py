@@ -108,7 +108,7 @@ def saved_phot(new_source):
         source_name=str(uuid.uuid4()),
         test_hash="test",
     )
-    data.sources.append(new_source)
+    data.source = new_source
     data.make_random_photometry(number=10)
     data.save()
     yield data
@@ -121,9 +121,18 @@ def saved_phot(new_source):
 
 
 @pytest.fixture
-def test_project():
-    project = Project(name="test_project", catalog_kwargs={"default": "WD"})
-    return project
+def test_project(data_dir):
+    project = Project(
+        name="test_project",
+        catalog_kwargs={
+            "default": "test",
+            "filename": os.path.join(data_dir, "test_catalog.csv"),
+        },
+    )
+    yield project
+
+    if os.path.isfile(project.catalog.get_fullpath()):
+        os.remove(project.catalog.get_fullpath())
 
 
 @pytest.fixture
