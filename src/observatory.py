@@ -539,16 +539,20 @@ class VirtualObservatory:
     def fetch_source(
         self,
         cat_row,
+        source=None,
         save=True,
         reduce=True,
         session=None,
         download_args={},
         reducer_args={},
         dataset_args={},
+        report=None,
     ):
         """
-        Check if a source exists in the database,
-        and if not, fetch the data from the observatory.
+        Check if a source has data associated with it from this specific observatory.
+        If not, fetch the data from the observatory.
+        If the source object is not given, it will be retreived from DB.
+        If it doesn't exist on the DB, it will be created.
 
         Parameters
         ----------
@@ -556,6 +560,10 @@ class VirtualObservatory:
             A row in the catalog.
             Must contain at least an object ID
             or RA/Dec coordinates.
+        source: Source (optional)
+            Source object to which the data will be added.
+            If None, the source will be retrieved from the DB.
+            If it doesn't exist on the DB, it will be created.
         save: bool
             If True, save the Source and associated
             data to disk and to database.
@@ -577,6 +585,9 @@ class VirtualObservatory:
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
+        report: dict (optional)
+            If given, will be updated with information
+            about where the source/data was fetched from.
 
         Returns
         -------
@@ -589,9 +600,13 @@ class VirtualObservatory:
             The source+data will be saved to disk/DB if save=True.
 
         """
-
         if self.pars.verbose > 6:
             print(f'fetch_source: {cat_row["name"]}')
+
+        report_dict = {}  # record of where things were fetched from
+        if source is not None:
+            report_dict["source"] = "given"
+
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
         download_pars.update(
             {
@@ -606,16 +621,19 @@ class VirtualObservatory:
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # check if source already exists
-        hash = self.cfg_hash if self.cfg_hash is not None else ""
-        source = session.scalars(
-            sa.select(Source).where(
-                Source.name == cat_row["name"],
-                Source.cfg_hash == hash,
-            )
-        ).first()
-        if self.pars.verbose > 9:
-            print(f"Is source found in database: {source is not None}")
+        if source is None:
+            # check if source already exists
+            hash = self.cfg_hash if self.cfg_hash is not None else ""
+            source = session.scalars(
+                sa.select(Source).where(
+                    Source.name == cat_row["name"],
+                    Source.cfg_hash == hash,
+                )
+            ).first()
+            if self.pars.verbose > 9:
+                print(f"Is source found in database: {source is not None}")
+            if source is not None:
+                report_dict["source"] = "database"
 
         # if not, create one now
         if source is None:
@@ -623,6 +641,7 @@ class VirtualObservatory:
                 print(f'Creating new source: {cat_row["name"]}')
             source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
             source.cat_row = cat_row  # save the raw catalog row as well
+            report_dict["source"] = "new"
 
         for dt in self.pars.data_types:
             # class of raw data (e.g., RawPhotometry)
@@ -640,6 +659,9 @@ class VirtualObservatory:
             raw_data = raw_data[0] if len(raw_data) > 0 else None
             if self.pars.verbose > 9:
                 print(f"Is raw {dt} found in database: {raw_data is not None}")
+
+            if raw_data is not None:
+                report_dict[f"raw_{dt}"] = "database"
             # if raw_data is not None and not raw_data.check_file_exists():
             #     # TODO: should this be customizable behavior??
             #     # session.delete(raw_data)
@@ -711,15 +733,14 @@ class VirtualObservatory:
                     source_name=cat_row["name"],
                     **dataset_args,
                 )  # Raw data doesn't have cfg_hash!
-
-            # this dataset is not appended to source yet:
-            if not any(
-                [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
-            ):
-                getattr(source, f"raw_{dt}").append(raw_data)
+                if raw_data is not None:
+                    report_dict[f"raw_{dt}"] = "new"
 
             if raw_data is None:
                 raise ValueError("Raw data can not be None at this point!")
+
+            # add the raw data to the source
+            getattr(source, f"raw_{dt}").append(raw_data)
 
             if reduce:  # reduce the data
                 reduced_datasets = source.get_data(
@@ -729,22 +750,17 @@ class VirtualObservatory:
                     session=session,
                     check_data=self.pars.check_data_exists,
                 )
+                if reduced_datasets is not None and len(reduced_datasets) > 0:
+                    report_dict[f"reduced_{dt}"] = "database"
 
                 # could not find reduced data, so reduce it now
                 if len(reduced_datasets) == 0:
                     reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
+                    report_dict[f"reduced_{dt}"] = "new"
 
                 # make sure to append new data unto source
                 for d in reduced_datasets:
-                    old_data = getattr(source, f"reduced_{dt}")
-                    if not any(
-                        [
-                            o.observatory == self.name
-                            and o.series_number == d.series_number
-                            for o in old_data
-                        ]
-                    ):
-                        getattr(source, f"reduced_{dt}").append(d)
+                    getattr(source, f"reduced_{dt}").append(d)
 
             # if debugging or saving outside this function, set save=False
             if save:
@@ -769,6 +785,9 @@ class VirtualObservatory:
                     )
 
         self.latest_source = source
+
+        if report is not None:
+            report.update(report_dict)
 
         return source
 

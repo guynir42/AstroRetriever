@@ -334,7 +334,7 @@ class NamedList(list):
     def __getitem__(self, index):
         if isinstance(index, str):
             index_l = self.convert_name(index)
-            num_idx = [self.convert_name(obs.name) for obs in self].index(index_l)
+            num_idx = [self.convert_name(item.name) for item in self].index(index_l)
             return super().__getitem__(num_idx)
         elif isinstance(index, int):
             return super().__getitem__(index)
@@ -342,10 +342,12 @@ class NamedList(list):
             raise TypeError(f"index must be a string or integer, not {type(index)}")
 
     def __contains__(self, name):
-        return self.convert_name(name) in [self.convert_name(obs.name) for obs in self]
+        return self.convert_name(name) in [
+            self.convert_name(item.name) for item in self
+        ]
 
     def keys(self):
-        return [obs.name for obs in self]
+        return [item.name for item in self]
 
 
 class UniqueList(list):
@@ -405,3 +407,29 @@ class UniqueList(list):
                 return False
 
         return True
+
+
+class CircularBufferList(list):
+    """
+    A list that behaves like a circular buffer.
+    When appending to the list, if the list is full,
+    the first element is removed and the new element
+    is appended to the end.
+    """
+
+    def __init__(self, size):
+        self.size = size
+        super().__init__()
+
+    def append(self, value):
+        if len(self) == self.size:
+            self.pop(0)
+        super().append(value)
+
+    def extend(self, value):
+        if len(self) + len(value) > self.size:
+            self[:] = self[-self.size + len(value) :]
+        super().extend(value)
+
+    def plus(self, value):
+        self.extend(value)

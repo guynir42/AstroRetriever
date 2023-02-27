@@ -255,20 +255,6 @@ class Source(Base, conesearch_alchemy.Point):
         self.detections = None
         self.properties = None
 
-    # @property
-    # def reduced_photometry(self):
-    #     try:
-    #         if self._reduced_photometry is None:
-    #             self._reduced_photometry = self._reduced_photometry_from_db
-    #     except Exception:
-    #         pass
-    #
-    #     return self._reduced_photometry
-    #
-    # @reduced_photometry.setter
-    # def reduced_photometry(self, value):
-    #     self._reduced_photometry = value
-
     def __setattr__(self, key, value):
         if key == "raw_photometry":
             if not isinstance(value, list):
@@ -307,7 +293,6 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # self._reduced_photometry_from_db = self.reduced_photometry
         try:
             for lc in self.reduced_photometry:
                 lc.save()
@@ -317,20 +302,6 @@ class Source(Base, conesearch_alchemy.Point):
             session.rollback()
             raise e
 
-    # @property
-    # def processed_photometry(self):
-    #     try:
-    #         if self._processed_photometry is None:
-    #             self._processed_photometry = self._processed_photometry_from_db
-    #     except Exception:
-    #         pass
-    #
-    #     return self._processed_photometry
-    #
-    # @processed_photometry.setter
-    # def processed_photometry(self, value):
-    #     self._processed_photometry = value
-    #
     processed_lightcurves = add_alias("processed_photometry")
 
     def save_processed_photometry(self, session=None):
@@ -342,29 +313,14 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # self._processed_photometry_from_db = self.processed_photometry
         try:
             for lc in self.processed_photometry:
-                lc.save()
+                lc.save(overwrite=True)
                 session.add(lc)
             session.commit()
         except Exception as e:
             session.rollback()
             raise e
-
-    # @property
-    # def simulated_photometry(self):
-    #     try:
-    #         if self._simulated_photometry is None:
-    #             self._simulated_photometry = self._simulated_photometry_from_db
-    #     except Exception:
-    #         pass
-    #
-    #     return self._simulated_photometry
-    #
-    # @simulated_photometry.setter
-    # def simulated_photometry(self, value):
-    #     self._simulated_photometry = value
 
     simulated_lightcurves = add_alias("simulated_photometry")
 
@@ -377,29 +333,14 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # self._simulated_photometry_from_db = self.simulated_photometry
         try:
             for lc in self.simulated_photometry:
-                lc.save()
+                lc.save(overwrite=True)
                 session.add(lc)
             session.commit()
         except Exception as e:
             session.rollback()
             raise e
-
-    # @property
-    # def detections(self):
-    #     try:
-    #         if self._detections is None:
-    #             self._detections = self._detections_from_db
-    #     except Exception:
-    #         pass
-    #
-    #     return self._detections
-    #
-    # @detections.setter
-    # def detections(self, value):
-    #     self._detections = value
 
     def save_detections(self, session=None):
         """
@@ -410,26 +351,10 @@ class Source(Base, conesearch_alchemy.Point):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        # self._detections_from_db = self.detections
-
         for det in self.detections:
             session.add(det)
 
         session.commit()
-
-    # @property
-    # def properties(self):
-    #     try:
-    #         if self._properties is None:
-    #             self._properties = self._properties_from_db
-    #     except Exception:
-    #         pass
-    #
-    #     return self._properties
-    #
-    # @properties.setter
-    # def properties(self, value):
-    #     self._properties = value
 
     def save(self, session=None):
         """Save the source to the database"""
@@ -742,7 +667,14 @@ class Source(Base, conesearch_alchemy.Point):
         for rp in self.raw_photometry:
             if rp.type == "photometry":
                 rp.plot(ax=ax, ftype=ftype, ttype=ttype, use_phot_zp=True, **kwargs)
-        for lc in self.lightcurves:
+
+        lcs = []
+        if self.processed_photometry:
+            lcs = self.processed_photometry
+        elif self.reduced_photometry:
+            lcs = self.reduced_photometry
+
+        for lc in lcs:
             lc.plot(ax=ax, ftype=ftype, ttype=ttype, **kwargs)
 
         return ax

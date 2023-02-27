@@ -39,6 +39,13 @@ class ParsProject(Parameters):
 
         self.description = self.add_par("description", "", str, "Project description")
 
+        self.source_buffer_size = self.add_par(
+            "source_buffer_size",
+            100,
+            int,
+            "Number of sources to keep inside the `sources` attibute of the project. ",
+        )
+
         self.version_control = self.add_par(
             "version_control", False, bool, "Whether to use version control"
         )
@@ -324,6 +331,8 @@ class Project:
         self.analysis = self.pars.get_class_instance("analysis", **analysis_kwargs)
         self.analysis.observatories = self.observatories
 
+        self.sources = []  # list to be filled by analysis
+
     @staticmethod
     def _get_observatory_classes(name):
         """
@@ -418,18 +427,24 @@ class Project:
         Get all sources associated with this project
         that have a corresponding row in the database.
         """
-
-        hash = self.cfg_hash if self.cfg_hash else ""
-        stmt = sa.select(Source).where(
-            Source.project == self.name, Source.cfg_hash == hash
-        )
-
         if session is None:
             session = Session()
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        sources = session.scalars(stmt).all()
+        hash = self.cfg_hash if self.cfg_hash else ""
+        output = session.execute(
+            sa.select(Source, Properties).where(
+                Source.project == self.name,
+                Source.cfg_hash == hash,
+                Properties.source_name == Source.name,
+            )
+        ).all()
+        sources = []
+        for out in output:
+            source = out[0]
+            source.properties = out[1]
+            sources.append(source)
 
         return sources
 
@@ -463,17 +478,14 @@ class Project:
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
-        hash = self.cfg_hash if self.cfg_hash else ""
-        sources = session.scalars(
-            sa.select(Source).where(
-                Source.project == self.name, Source.cfg_hash == hash
-            )
-        ).all()
-        raw_folders = set()
+        sources = self.get_all_sources(session=session)
 
-        if remove_associated_data:
-            obs_names = [obs.name for obs in self.observatories]
-            for source in sources:
+        raw_folders = set()
+        obs_names = [obs.name for obs in self.observatories]
+
+        for source in sources:
+            session.delete(source.properties)
+            if remove_associated_data:  # lightcurves, images, etc.
                 for dt in self.pars.data_types:
                     # the reduced level class is the same for processed/simulated
                     DataClass = get_class_from_data_type(dt, level="reduced")
@@ -508,9 +520,14 @@ class Project:
                             d.delete_data_from_disk()
                             session.delete(d)
 
-                session.delete(source)
+            session.delete(source)
 
         session.commit()
+
+        self.sources = []
+        for obs in self.observatories:
+            obs.sources = []
+            obs.datasets = []
 
         if remove_associated_data and remove_raw_data and remove_folder:
             # remove any empty raw-data folders
@@ -535,6 +552,7 @@ class Project:
         # delete all histograms
         for h in self.analysis.get_all_histograms():
             h.remove_data_from_file(remove_backup=True)
+            h.initialize()
 
         if remove_folder:
             # remove the output folder if it is empty
@@ -587,6 +605,7 @@ class Project:
         if isinstance(types, str):
             types = [types]
 
+        self.sources = []
         for obs in self.observatories:
             obs.sources = []
             obs.datasets = []
@@ -602,18 +621,20 @@ class Project:
                         Source.cfg_hash == hash,
                     )
                 ).first()
-
-                # # need to generate a new source
-                # if source is None:
-                #     cat_row = self.catalog.get_row(name, "name", "dict")
-                #     source = Source(
-                #         project=self.name,
-                #         cfg_hash=self.cfg_hash,
-                #         **cat_row,
-                #     )
+                if source is not None:
+                    source.properties = session.scalars(
+                        sa.select(Properties).where(
+                            Properties.source_name == name,
+                            Properties.project == self.name,
+                            Properties.cfg_hash == hash,
+                        )
+                    ).first()
 
                 # check if source has already been processed (has properties)
                 if source is not None and source.properties is not None:
+                    self.sources.append(source)
+                    if self.pars.verbose > 5:
+                        print(f"{source} already has properties!")
                     continue
 
                 # no source found, need to make it (and download data maybe?)
@@ -625,32 +646,22 @@ class Project:
                         continue
 
                     # try to download the data for this observatory
-                    source = obs.fetch_source(cat_row, save=True, session=session)
+                    report = {}
+                    source = obs.fetch_source(
+                        cat_row,
+                        source=source,
+                        save=True,
+                        session=session,
+                        report=report,
+                    )
+                    if self.pars.verbose > 4:
+                        print(f'{source} was fetched from "{obs.name}" with: {report}')
 
                     for dt in types:
                         if need_skip:
                             continue
 
                         if dt == "photometry":
-                            # # check if raw data is attached to this source
-                            # data = [
-                            #     rd
-                            #     for rd in source.raw_photometry
-                            #     if rd.observatory == obs.name
-                            # ]
-                            #
-                            # # if not, look around the DB for any raw data
-                            # # with a matching name and observatory
-                            # # (e.g., from another project or version)
-                            # if len(data) == 0:
-                            #     loaded_data = session.scalars(
-                            #         sa.select(RawPhotometry).where(
-                            #             RawPhotometry.source_name == name,
-                            #             RawPhotometry.observatory == obs.name,
-                            #         )
-                            #     ).all()
-                            #     source.raw_photometry += loaded_data
-
                             # did we find any raw photometry?
                             data = [
                                 rp
@@ -710,16 +721,16 @@ class Project:
                         # add additional elif for other types...
                         else:
                             raise ValueError(f"Unknown data type: {dt}")
+                        obs.datasets.append(data)
 
                     obs.sources.append(source)
-                    # TODO: add the new datasets too?
 
                 # finished looping on observatories and data types
 
                 # send source with all data to analysis object for
                 # finding detections / adding properties
                 self.analysis.analyze_sources(source)
-
+                self.sources.append(source)
                 session.add(source)
                 session.commit()
 
@@ -863,7 +874,7 @@ if __name__ == "__main__":
         analysis_kwargs={"num_injections": 3},
         obs_kwargs={},
         catalog_kwargs={"default": "test"},
-        verbose=0,
+        verbose=6,
     )
     # download all data for all sources in the catalog
     # and reduce the data (skipping raw and reduced data already on file)

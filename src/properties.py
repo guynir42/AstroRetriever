@@ -1,6 +1,7 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy.schema import UniqueConstraint
 
 from src.database import Base, engine
 from src.source import Source
@@ -13,6 +14,14 @@ class Properties(Base):
 
     __tablename__ = "properties"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "source_name",
+            "project",
+            "cfg_hash",
+            name="_properties_source_name_in_project_uc",
+        ),
+    )
     # source_id = sa.Column(
     #     sa.ForeignKey("sources.id", ondelete="CASCADE"),
     #     nullable=False,

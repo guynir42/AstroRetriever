@@ -25,6 +25,7 @@ from src.catalog import Catalog
 from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
+from src.utils import NamedList, UniqueList, CircularBufferList
 
 
 def test_load_save_parameters(data_dir):
@@ -1574,3 +1575,115 @@ def test_on_close_utility():
     append_to_list(a, b, clear_a_at_end=True)
     assert a == []
     assert b == [1, 1]
+
+
+def test_named_list():
+    class TempObject:
+        pass
+
+    obj1 = TempObject()
+    obj1.name = "One"
+
+    obj2 = TempObject()
+    obj2.name = "Two"
+
+    nl = NamedList()
+    nl.append(obj1)
+    nl.append(obj2)
+
+    assert len(nl) == 2
+    assert nl[0] == obj1
+    assert nl[1] == obj2
+
+    assert nl["One"] == obj1
+    assert nl["Two"] == obj2
+    assert nl.keys() == ["One", "Two"]
+
+    with pytest.raises(ValueError):
+        nl["Three"]
+
+    with pytest.raises(ValueError):
+        nl["one"]
+
+    with pytest.raises(IndexError):
+        nl[2]
+
+    with pytest.raises(TypeError):
+        nl[1.0]
+
+    # now a list that ignores case
+    nl = NamedList(ignorecase=True)
+    nl.append(obj1)
+    nl.append(obj2)
+
+    assert len(nl) == 2
+    assert nl[0] == obj1
+    assert nl[1] == obj2
+
+    assert nl["one"] == obj1
+    assert nl["two"] == obj2
+    assert nl.keys() == ["One", "Two"]
+
+    with pytest.raises(ValueError):
+        nl["Three"]
+
+
+def test_unique_list():
+    class TempObject:
+        pass
+
+    obj1 = TempObject()
+    obj1.name = "object one"
+    obj1.foo = "foo1"
+    obj1.bar = "common bar"
+
+    obj2 = TempObject()
+    obj2.name = "object two"
+    obj2.foo = "foo2"
+    obj2.bar = "common bar"
+
+    # same attributes as obj1, but different object
+    obj3 = TempObject()
+    obj3.name = "object one"
+    obj3.foo = "foo1"
+    obj3.bar = "common bar"
+
+    # the default is to use the name attribute
+    ul = UniqueList()
+    ul.append(obj1)
+    ul.append(obj2)
+    assert len(ul) == 2
+    assert ul[0] == obj1
+    assert ul[1] == obj2
+
+    # appending obj3 will remove obj1
+    ul.append(obj3)
+    assert len(ul) == 2
+    assert ul[0] == obj2
+    assert ul[1] == obj3
+
+    # now try with a different attribute
+    ul = UniqueList(comparison_attributes=["foo", "bar"])
+    ul.append(obj1)
+    ul.append(obj2)
+    assert len(ul) == 2
+    assert ul[0] == obj1
+    assert ul[1] == obj2
+
+    # appending obj3 will remove obj1
+    ul.append(obj3)
+    assert len(ul) == 2
+    assert ul[0] == obj2
+    assert ul[1] == obj3
+
+
+def test_circular_buffer_list():
+    cbl = CircularBufferList(3)
+    cbl.append(1)
+    cbl.append(2)
+    cbl.append(3)
+    assert cbl == [1, 2, 3]
+    cbl.append(4)
+    assert cbl == [2, 3, 4]
+    cbl.extend([5, 6])
+    assert cbl == [4, 5, 6]
