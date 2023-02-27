@@ -874,13 +874,11 @@ class Histogram:
 
         return h
 
-    def load(self, suffix=None):
+    def get_fullname(self, suffix=None):
         """
-        Load the data from the file.
-        If suffix is given, will add that to the
-        filename, after the extension
-        (e.g., "histograms_all_score.nc.temp")
+        Get the name (path included) of the file associated with this histogram.
         """
+
         filename = "histograms"
         if self.name is not None:
             filename += f"_{self.name}"
@@ -892,6 +890,17 @@ class Histogram:
             filename += suffix
 
         fullname = os.path.join(self.output_folder, filename)
+
+        return fullname
+
+    def load(self, suffix=None):
+        """
+        Load the data from the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        fullname = self.get_fullname(suffix=suffix)
         if os.path.exists(fullname):
             with xr.open_dataset(fullname) as ds:
                 self.data = ds.load()
@@ -913,41 +922,27 @@ class Histogram:
         filename, after the extension
         (e.g., "histograms_all_score.nc.temp")
         """
-        filename = "histograms"
-        if self.name is not None:
-            filename += f"_{self.name}"
-        filename += ".nc"
 
-        if suffix is not None:
-            if not suffix.startswith("."):
-                suffix = "." + suffix
-            filename += suffix
-
+        fullname = self.get_fullname(suffix=suffix)
         # netCDF files can't store dicts, must convert to string
         self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
         self.data.attrs["source_names"] = list(self.data.attrs["source_names"])
-        self.data.to_netcdf(os.path.join(self.output_folder, filename), mode="w")
+        self.data.to_netcdf(fullname, mode="w")
 
-    def remove_data_from_file(self, suffix=None):
+    def remove_data_from_file(self, suffix=None, remove_backup=False):
         """
         Save the data to the file.
         If suffix is given, will add that to the
         filename, after the extension
         (e.g., "histograms_all_score.nc.temp")
         """
-        filename = "histograms"
-        if self.name is not None:
-            filename += f"_{self.name}"
-        filename += ".nc"
-
-        if suffix is not None:
-            if not suffix.startswith("."):
-                suffix = "." + suffix
-            filename += suffix
-
-        fullname = os.path.join(self.output_folder, filename)
+        fullname = self.get_fullname(suffix=suffix)
         if os.path.exists(fullname):
             os.remove(fullname)
+        if remove_backup:
+            backup = fullname + ".backup"
+            if os.path.exists(backup):
+                os.remove(backup)
 
     def help(self=None, owner_pars=None):
         """

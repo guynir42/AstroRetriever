@@ -708,6 +708,7 @@ class Catalog:
         pm_ra = row[self.pars.pm_ra_column] if self.pars.pm_ra_column else 0.0
         pm_dec = row[self.pars.pm_dec_column] if self.pars.pm_dec_column else 0.0
         parallax = row[self.pars.parallax_column] if self.pars.parallax_column else 0.0
+        dist = Distance(parallax=parallax * u.mas) if parallax > 0.0 else 0.0 * u.pc
 
         coords = SkyCoord(
             ra=ra * u.deg,
@@ -718,7 +719,7 @@ class Catalog:
             ),  # reference epoch for Gaia DR3
             pm_ra_cosdec=pm_ra * u.mas / u.yr,
             pm_dec=pm_dec * u.mas / u.yr,
-            distance=Distance(parallax=parallax * u.mas),
+            distance=dist,
         )
         if obstime is not None:
             if isinstance(obstime, (str, int, float)):

@@ -23,7 +23,7 @@ from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
 from src.properties import Properties
-from src.utils import help_with_class, help_with_object
+from src.utils import help_with_class, help_with_object, NamedList
 
 
 class ParsProject(Parameters):
@@ -434,14 +434,18 @@ class Project:
         return sources
 
     def delete_all_sources(
-        self, remove_all_data=False, remove_raw_data=False, session=None
+        self,
+        remove_associated_data=False,
+        remove_raw_data=False,
+        remove_folder=True,
+        session=None,
     ):
         """
         Delete all sources associated with this project.
 
         Parameters
         ----------
-        remove_all_data: bool
+        remove_associated_data: bool
             If True, remove all data associated with this project.
             This includes reduced, processed and simulated data,
             of all types (e.g., photometry, spectra, images).
@@ -465,8 +469,9 @@ class Project:
                 Source.project == self.name, Source.cfg_hash == hash
             )
         ).all()
+        raw_folders = set()
 
-        if remove_all_data:
+        if remove_associated_data:
             obs_names = [obs.name for obs in self.observatories]
             for source in sources:
                 for dt in self.pars.data_types:
@@ -483,6 +488,13 @@ class Project:
                     for d in data:
                         d.delete_data_from_disk()
                         session.delete(d)
+
+                    # remove folder if empty
+                    if remove_folder:
+                        if not os.listdir(self.output_folder):
+                            os.rmdir(self.output_folder)
+
+                    # check if we also need to remove raw data
                     if remove_raw_data:
                         DataClass = get_class_from_data_type(dt, level="raw")
                         data = session.scalars(
@@ -492,11 +504,42 @@ class Project:
                             )
                         )
                         for d in data:
+                            raw_folders.add(d.get_path())
                             d.delete_data_from_disk()
                             session.delete(d)
+
                 session.delete(source)
 
         session.commit()
+
+        if remove_associated_data and remove_raw_data and remove_folder:
+            # remove any empty raw-data folders
+            for folder in list(raw_folders):
+                if not os.listdir(folder):
+                    os.rmdir(folder)
+
+    def delete_outputs(self, remove_folder=True):
+        """
+        Delete all outputs associated with this project.
+
+        This includes the output config file and histograms.
+        The output folder is only deleted if it is empty.
+        Usually, it would be empty only if also called
+        `delete_all_sources(remove_associated_data=True)`.
+
+        """
+        cfg_file = os.path.join(self.output_folder, "config.yaml")
+        if os.path.exists(cfg_file):
+            os.remove(cfg_file)
+
+        # delete all histograms
+        for h in self.analysis.get_all_histograms():
+            h.remove_data_from_file(remove_backup=True)
+
+        if remove_folder:
+            # remove the output folder if it is empty
+            if not os.listdir(self.output_folder):
+                os.rmdir(self.output_folder)
 
     def run(self, **kwargs):
         """
@@ -752,6 +795,8 @@ class Project:
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
+        self.analysis.output_folder = self.output_folder
+
     def help(self=None, owner_pars=None):
         """
         Print the help for this object and objects contained in it.
@@ -774,44 +819,11 @@ class Project:
             )
 
 
-class NamedList(list):
-    """
-    A list of objects, each of which has
-    a "name" attribute.
-    This list can be indexed by name,
-    and also using numerical indices.
-    """
-
-    def __init__(self, ignorecase=False):
-        self.ignorecase = ignorecase
-        super().__init__()
-
-    def convert_name(self, name):
-        if self.ignorecase:
-            return name.lower()
-        else:
-            return name
-
-    def __getitem__(self, index):
-        if isinstance(index, str):
-            index_l = self.convert_name(index)
-            num_idx = [self.convert_name(obs.name) for obs in self].index(index_l)
-            return super().__getitem__(num_idx)
-        elif isinstance(index, int):
-            return super().__getitem__(index)
-        else:
-            raise TypeError(f"index must be a string or integer, not {type(index)}")
-
-    def __contains__(self, name):
-        return self.convert_name(name) in [self.convert_name(obs.name) for obs in self]
-
-    def keys(self):
-        return [obs.name for obs in self]
-
-
 if __name__ == "__main__":
 
     src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
+    # import warnings
+    # warnings.filterwarnings('error')
 
     # proj = Project(
     #     name="default_test",  # must give a name to each project

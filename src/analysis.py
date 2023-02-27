@@ -215,6 +215,15 @@ class Analysis:
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
 
+    def __setattr__(self, key, value):
+        if key == "output_folder":
+            if hasattr(self, "quality_values"):
+                self.quality_values.output_folder = value
+                self.all_scores.output_folder = value
+                self.good_scores.output_folder = value
+
+        super().__setattr__(key, value)
+
     def analyze_sources(self, sources, session=None):
         """
         Go over a bunch of sources and run
@@ -589,7 +598,7 @@ class Analysis:
         """
         Reset the histograms to zero arrays.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.initialize()
 
     def _update_histograms(self, lightcurves, source):
@@ -625,11 +634,11 @@ class Analysis:
 
         """
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             for lc in lightcurves:
                 hist.add_data(source, lc.data)
 
-    def _get_all_histograms(self):
+    def get_all_histograms(self):
         """
         Get a list of all histograms that are
         associated with this Analysis object.
@@ -642,7 +651,7 @@ class Analysis:
         This is used to continue a previous run,
         or to use the histograms to make plots.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.load()
 
     def _save_histograms(self, temp=False):
@@ -657,7 +666,7 @@ class Analysis:
         """
         suffix = "temp" if temp else None
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.save(suffix=suffix)
 
     def _rollback_histograms(self):
@@ -666,7 +675,7 @@ class Analysis:
         This is called in case there was a problem
         saving or committing any data.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.remove_data_from_file(suffix="temp")
 
     def _commit_histograms(self):
@@ -677,7 +686,7 @@ class Analysis:
         there were no problems.
         Will also create backup files for the histograms.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             fullname = os.path.join(hist.output_folder, f"histograms_{hist.name}.nc")
             if os.path.exists(fullname):
                 os.rename(fullname, fullname + ".backup")
@@ -691,7 +700,7 @@ class Analysis:
         Use remove_backup=True to also delete the backup files.
         """
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.remove_data_from_file()
             hist.remove_data_from_file(suffix="temp")
             if remove_backup:

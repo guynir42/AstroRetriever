@@ -313,6 +313,41 @@ def add_alias(att):
     )
 
 
+class NamedList(list):
+    """
+    A list of objects, each of which has
+    a "name" attribute.
+    This list can be indexed by name,
+    and also using numerical indices.
+    """
+
+    def __init__(self, ignorecase=False):
+        self.ignorecase = ignorecase
+        super().__init__()
+
+    def convert_name(self, name):
+        if self.ignorecase:
+            return name.lower()
+        else:
+            return name
+
+    def __getitem__(self, index):
+        if isinstance(index, str):
+            index_l = self.convert_name(index)
+            num_idx = [self.convert_name(obs.name) for obs in self].index(index_l)
+            return super().__getitem__(num_idx)
+        elif isinstance(index, int):
+            return super().__getitem__(index)
+        else:
+            raise TypeError(f"index must be a string or integer, not {type(index)}")
+
+    def __contains__(self, name):
+        return self.convert_name(name) in [self.convert_name(obs.name) for obs in self]
+
+    def keys(self):
+        return [obs.name for obs in self]
+
+
 class UniqueList(list):
     """
     A list that checks if an appended object is already part of the list.

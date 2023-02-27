@@ -45,7 +45,8 @@ def test_project_download_small_catalog():
         assert num_sources_with_data > 0
 
     finally:  # cleanup
-        proj.delete_all_sources(remove_all_data=True, remove_raw_data=True)
-
+        proj.delete_all_sources(remove_associated_data=True, remove_raw_data=True)
+        proj.delete_outputs()
     for f in filenames:
         assert not os.path.exists(f)
+        assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
