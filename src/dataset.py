@@ -560,26 +560,6 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    # @property
-    # def source_name(self):
-    #     """
-    #     Get the name of the source as a string.
-    #
-    #     """
-    #     if self.source is not None:
-    #         source_name = self.source.name
-    #     else:
-    #         source_name = None
-    #
-    #     if source_name is not None:
-    #         if isinstance(source_name, bytes):
-    #             source_name = source_name.decode("utf-8")
-    #
-    #         if not isinstance(source_name, str):
-    #             raise TypeError("source name must be a string")
-    #
-    #     return source_name
-
     def invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
     ):
@@ -1411,9 +1391,18 @@ class Lightcurve(DatasetMixin, Base):
 
     __tablename__ = "lightcurves"
 
-    # __table_args__ = (
-    #     UniqueConstraint("source_id", "observatory", "series_number", "simulation_number", "was_processed", "cfg_hash", name="_lightcurve_uc"),
-    # )
+    __table_args__ = (
+        UniqueConstraint(
+            "source_name",
+            "observatory",
+            "series_number",
+            "simulation_number",
+            "was_processed",
+            "cfg_hash",
+            name="_lightcurve_uc",
+        ),
+    )
+
     if True:  # put all the column definitions in one block
         # source_id = sa.Column(
         #     sa.Integer,

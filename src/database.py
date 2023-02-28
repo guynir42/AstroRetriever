@@ -51,15 +51,8 @@ class CloseSession:
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import (
-        RawPhotometry,
-        Lightcurve,
-    )  #  , source_raw_photometry_association
-    from src.detection import (
-        Detection,
-        # detection_raw_photometry_association,
-        # detection_processed_photometry_association,
-    )
+    from src.dataset import RawPhotometry, Lightcurve
+    from src.detection import Detection
     from src.properties import Properties
 
     try:
@@ -68,8 +61,6 @@ def clear_tables():
         pass
     try:
         Detection.metadata.drop_all(engine)
-        # detection_raw_photometry_association.metadata.drop_all(engine)
-        # detection_processed_photometry_association.metadata.drop_all(engine)
     except:
         pass
     try:
@@ -84,10 +75,6 @@ def clear_tables():
         Source.metadata.drop_all(engine)
     except:
         pass
-    # try:
-    #     source_raw_photometry_association.drop_all(engine)
-    # except:
-    #     pass
 
 
 def clear_test_objects():
