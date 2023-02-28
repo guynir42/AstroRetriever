@@ -1,9 +1,6 @@
 import os
 
 import numpy as np
-import pandas as pd
-
-from sqlalchemy.orm.session import make_transient
 
 from src.parameters import Parameters
 from src.histogram import Histogram
@@ -193,7 +190,6 @@ class Analysis:
         self.quality_values = Histogram(**histogram_kwargs, name="quality_values")
 
         # update the kwargs with the right scores:
-        # self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
         self.quality_values.pars.score_names = self.checker.pars.cut_names
 
         # the finder and simulator
@@ -202,15 +198,12 @@ class Analysis:
         self.sim = self.pars.get_class_instance("simulator", **simulator_kwargs)
 
         self.all_scores = Histogram(**histogram_kwargs, name="all_scores")
-        # self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
         self.all_scores.pars.score_names = self.finder.pars.score_names
         self.good_scores = Histogram(**histogram_kwargs, name="good_scores")
-        # self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
         self.good_scores.pars.score_names = self.finder.pars.score_names
 
         # this generates the xarrays in each histogram
         self.reset_histograms()
-        # self.extra_scores = []  # an optional list of extra Histogram objects
 
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
@@ -278,23 +271,6 @@ class Analysis:
                 )
 
             batch_detections += analysis_func(source)
-
-            # get rid of data we don't want saved to the source
-            # for dt in self.pars.data_types:
-            #     # do we also need to clear these from the raw data relationship?
-            #     if not self.pars.save_anything or not self.pars.save_processed:
-            #         setattr(source, f"processed_{dt}", [])  # clear list
-            #     if not self.pars.save_anything or not self.pars.save_simulated:
-            #         setattr(source, f"simulated_{dt}", [])  # clear list
-
-            # TODO: what happens if more than one data type on each det?
-            for det in batch_detections:
-                det.processed_data = None  # TODO: is this necessary?
-
-            # get rid of these new detections if we don't
-            # want to save them to DB (e.g., for debugging)
-            # if not self.pars.save_anything or not self.pars.save_detections:
-            #     source.detections = []
 
         # this gets appended but never committed
         self.detections += batch_detections
@@ -403,6 +379,7 @@ class Analysis:
                 raise ValueError(f'Score "{name}" not found in lightcurve data!')
 
         self._process_lightcurves(lcs, source)
+
         # verify finder produced columns needed for histograms
         for name in self.good_scores.pars.score_names:
             if name not in lcs[0].data.columns:

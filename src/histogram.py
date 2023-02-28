@@ -203,48 +203,6 @@ class Histogram:
         if can_initialize:
             self.initialize()
 
-    # TODO: remove this function as we don't want to remove
-    #  the score coordinates from the pars, as it will be
-    #  written that way to the output config file.
-    def pick_out_coords(self, names, input_type="score"):
-        """
-        Pick only a subset of the coordinate specs based
-        on a list of names. Usually this is used to pick
-        which scores we want to use, e.g., "snr" for counting
-        good measurements and "offset" for counting epochs
-        that failed the quality cuts.
-
-        This function must be called before initialization!
-
-        Parameters
-        ----------
-        names: string or list of strings
-            The names of the coordinates to pick out.
-            Other coordinates will be removed from the
-            coord specs. If any of the names do not
-            exist in the list of coordinates, will
-            raise a ValueError.
-        input_type: string
-            The type of coordinates to pick out.
-            Options are 'score', 'source', or 'obs'.
-            Default is 'score'.
-
-        """
-        if isinstance(names, str):
-            names = [names]
-
-        coords_old = getattr(self.pars, f"{input_type}_coords")
-        coords_new = coords_old.copy()
-        for k in coords_old.keys():
-            if k not in names:
-                del coords_new[k]
-
-        missing = set(names) - set(coords_new.keys())
-        if len(missing) > 0:
-            raise ValueError(f"Missing coordinates: {missing}")
-
-        setattr(self.pars, f"{input_type}_coords", coords_new)
-
     def initialize(self):
         """
         Build the histogram data structure,
