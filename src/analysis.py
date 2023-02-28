@@ -600,6 +600,7 @@ class Analysis:
         """
         for hist in self.get_all_histograms():
             hist.initialize()
+            # hist.remove_data_from_file()
 
     def _update_histograms(self, lightcurves, source):
         """
@@ -637,6 +638,8 @@ class Analysis:
         for hist in self.get_all_histograms():
             for lc in lightcurves:
                 hist.add_data(source, lc.data)
+
+            hist.add_source_name(source.name)
 
     def get_all_histograms(self):
         """

@@ -21,7 +21,7 @@ from src.parameters import (
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
-from src.utils import help_with_class, help_with_object
+from src.utils import CircularBufferList
 
 lock = threading.Lock()
 
@@ -246,11 +246,12 @@ class VirtualObservatory:
         self._catalog = None
 
         # freshly downloaded data:
-        self.sources = []
-        self.datasets = []
-
+        self.sources = None
+        self.raw_data = None
         self.latest_source = None
         self.latest_reductions = None
+        self.num_loaded = None
+        self.reset()
 
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
@@ -292,6 +293,16 @@ class VirtualObservatory:
             raise TypeError("catalog must be a Catalog object")
 
         self._catalog = catalog
+
+    def reset(self):
+        """
+        Reset the observatory to its original state.
+        """
+        self.sources = CircularBufferList(self.pars.download_batch_size)
+        self.raw_data = CircularBufferList(self.pars.download_batch_size)
+        self.latest_source = None
+        self.latest_reductions = None
+        self.num_loaded = 0
 
     def _load_passwords(self, filename=None, key=None, **_):
         """
@@ -394,9 +405,7 @@ class VirtualObservatory:
         start = 0 if start is None else start
         stop = cat_length if stop is None else stop
 
-        self.sources = []
-        self.datasets = []
-        num_loaded = 0
+        self.reset()
 
         download_batch = max(self.pars.num_threads_download, 1)
 
@@ -406,14 +415,10 @@ class VirtualObservatory:
                 break
             if self.pars.verbose > 5:
                 print(f"Source number {i} of {cat_length}")
-            # if temporary sources/datasets are full,
-            # clear the lists before adding more
-            if len(self.sources) > self.pars.download_batch_size:
-                self.sources = []
-                self.datasets = []
 
             num_threads = min(self.pars.num_threads_download, stop - i)
 
+            # TODO: add report return parameters and append them to a circular buffer
             if num_threads <= 1:  # single threaded execution
                 cat_row = self.catalog.get_row(i, "number", "dict")
                 s = self.fetch_source(
@@ -451,10 +456,10 @@ class VirtualObservatory:
 
             # keep a subset of sources/datasets in memory
             self.sources += sources
-            self.datasets += raw_data
-            num_loaded += len(sources)
+            self.raw_data += raw_data
+            self.num_loaded += len(sources)
 
-        return num_loaded
+        return self.num_loaded
 
     def _fetch_sources_asynchronous(
         self, start, stop, save, reduce, download_args, dataset_args

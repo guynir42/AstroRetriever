@@ -15,7 +15,7 @@ import numpy as np
 import sqlalchemy as sa
 
 import src.database
-from src.database import Session, CloseSession
+from src.database import Session, CloseSession, VO_Base
 from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
@@ -23,7 +23,8 @@ from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
 from src.properties import Properties
-from src.utils import help_with_class, help_with_object, NamedList
+from src.detection import Detection
+from src.utils import help_with_class, help_with_object, NamedList, CircularBufferList
 
 
 class ParsProject(Parameters):
@@ -190,6 +191,7 @@ class ParsProject(Parameters):
             or callable(obj)
             or type(obj).__module__ == "builtins"
             or hasattr(obj, "__iter__")
+            or isinstance(obj, VO_Base)
         ):
             return
 
@@ -331,7 +333,8 @@ class Project:
         self.analysis = self.pars.get_class_instance("analysis", **analysis_kwargs)
         self.analysis.observatories = self.observatories
 
-        self.sources = []  # list to be filled by analysis
+        self.sources = None  # list to be filled by analysis
+        self.num_sources_scanned = None
 
     @staticmethod
     def _get_observatory_classes(name):
@@ -420,7 +423,23 @@ class Project:
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
 
+        if not hasattr(self, name.lower()):
+            setattr(self, name.lower(), new_obs)
+
         return new_obs
+
+    def select_sources(self):
+        """
+        Generate a "select" statement that includes
+        all sources associated with this project.
+        This also filters only sources associated
+        with the cfg_hash, if it defined for this project.
+        """
+        hash = self.cfg_hash if self.cfg_hash else ""
+        stmt = sa.select(Source).where(
+            Source.project == self.name, Source.cfg_hash == hash
+        )
+        return stmt
 
     def get_all_sources(self, session=None):
         """
@@ -448,15 +467,35 @@ class Project:
 
         return sources
 
+    def select_detections(self):
+        stmt = sa.select(Detection).where(
+            Detection.project == self.name,
+            Detection.cfg_hash == self.cfg_hash,
+        )
+        return stmt
+
+    def get_detections(self, session=None):
+        """
+        Get all detections associated with this project.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        return session.scalars(self.select_detections()).all()
+
     def delete_all_sources(
         self,
         remove_associated_data=False,
         remove_raw_data=False,
         remove_folder=True,
+        remove_detections=False,
         session=None,
     ):
         """
         Delete all sources associated with this project.
+        This includes all properties associated with each source.
 
         Parameters
         ----------
@@ -466,12 +505,25 @@ class Project:
             of all types (e.g., photometry, spectra, images).
             This also removes data from disk, not just the database.
             Raw data is not removed from disk, as it is harder to recover,
-            and is often shared between projects.
+            and is often shared between projects. Default is False.
         remove_raw_data: bool
             If True, remove all raw data associated with this project.
             This can include large amounts of data on disk, that can be
             shared with other projects, so it should be used with caution!
             Will only remove raw data associated with sources from this project.
+            Default is False.
+        remove_folder: bool
+            If True, remove the folder(s) associated with this project.
+            This includes the project output folder, and the raw data folder.
+            Only removes folders that are empty.
+            Default is True.
+        remove_detections: bool
+            If True, remove all detections associated with this project.
+            This includes only detections associated with sources that are
+            currently being removed from the project. Default is False.
+        session: sqlalchemy.orm.session.Session
+            Session to use for database queries.
+            If None, a new session is created and closed at the end of the function.
         """
         if session is None:
             session = Session()
@@ -482,6 +534,7 @@ class Project:
 
         raw_folders = set()
         obs_names = [obs.name for obs in self.observatories]
+        hash = self.cfg_hash if self.cfg_hash else ""
 
         for source in sources:
             session.delete(source.properties)
@@ -520,6 +573,15 @@ class Project:
                             d.delete_data_from_disk()
                             session.delete(d)
 
+            if remove_detections:
+                session.execute(
+                    sa.delete(Detection).where(
+                        Detection.source_name == source.name,
+                        Detection.project == self.name,
+                        Detection.cfg_hash == hash,
+                    )
+                )
+
             session.delete(source)
 
         session.commit()
@@ -527,7 +589,7 @@ class Project:
         self.sources = []
         for obs in self.observatories:
             obs.sources = []
-            obs.datasets = []
+            obs.raw_data = []
 
         if remove_associated_data and remove_raw_data and remove_folder:
             # remove any empty raw-data folders
@@ -535,7 +597,7 @@ class Project:
                 if not os.listdir(folder):
                     os.rmdir(folder)
 
-    def delete_outputs(self, remove_folder=True):
+    def delete_project_files(self, remove_folder=True):
         """
         Delete all outputs associated with this project.
 
@@ -558,6 +620,61 @@ class Project:
             # remove the output folder if it is empty
             if not os.listdir(self.output_folder):
                 os.rmdir(self.output_folder)
+
+    def delete_everything(
+        self, remove_raw_data=False, remove_folder=True, session=None
+    ):
+        """
+        Delete all data associated with this project.
+        This includes sources, detections, data products (e.g., lightcurves),
+        histogram files, output config files, and the output folder (optional).
+        Will remove all reduced/processed/simulated lightcurves, even if the
+        sources they are associated with are already deleted.
+
+        The only exception is that raw data is only removed if the source
+        associated with it is still in the project when this is called.
+        And even that, only if `remove_raw_data=True`.
+
+        Parameters
+        ----------
+        remove_raw_data: bool
+            If True, remove all raw data associated with this project.
+            Only removes raw data associated with sources that are still
+            in the project. Default is False.
+        remove_folder: bool
+            If True, remove the folder(s) associated with this project.
+            Only removes empty folders. Default is True.
+        session: sqlalchemy.orm.session.Session
+            Session to use for database queries.
+            If None, a new session is created and closed at the end of the function.
+
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        self.delete_all_sources(
+            remove_associated_data=True,
+            remove_raw_data=remove_raw_data,
+            remove_folder=remove_folder,
+            remove_detections=True,
+            session=session,
+        )
+
+        session.execute(
+            sa.delete(Lightcurve).where(
+                Lightcurve.project == self.name, Lightcurve.cfg_hash == self.cfg_hash
+            )
+        )
+        # TODO: add additional data types here
+
+        # remove histogram files and config file
+        self.delete_project_files(remove_folder=remove_folder)
+
+    def reset(self):
+        self.sources = CircularBufferList(self.pars.source_buffer_size)
+        self.num_sources_scanned = 0
 
     def run(self, **kwargs):
         """
@@ -605,10 +722,10 @@ class Project:
         if isinstance(types, str):
             types = [types]
 
-        self.sources = []
+        self.reset()
+
         for obs in self.observatories:
-            obs.sources = []
-            obs.datasets = []
+            obs.reset()
 
         with Session() as session:
             # TODO: add batching of sources
@@ -632,107 +749,126 @@ class Project:
 
                 # check if source has already been processed (has properties)
                 if source is not None and source.properties is not None:
-                    self.sources.append(source)
-                    if self.pars.verbose > 5:
-                        print(f"{source} already has properties!")
-                    continue
+                    for obs in self.observatories:
+                        obs.sources.append(source)
+                        for dt in self.pars.data_types:
+                            # make sure the raw/reduced data is available on each source, too
+                            source.get_data(
+                                obs.name,
+                                data_type=dt,
+                                level="raw",
+                                session=session,
+                                check_data=False,
+                                append=True,
+                            )
+                            source.get_data(
+                                obs.name,
+                                data_type=dt,
+                                level="reduced",
+                                session=session,
+                                check_data=False,
+                                append=True,
+                            )
 
-                # no source found, need to make it (and download data maybe?)
-                cat_row = self.catalog.get_row(name, "name", "dict")
+                else:  # no source found, need to make it (and download data maybe?)
+                    cat_row = self.catalog.get_row(name, "name", "dict")
 
-                need_skip = False
-                for obs in self.observatories:
-                    if need_skip:
-                        continue
-
-                    # try to download the data for this observatory
-                    report = {}
-                    source = obs.fetch_source(
-                        cat_row,
-                        source=source,
-                        save=True,
-                        session=session,
-                        report=report,
-                    )
-                    if self.pars.verbose > 4:
-                        print(f'{source} was fetched from "{obs.name}" with: {report}')
-
-                    for dt in types:
+                    need_skip = False
+                    for obs in self.observatories:
                         if need_skip:
                             continue
 
-                        if dt == "photometry":
-                            # did we find any raw photometry?
-                            data = [
-                                rp
-                                for rp in source.raw_photometry
-                                if rp.observatory == obs.name
-                            ]
+                        # try to download the data for this observatory
 
-                            if len(data) == 0:
-                                raise ValueError(
-                                    f"Could not find any raw photometry on source {name}"
-                                )
+                        source = obs.fetch_source(
+                            cat_row,
+                            source=source,
+                            save=True,
+                            session=session,
+                        )
 
-                            if len(data) > 1:
-                                raise ValueError(
-                                    "Each source should have only one "
-                                    "RawPhotometry associated with each observatory. "
-                                    f"For source {name} and observatory {obs.name}, "
-                                    f"found {len(data)} RawPhotometry objects."
-                                )
-                            data = data[0]
+                        for dt in types:
+                            if need_skip:
+                                continue
 
-                            # check dataset has data on disk/in memory
-                            # (if not, skip entire source or raise RuntimeError)
-                            if not data.check_data_exists():
-                                if self.pars.ignore_missing_raw_data:
-                                    need_skip = True
-                                    continue
-                                else:
-                                    raise RuntimeError(
-                                        f"RawData for source {source.name} and observatory {obs.name} "
-                                        "is missing from disk. "
-                                        "Set pars.ignore_missing_raw_data to True to ignore this."
+                            if dt == "photometry":
+                                # did we find any raw photometry?
+                                data = [
+                                    rp
+                                    for rp in source.raw_photometry
+                                    if rp.observatory == obs.name
+                                ]
+
+                                if len(data) == 0:
+                                    raise ValueError(
+                                        f"Could not find any raw photometry on source {name}"
                                     )
 
-                            # look for reduced data and reproduce if missing
-                            lcs = [
-                                lc
-                                for lc in source.reduced_lightcurves
-                                if lc.observatory == obs.name
-                            ]
-                            if len(lcs) == 0:  # try to load from DB
-                                hash = self.cfg_hash if self.cfg_hash else ""
-                                lcs = session.scalars(
-                                    sa.select(Lightcurve).where(
-                                        Lightcurve.source_name == name,
-                                        Lightcurve.observatory == obs.name,
-                                        Lightcurve.project == self.name,
-                                        Lightcurve.cfg_hash == hash,
-                                        Lightcurve.was_processed.is_(False),
+                                if len(data) > 1:
+                                    raise ValueError(
+                                        "Each source should have only one "
+                                        "RawPhotometry associated with each observatory. "
+                                        f"For source {name} and observatory {obs.name}, "
+                                        f"found {len(data)} RawPhotometry objects."
                                     )
-                                ).all()
-                            if len(lcs) == 0:  # reduce data
-                                lcs = obs.reduce(data, to="lcs")
+                                data = data[0]
 
-                            source.reduced_lightcurves += lcs
+                                # check dataset has data on disk/in memory
+                                # (if not, skip entire source or raise RuntimeError)
+                                if not data.check_data_exists():
+                                    if self.pars.ignore_missing_raw_data:
+                                        need_skip = True
+                                        continue
+                                    else:
+                                        raise RuntimeError(
+                                            f"RawData for source {source.name} and observatory {obs.name} "
+                                            "is missing from disk. "
+                                            "Set pars.ignore_missing_raw_data to True to ignore this."
+                                        )
 
-                        # add additional elif for other types...
-                        else:
-                            raise ValueError(f"Unknown data type: {dt}")
-                        obs.datasets.append(data)
+                                # look for reduced data and reproduce if missing
+                                lcs = [
+                                    lc
+                                    for lc in source.reduced_lightcurves
+                                    if lc.observatory == obs.name
+                                ]
+                                if len(lcs) == 0:  # try to load from DB
+                                    hash = self.cfg_hash if self.cfg_hash else ""
+                                    lcs = session.scalars(
+                                        sa.select(Lightcurve).where(
+                                            Lightcurve.source_name == name,
+                                            Lightcurve.observatory == obs.name,
+                                            Lightcurve.project == self.name,
+                                            Lightcurve.cfg_hash == hash,
+                                            Lightcurve.was_processed.is_(False),
+                                        )
+                                    ).all()
+                                if len(lcs) == 0:  # reduce data
+                                    lcs = obs.reduce(data, to="lcs")
 
-                    obs.sources.append(source)
+                                source.reduced_lightcurves += lcs
 
-                # finished looping on observatories and data types
+                            # add additional elif for other types...
+                            else:
+                                raise ValueError(f"Unknown data type: {dt}")
+                            # TODO: should we change this to "raw_photometry" or something?
+                            obs.raw_data.append(data)
 
-                # send source with all data to analysis object for
-                # finding detections / adding properties
-                self.analysis.analyze_sources(source)
+                        obs.sources.append(source)
+
+                    # finished looping on observatories and data types
+
+                    # send source with all data to analysis object for
+                    # finding detections / adding properties
+                    self.analysis.analyze_sources(source)
+
+                # make sure to append this source
                 self.sources.append(source)
+
                 session.add(source)
                 session.commit()
+
+                self.num_sources_scanned += 1
 
     def _save_config(self):
         """

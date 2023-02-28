@@ -215,6 +215,7 @@ class Source(Base, conesearch_alchemy.Point):
         self.simulated_photometry = []
         self.detections = None
         self.properties = None
+        self.loaded_status = "new"
 
         # assign this coordinate a healpix ID
         if self.ra is not None and self.dec is not None:
@@ -254,6 +255,7 @@ class Source(Base, conesearch_alchemy.Point):
         self.simulated_photometry = []
         self.detections = None
         self.properties = None
+        self.loaded_status = "database"
 
     def __setattr__(self, key, value):
         if key == "raw_photometry":
@@ -425,6 +427,9 @@ class Source(Base, conesearch_alchemy.Point):
             corresponding data. Default is True.
             This will allow the calling code to re-create new
             objects that are associated with newly downloaded data.
+        append: bool
+            If True, will append the new data to the existing source.
+            Default is True.
 
         Returns
         -------

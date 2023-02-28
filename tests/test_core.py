@@ -1005,17 +1005,17 @@ def test_demo_observatory_download_time(test_project):
     obs.pars.num_threads_download = 0  # no multithreading
     obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 1})
     assert len(obs.sources) == 10
-    assert len(obs.datasets) == 10
+    assert len(obs.raw_data) == 10
     single_tread_time = time.time() - t0
     assert abs(single_tread_time - 10) < 2  # should take about 10s
 
     t0 = time.time()
     obs.sources = []
-    obs.datasets = []
+    obs.raw_data = []
     obs.pars.num_threads_download = 5  # five multithreading cores
     obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 5})
     assert len(obs.sources) == 10
-    assert len(obs.datasets) == 10
+    assert len(obs.raw_data) == 10
     multitread_time = time.time() - t0
     assert abs(multitread_time - 10) < 2  # should take about 10s
 
@@ -1031,13 +1031,13 @@ def test_demo_observatory_save_downloaded(test_project):
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
+        for d in obs.raw_data:
             d.delete_data_from_disk()
 
-        assert not os.path.isfile(obs.datasets[0].get_fullname())
+        assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
         with Session() as session:
-            for d in obs.datasets:
+            for d in obs.raw_data:
                 session.delete(d)
             session.commit()
 
@@ -1073,14 +1073,14 @@ def test_download_pars(test_project):
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
+        for d in obs.raw_data:
             d.delete_data_from_disk()
 
-        if len(obs.datasets) > 0:
-            assert not os.path.isfile(obs.datasets[0].get_fullname())
+        if len(obs.raw_data) > 0:
+            assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
         with Session() as session:
-            for d in obs.datasets:
+            for d in obs.raw_data:
                 session.delete(d)
             session.commit()
 
@@ -1333,7 +1333,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=8)
+# @pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False
@@ -1441,10 +1441,10 @@ def test_analysis(analysis, new_source, raw_phot):
         #     assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
         # check the number of values added to the histogram matches
-        num_snr_values = int(analysis.all_scores.data.snr_counts.sum().values)
+        num_snr_values = analysis.all_scores.get_sum_scores()
         assert len(new_source.raw_photometry[0].data) == num_snr_values
 
-        num_offset_values = int(analysis.quality_values.data.offset_counts.sum().values)
+        num_offset_values = analysis.quality_values.get_sum_scores()
         assert len(new_source.raw_photometry[0].data) == num_offset_values
 
     finally:  # remove all generated lightcurves and detections etc.
@@ -1683,7 +1683,10 @@ def test_circular_buffer_list():
     cbl.append(2)
     cbl.append(3)
     assert cbl == [1, 2, 3]
+    assert cbl.total == 3
     cbl.append(4)
     assert cbl == [2, 3, 4]
+    assert cbl.total == 4
     cbl.extend([5, 6])
     assert cbl == [4, 5, 6]
+    assert cbl.total == 6

@@ -321,6 +321,7 @@ class DatasetMixin:
         if self.format is None:
             self.format = self.guess_format()
 
+        self.loaded_status = "new"
         # TODO: figure out the series identifier and object
 
     def __setattr__(self, key, value):
@@ -355,6 +356,7 @@ class DatasetMixin:
         self._mjds = None
         self.time_info = {}
         self.source = None
+        self.loaded_status = "database"
 
     def guess_format(self):
         """

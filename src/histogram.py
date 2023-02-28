@@ -198,6 +198,7 @@ class Histogram:
 
         self.pars = ParsHistogram(**kwargs)
         self.data = None
+        self.source_names = set()
 
         if can_initialize:
             self.initialize()
@@ -296,7 +297,8 @@ class Histogram:
         if self.name is not None:
             self.data.attrs["name"] = self.name
 
-        self.data.attrs["source_names"] = set()
+        self.data.attrs["source_names"] = []
+        self.source_names = set()
 
         if self.output_folder is None:
             self.output_folder = os.getcwd()
@@ -479,6 +481,24 @@ class Histogram:
 
         return total_size / unit_convert_bytes(units)
 
+    def get_sum_scores(self):
+        """
+        Get the sum of all the scores in the histogram.
+
+        Returns
+        -------
+        dict
+            A dictionary with the sum of each score.
+        """
+        score = self.pars.score_names[0]
+        sums = int(self.data[f"{score}_counts"].sum().values)
+        for coord in self.data.coords:
+            sums += int(self.data[coord].attrs.get("overflow", 0))
+            sums += int(self.data[coord].attrs.get("underflow", 0))
+            # TODO: what about a NaNs count?
+
+        return sums
+
     def add_data(self, *args, **kwargs):
         """
         Input a dataframe, and other possible objects
@@ -490,8 +510,11 @@ class Histogram:
         or if some of the columns contain unique values,
         those scalar values will be used to slice into
         the histogram, and speed up the binning process.
-        All the other values will be binned using ...
-        # TODO: finish description
+        All the other values will be binned using
+        np.histogramdd, with the assumption that each
+        data point goes into the bin based on being
+        closest to the center of the bin
+        (i.e., we keep track of bin centers, not edges).
 
         Parameters
         ----------
@@ -503,7 +526,13 @@ class Histogram:
 
         kwargs:
             Additional arguments to pass to the binning function.
-            Currently there are no additional arguments.
+            Optional keywords are:
+            - source_name: add the source name to the list of sources
+              that have already been added to the histogram. This is
+              a shortcut for using add_source_name().
+              Sources that have already been added would either be ignored
+              in subsequent calls to add_data(), or would raise an exception
+              if pars.raise_on_repeat_source is True.
         """
         # input data is a dictionary with a key for each axis,
         # and each value is a scalar or an array of values.
@@ -514,13 +543,16 @@ class Histogram:
         # check if source is already in the histogram
         for arg in args:
             if isinstance(arg, Source):
-                if arg.name in self.data.attrs["source_names"]:
+                if arg.name in self.source_names:
                     if self.pars.raise_on_repeat_source:
                         raise ValueError(
                             f"Source {arg.name} already exists in histogram"
                         )
                     else:
                         return  # quietly exit without adding the data
+                # this doesn't work because we often add multiple LCs from the same source:
+                # else:
+                #     self.source_names.add(arg.name)
 
         # go over args and see if any objects
         # have attributes that match one of the axes.
@@ -708,6 +740,21 @@ class Histogram:
                                 num_values_to_add * correction
                             )
 
+        if "source_name" in kwargs:
+            self.add_source_name(kwargs["source_name"])
+
+    def add_source_name(self, source_name):
+        """
+        Add a source name to the list of source names.
+
+        Parameters
+        ----------
+        source_name : str
+            Name of the source to add to the list of source names.
+        """
+        if source_name not in self.source_names:
+            self.source_names.add(source_name)
+
     def _expand_axis(self, axis, new_values):
         """
         Expand the axis to include the new values.
@@ -867,7 +914,11 @@ class Histogram:
             parameters = json.loads(data.attrs["pars"])
             h.pars = ParsHistogram(**parameters)
         if "source_names" in data.attrs:
-            data.attrs["source_names"] = set(data.attrs["source_names"])
+            if isinstance(data.attrs["source_names"], list):
+                names = data.attrs["source_names"]
+            else:
+                names = [data.attrs["source_names"]]
+            h.source_names = set(names)
 
         h.output_folder = folder
         h.data = data
@@ -913,7 +964,11 @@ class Histogram:
                 self.pars = ParsHistogram(**parameters)
 
             if "source_names" in self.data.attrs:
-                self.data.attrs["source_names"] = set(self.data.attrs["source_names"])
+                if isinstance(self.data.attrs["source_names"], list):
+                    names = self.data.attrs["source_names"]
+                else:
+                    names = [self.data.attrs["source_names"]]
+                self.source_names = set(names)
 
     def save(self, suffix=None):
         """
@@ -926,7 +981,7 @@ class Histogram:
         fullname = self.get_fullname(suffix=suffix)
         # netCDF files can't store dicts, must convert to string
         self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
-        self.data.attrs["source_names"] = list(self.data.attrs["source_names"])
+        self.data.attrs["source_names"] = list(self.source_names)
         self.data.to_netcdf(fullname, mode="w")
 
     def remove_data_from_file(self, suffix=None, remove_backup=False):

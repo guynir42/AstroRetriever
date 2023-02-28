@@ -419,17 +419,20 @@ class CircularBufferList(list):
 
     def __init__(self, size):
         self.size = size
+        self.total = 0  # how many insertions have been made, ever
         super().__init__()
 
     def append(self, value):
         if len(self) == self.size:
             self.pop(0)
         super().append(value)
+        self.total += 1
 
     def extend(self, value):
         if len(self) + len(value) > self.size:
             self[:] = self[-self.size + len(value) :]
         super().extend(value)
+        self.total += len(value)
 
     def plus(self, value):
         self.extend(value)
