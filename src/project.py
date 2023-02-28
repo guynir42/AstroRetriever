@@ -15,7 +15,7 @@ import numpy as np
 import sqlalchemy as sa
 
 import src.database
-from src.database import Session, CloseSession, VO_Base
+from src.database import Session, CloseSession, Base
 from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
@@ -191,7 +191,7 @@ class ParsProject(Parameters):
             or callable(obj)
             or type(obj).__module__ == "builtins"
             or hasattr(obj, "__iter__")
-            or isinstance(obj, VO_Base)
+            or isinstance(obj, Base)
         ):
             return
 
@@ -306,8 +306,8 @@ class Project:
                 # for deployed code (e.g., on a cloud computer)
                 # might not have a git repo, so make sure to
                 # deploy with current hash in environmental variable
-                if os.getenv("VO_GIT_HASH"):
-                    git_hash = os.getenv("VO_GIT_HASH")
+                if os.getenv("RETRIEVER_GIT_HASH"):
+                    git_hash = os.getenv("RETRIEVER_GIT_HASH")
                 else:
                     print("No git repository found, cannot use version control.")
                     git_hash = None

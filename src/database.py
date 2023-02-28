@@ -1,19 +1,19 @@
 # This file is used to control database interaction.
 
 # The following lines are probably not needed anymore:
-# Make sure to define a virtualobserver database by
+# Make sure to define a AstroRetriever database by
 # going to /etc/postgresql/14/main/pg_hba.conf and adding:
-# host virtualobserver virtualobserver 127.0.0.1/32 trust
+# host AstroRetriever AstroRetriever 127.0.0.1/32 trust
 # You may also need to check the port number in
 # /etc/postgresql/14/main/postgresql.conf
 # (it is usually 5432)
 # Finally, you may need to do "sudo service postgresql restart"
 
-# create DB using: psql -U postgres -d postgres -c "CREATE DATABASE virtualobserver"
+# create DB using: psql -U postgres -d postgres -c "CREATE DATABASE AstroRetriever"
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
 
 # To drop the entire database (in case things get very messed up):
-# Use sudo -u postgres psql -c "DROP DATABASE virtualobserver"
+# Use sudo -u postgres psql -c "DROP DATABASE AstroRetriever"
 # This will only work if no connections are active.
 
 import os
@@ -23,11 +23,11 @@ from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
 from sqlalchemy.orm.session import make_transient
 
-DATA_ROOT = os.getenv("VO_DATA")
+DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
-url = "postgresql://postgres:postgres@localhost:5432/virtualobserver"
+url = "postgresql://postgres:postgres@localhost:5432/astroretriever"
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -91,8 +91,8 @@ def clear_test_objects():
         session.execute(sa.delete(Source).where(Source.test_hash.is_not(None)))
 
 
-class VO_Base:
-    """Base class for all VO classes."""
+class RetrieverBase:
+    """Base class for all AstroRetriever classes."""
 
     id = sa.Column(
         sa.Integer,
@@ -142,7 +142,7 @@ class VO_Base:
                 setattr(self, k, input_dict.pop(k))
 
 
-Base = declarative_base(cls=VO_Base)
+Base = declarative_base(cls=RetrieverBase)
 
 
 if __name__ == "__main__":
