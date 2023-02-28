@@ -51,11 +51,14 @@ class CloseSession:
 
 def clear_tables():
     from src.source import Source
-    from src.dataset import RawPhotometry, Lightcurve, source_raw_photometry_association
+    from src.dataset import (
+        RawPhotometry,
+        Lightcurve,
+    )  #  , source_raw_photometry_association
     from src.detection import (
         Detection,
-        detection_raw_photometry_association,
-        detection_reduced_photometry_association,
+        # detection_raw_photometry_association,
+        # detection_processed_photometry_association,
     )
     from src.properties import Properties
 
@@ -65,8 +68,8 @@ def clear_tables():
         pass
     try:
         Detection.metadata.drop_all(engine)
-        detection_raw_photometry_association.metadata.drop_all(engine)
-        detection_reduced_photometry_association.metadata.drop_all(engine)
+        # detection_raw_photometry_association.metadata.drop_all(engine)
+        # detection_processed_photometry_association.metadata.drop_all(engine)
     except:
         pass
     try:
@@ -81,10 +84,10 @@ def clear_tables():
         Source.metadata.drop_all(engine)
     except:
         pass
-    try:
-        source_raw_photometry_association.drop(engine)
-    except:
-        pass
+    # try:
+    #     source_raw_photometry_association.drop_all(engine)
+    # except:
+    #     pass
 
 
 def clear_test_objects():
@@ -94,11 +97,11 @@ def clear_test_objects():
     from src.properties import Properties
 
     with Session() as session:
-        session.execute(sa.delete(Properties).where(Source.test_only.is_(True)))
-        session.execute(sa.delete(Detection).where(Source.test_only.is_(True)))
-        session.execute(sa.delete(Lightcurve).where(Source.test_only.is_(True)))
-        session.execute(sa.delete(RawPhotometry).where(Source.test_only.is_(True)))
-        session.execute(sa.delete(Source).where(Source.test_only.is_(True)))
+        session.execute(sa.delete(Properties).where(Source.test_hash.is_not(None)))
+        session.execute(sa.delete(Detection).where(Source.test_hash.is_not(None)))
+        session.execute(sa.delete(Lightcurve).where(Source.test_hash.is_not(None)))
+        session.execute(sa.delete(RawPhotometry).where(Source.test_hash.is_not(None)))
+        session.execute(sa.delete(Source).where(Source.test_hash.is_not(None)))
 
 
 class VO_Base:
@@ -128,14 +131,17 @@ class VO_Base:
         doc="UTC time the object's row was last modified in the database.",
     )
 
-    test_only = sa.Column(
-        sa.Boolean,
-        nullable=False,
+    test_hash = sa.Column(
+        sa.String,
+        nullable=True,
         default=False,
         doc="Apply this to any test objects, "
         "either in the testing suite or when "
         "just debugging code interactively. "
-        "Remove such objects using clear_test_objects().",
+        "Remove such objects using clear_test_objects() "
+        "which removes any rows with non-null test_hash."
+        "To clean up a specific test, write a unique string"
+        "to this column and then clear only those rows.",
     )
 
     def keywords_to_columns(self, input_dict):

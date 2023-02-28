@@ -83,11 +83,19 @@ def normalize_data_types(data_types):
     return sorted(convert_data_type(dt) for dt in data_types)
 
 
-def get_class_from_data_type(data_type):
-    from src.dataset import RawPhotometry
+def get_class_from_data_type(data_type, level="raw"):
+    from src.dataset import RawPhotometry, Lightcurve
 
     if data_type == "photometry":
-        return RawPhotometry
+        if level == "raw":
+            return RawPhotometry
+        elif level in ["reduced", "processed", "simulated"]:
+            return Lightcurve
+        else:
+            raise ValueError(
+                f"Unknown level {level}. "
+                "Use 'raw', 'reduced', 'processed' or 'simulated'."
+            )
     # elif data_type == "spectra":
     #     return RawSpectra
     # add more data types here
@@ -225,6 +233,7 @@ class Parameters:
             "If None, the default file named as the project will be used. "
             "If False, no file will be loaded.",
         )
+
         self.data_types = self.add_par(
             "data_types",
             "photometry",
@@ -336,6 +345,8 @@ class Parameters:
         """
         if name in self.__typecheck__:
             raise ValueError(f"Parameter {name} already exists.")
+        if isinstance(par_types, (set, list)):
+            par_types = tuple(par_types)
         if not isinstance(par_types, tuple):
             par_types = (par_types,)
         par_types = tuple(type(pt) if pt is None else pt for pt in par_types)
@@ -749,15 +760,17 @@ class Parameters:
 
         desc = default = types = ""
         value = self[name]
-        if isinstance(value, str):
-            value = f'"{value}"'
 
         if name in self.__docstrings__:
             desc = self.__docstrings__[name].strip()
             if desc.endswith("."):
                 desc = desc[:-1]
         if name in self.__defaultpars__:
-            default = f"default= {self.__defaultpars__[name]}"
+            def_value = self.__defaultpars__[name]
+            if def_value == value:
+                default = "default"
+            else:
+                default = f"default= {def_value}"
         if name in self.__typecheck__:
             types = self.__typecheck__[name]
             if not isinstance(types, tuple):
@@ -768,6 +781,8 @@ class Parameters:
         if extra:
             extra = f" [{extra}]"
 
+        if isinstance(value, str):
+            value = f'"{value}"'
         s = f"= {value} % {desc}{extra}"
 
         return s

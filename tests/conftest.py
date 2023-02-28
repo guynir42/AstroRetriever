@@ -36,7 +36,7 @@ def new_source():
         name=str(uuid.uuid4()),
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
-        test_only=True,
+        test_hash="test",
         mag=np.random.uniform(15, 20),
     )
     yield source
@@ -52,7 +52,7 @@ def new_source2():
         name=str(uuid.uuid4()),
         ra=np.random.uniform(0, 360),
         dec=np.random.uniform(-90, 90),
-        test_only=True,
+        test_hash="test",
     )
     yield source
     # with Session() as session:
@@ -68,7 +68,7 @@ def raw_phot():
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
-        test_only=True,
+        test_hash="test",
     )
     data.make_random_photometry(number=100)
     yield data
@@ -87,7 +87,7 @@ def raw_phot_no_exptime():
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
-        test_only=True,
+        test_hash="test",
     )
     data.make_random_photometry(number=100, exptime=None)
     yield data
@@ -106,9 +106,9 @@ def saved_phot(new_source):
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
-        test_only=True,
+        test_hash="test",
     )
-    data.sources.append(new_source)
+    data.source = new_source
     data.make_random_photometry(number=10)
     data.save()
     yield data
@@ -121,9 +121,18 @@ def saved_phot(new_source):
 
 
 @pytest.fixture
-def test_project():
-    project = Project(name="test_project", catalog_kwargs={"default": "WD"})
-    return project
+def test_project(data_dir):
+    project = Project(
+        name="test_project",
+        catalog_kwargs={
+            "default": "test",
+            "filename": os.path.join(data_dir, "test_catalog.csv"),
+        },
+    )
+    yield project
+
+    if os.path.isfile(project.catalog.get_fullpath()):
+        os.remove(project.catalog.get_fullpath())
 
 
 @pytest.fixture
@@ -192,7 +201,7 @@ def lightcurve_factory():
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
         lc = Lightcurve(
-            data=df, observatory="demo", project="test_project", test_only=True
+            data=df, observatory="demo", project="test_project", test_hash="test"
         )
         return lc
 

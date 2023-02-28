@@ -303,3 +303,136 @@ def is_scalar(value):
         return True
     else:
         return False
+
+
+def add_alias(att):
+    return property(
+        fget=lambda self: getattr(self, att),
+        fset=lambda self, value: setattr(self, att, value),
+        doc=f'Alias for "{att}"',
+    )
+
+
+class NamedList(list):
+    """
+    A list of objects, each of which has
+    a "name" attribute.
+    This list can be indexed by name,
+    and also using numerical indices.
+    """
+
+    def __init__(self, ignorecase=False):
+        self.ignorecase = ignorecase
+        super().__init__()
+
+    def convert_name(self, name):
+        if self.ignorecase:
+            return name.lower()
+        else:
+            return name
+
+    def __getitem__(self, index):
+        if isinstance(index, str):
+            index_l = self.convert_name(index)
+            num_idx = [self.convert_name(item.name) for item in self].index(index_l)
+            return super().__getitem__(num_idx)
+        elif isinstance(index, int):
+            return super().__getitem__(index)
+        else:
+            raise TypeError(f"index must be a string or integer, not {type(index)}")
+
+    def __contains__(self, name):
+        return self.convert_name(name) in [
+            self.convert_name(item.name) for item in self
+        ]
+
+    def keys(self):
+        return [item.name for item in self]
+
+
+class UniqueList(list):
+    """
+    A list that checks if an appended object is already part of the list.
+
+    If appending or setting one of the elements,
+    all elements of the list are checked against the new
+    object, using the list of comparison_attributes specified.
+    """
+
+    def __init__(self, comparison_attributes=[]):
+        self.comparison_attributes = comparison_attributes
+        if len(comparison_attributes) == 0:
+            self.comparison_attributes = ["name"]
+        super().__init__()
+
+    def __setitem__(self, key, value):
+        for i in range(len(self)):
+            if i != key:
+                if self._check(value, self[i]):
+                    raise ValueError(
+                        f"Cannot assign to index {key}, with duplicate in index {i}."
+                    )
+        super().__setitem__(key, value)
+
+    def append(self, value):
+        self._check_and_remove(value)
+        super().append(value)
+
+    def extend(self, value):
+        for v in value:
+            self._check_and_remove(v)
+        super().extend(value)
+
+    def plus(self, value):
+        self.extend(value)
+
+    def _check_and_remove(self, value):
+        """
+        Removes from the list all instances that
+        are the same as "value", using the _check function.
+        """
+        # go over list in reverse in case some get popped out
+        for i in range(len(self)).__reversed__():
+            if self._check(value, self[i]):
+                self.pop(i)
+
+    def _check(self, value, other):
+        """
+        Check if the value is the same as the other object.
+        Only if all the comparison_attributes are the same,
+        the check returns True. If any are different, returns False.
+        """
+        for att in self.comparison_attributes:
+            if getattr(value, att) != getattr(other, att):
+                return False
+
+        return True
+
+
+class CircularBufferList(list):
+    """
+    A list that behaves like a circular buffer.
+    When appending to the list, if the list is full,
+    the first element is removed and the new element
+    is appended to the end.
+    """
+
+    def __init__(self, size):
+        self.size = size
+        self.total = 0  # how many insertions have been made, ever
+        super().__init__()
+
+    def append(self, value):
+        if len(self) == self.size:
+            self.pop(0)
+        super().append(value)
+        self.total += 1
+
+    def extend(self, value):
+        if len(self) + len(value) > self.size:
+            self[:] = self[-self.size + len(value) :]
+        super().extend(value)
+        self.total += len(value)
+
+    def plus(self, value):
+        self.extend(value)

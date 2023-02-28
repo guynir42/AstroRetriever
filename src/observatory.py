@@ -11,7 +11,7 @@ import threading
 import concurrent.futures
 
 import sqlalchemy as sa
-from src.database import Session
+from src.database import Session, CloseSession
 from src.parameters import (
     Parameters,
     convert_data_type,
@@ -19,9 +19,9 @@ from src.parameters import (
     get_class_from_data_type,
 )
 from src.source import Source, get_source_identifiers
-from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
+from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
-from src.utils import help_with_class, help_with_object
+from src.utils import CircularBufferList
 
 lock = threading.Lock()
 
@@ -96,6 +96,13 @@ class ParsObservatory(Parameters):
             str,
             "What column in the catalog is used to match sources to datasets",
         )
+        self.check_data_exists = self.add_par(
+            "check_data_exists",
+            True,
+            bool,
+            "For any datasets found on a source, "
+            "check if the data files exist on disk.",
+        )
         self.overwrite_files = self.add_par(
             "overwrite_files", True, bool, "Overwrite existing files"
         )
@@ -144,6 +151,10 @@ class ParsObservatory(Parameters):
             bool,
             "Check if the download parameters have changed since the last download"
             "and if so, re-download the data",
+        )
+
+        self.save_reduced = self.add_par(
+            "save_reduced", True, bool, "Save reduced data to disk"
         )
 
         self._default_cfg_key = "observatories"
@@ -235,8 +246,12 @@ class VirtualObservatory:
         self._catalog = None
 
         # freshly downloaded data:
-        self.sources = []
-        self.datasets = []
+        self.sources = None
+        self.raw_data = None
+        self.latest_source = None
+        self.latest_reductions = None
+        self.num_loaded = None
+        self.reset()
 
         if not isinstance(self.project, str):
             raise TypeError("project name not set")
@@ -279,6 +294,16 @@ class VirtualObservatory:
 
         self._catalog = catalog
 
+    def reset(self):
+        """
+        Reset the observatory to its original state.
+        """
+        self.sources = CircularBufferList(self.pars.download_batch_size)
+        self.raw_data = CircularBufferList(self.pars.download_batch_size)
+        self.latest_source = None
+        self.latest_reductions = None
+        self.num_loaded = 0
+
     def _load_passwords(self, filename=None, key=None, **_):
         """
         Load a YAML file with usernames, passwords, etc.
@@ -311,37 +336,14 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
-    def run_analysis(self):
-        """
-        Perform analysis on each object in the catalog.
-
-        """
-        self.analysis.load_simulator()
-        self.reset_histograms()
-
-        for row in self.catalog:
-            source = self.get_source(row)
-            if source is not None:
-                for d in source.datasets:
-                    d.load()
-                self.analysis.run(source, histograms=self.histograms)
-
-    def get_source(self, row):
-        """
-        Load a Source object from the database
-        based on a row in the catalog.
-
-        Parameters
-        ----------
-        row: dict
-            A row in the catalog.
-            Must contain at least an object ID
-            or RA/Dec coordinates.
-        """
-        return None  # TODO: implement this
-
-    def download_all_sources(
-        self, start=0, stop=None, save=True, fetch_args={}, dataset_args={}
+    def fetch_all_sources(
+        self,
+        start=0,
+        stop=None,
+        save=True,
+        reduce=True,
+        download_args={},
+        dataset_args={},
     ):
         """
         Download data from the observatory.
@@ -375,9 +377,12 @@ class VirtualObservatory:
             objects to the database (default).
             If False, do not save the data to disk or the
             raw data objects to the database (debugging only).
-        fetch_args: dict, optional
+        reduce: bool
+            If True, reduce the data (e.g., subtract
+            background, etc).
+        download_args: dict, optional
             Additional arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -393,13 +398,14 @@ class VirtualObservatory:
             and wants to know when to stop.
 
         """
+        if self.pars.verbose > 3:
+            print("Downloading all sources...")
+
         cat_length = len(self.catalog)
         start = 0 if start is None else start
         stop = cat_length if stop is None else stop
 
-        self.sources = []
-        self.datasets = []
-        num_loaded = 0
+        self.reset()
 
         download_batch = max(self.pars.num_threads_download, 1)
 
@@ -407,23 +413,31 @@ class VirtualObservatory:
 
             if i >= cat_length:
                 break
-
-            # if temporary sources/datasets are full,
-            # clear the lists before adding more
-            if len(self.sources) > self.pars.download_batch_size:
-                self.sources = []
-                self.datasets = []
+            if self.pars.verbose > 5:
+                print(f"Source number {i} of {cat_length}")
 
             num_threads = min(self.pars.num_threads_download, stop - i)
 
-            if num_threads > 1:
-                sources = self._fetch_data_asynchronous(
-                    i, i + num_threads, save, fetch_args, dataset_args
-                )
-            else:  # single threaded execution
+            # TODO: add report return parameters and append them to a circular buffer
+            if num_threads <= 1:  # single threaded execution
                 cat_row = self.catalog.get_row(i, "number", "dict")
-                s = self.check_and_fetch_source(cat_row, save, fetch_args, dataset_args)
+                s = self.fetch_source(
+                    cat_row=cat_row,
+                    save=save,
+                    reduce=reduce,
+                    download_args=download_args,
+                    dataset_args=dataset_args,
+                )
                 sources = [s]
+            else:  # multiple threads
+                sources = self._fetch_sources_asynchronous(
+                    start=i,
+                    stop=i + num_threads,
+                    save=save,
+                    reduce=reduce,
+                    download_args=download_args,
+                    dataset_args=dataset_args,
+                )
 
             raw_data = []
             for s in sources:
@@ -442,12 +456,14 @@ class VirtualObservatory:
 
             # keep a subset of sources/datasets in memory
             self.sources += sources
-            self.datasets += raw_data
-            num_loaded += len(sources)
+            self.raw_data += raw_data
+            self.num_loaded += len(sources)
 
-        return num_loaded
+        return self.num_loaded
 
-    def _fetch_data_asynchronous(self, start, stop, save, fetch_args, dataset_args):
+    def _fetch_sources_asynchronous(
+        self, start, stop, save, reduce, download_args, dataset_args
+    ):
         """
         Get data for a few sources, either by loading them
         from disk or by fetching the data online from
@@ -472,9 +488,12 @@ class VirtualObservatory:
         save: bool
             If True, save the data to disk and the
             raw data / Source objects to database.
-        fetch_args: dict
+        reduce: bool
+            If True, reduce the data (e.g., subtract
+            background, etc).
+        download_args: dict
             Additional keyword arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
@@ -496,11 +515,12 @@ class VirtualObservatory:
                 )
                 futures.append(
                     executor.submit(
-                        self.check_and_fetch_source,
-                        cat_row,
-                        save,
-                        fetch_args,
-                        dataset_args,
+                        self.fetch_source,
+                        cat_row=cat_row,
+                        save=save,
+                        reduce=reduce,
+                        download_args=download_args,
+                        dataset_args=dataset_args,
                     )
                 )
 
@@ -521,12 +541,23 @@ class VirtualObservatory:
 
         return sources
 
-    def check_and_fetch_source(
-        self, cat_row, save=True, fetch_args={}, dataset_args={}
+    def fetch_source(
+        self,
+        cat_row,
+        source=None,
+        save=True,
+        reduce=True,
+        session=None,
+        download_args={},
+        reducer_args={},
+        dataset_args={},
+        report=None,
     ):
         """
-        Check if a source exists in the database,
-        and if not, fetch the data from the observatory.
+        Check if a source has data associated with it from this specific observatory.
+        If not, fetch the data from the observatory.
+        If the source object is not given, it will be retreived from DB.
+        If it doesn't exist on the DB, it will be created.
 
         Parameters
         ----------
@@ -534,15 +565,34 @@ class VirtualObservatory:
             A row in the catalog.
             Must contain at least an object ID
             or RA/Dec coordinates.
+        source: Source (optional)
+            Source object to which the data will be added.
+            If None, the source will be retrieved from the DB.
+            If it doesn't exist on the DB, it will be created.
         save: bool
-            If True, save the data to disk and the
-            raw data / Source objects to database.
-        fetch_args: dict
+            If True, save the Source and associated
+            data to disk and to database.
+        reduce: bool
+            If True, reduce the data and save the
+            reduced data to disk and to DB
+            (if save=True).
+        session: Session, optional
+            Database session. If not provided,
+            will open a session and close it at end
+            of function call. If given an active session,
+            will leave it open for use by external code.
+        download_args: dict
             Additional keyword arguments to pass to the
-            fetch_data_from_observatory method.
+            download_from_observatory method.
+        reducer_args: dict
+            Additional keyword arguments to pass to the
+            reduce method. Only used if reduce=True.
         dataset_args: dict
             Additional keyword arguments to pass to the
             constructor of raw data objects.
+        report: dict (optional)
+            If given, will be updated with information
+            about where the source/data was fetched from.
 
         Returns
         -------
@@ -551,175 +601,202 @@ class VirtualObservatory:
             one raw data object attached, from this
             observatory for each data type required by pars.
             (it may have more data from other observatories).
+            It could also have reduced data (if reduced=True).
+            The source+data will be saved to disk/DB if save=True.
 
         """
+        if self.pars.verbose > 6:
+            print(f'fetch_source: {cat_row["name"]}')
+
+        report_dict = {}  # record of where things were fetched from
+        if source is not None:
+            report_dict["source"] = "given"
 
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
         download_pars.update(
-            {k: fetch_args[k] for k in self.pars.download_pars_list if k in fetch_args}
+            {
+                k: download_args[k]
+                for k in self.pars.download_pars_list
+                if k in download_args
+            }
         )
 
-        with Session() as session:
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        if source is None:
+            # check if source already exists
+            hash = self.cfg_hash if self.cfg_hash is not None else ""
             source = session.scalars(
                 sa.select(Source).where(
-                    Source.name == cat_row["name"]
-                )  # TODO: add cfg_hash
-            ).first()
-            if source is None:
-                source = Source(**cat_row, project=self.project)  # TODO: add cfg_hash
-                source.cat_row = cat_row  # save the raw catalog row as well
-
-            new_data = []
-            for dt in self.pars.data_types:
-                data_class = get_class_from_data_type(dt)
-                # if source existed in DB it should have raw data objects
-                # if it doesn't that means the data needs to be downloaded
-                raw_data = source.get_raw_data(
-                    obs=self.name, data_type=dt, session=session
+                    Source.name == cat_row["name"],
+                    Source.cfg_hash == hash,
                 )
+            ).first()
+            if self.pars.verbose > 9:
+                print(f"Is source found in database: {source is not None}")
+            if source is not None:
+                report_dict["source"] = "database"
 
-                if raw_data is not None and not raw_data.check_file_exists():
-                    # session.delete(raw_data)
-                    # raw_data = None
-                    raise RuntimeError(
-                        f"{data_class} object for source {source.name} "
-                        "exists in DB but file does not exist."
-                    )
+        # if not, create one now
+        if source is None:
+            if self.pars.verbose > 9:
+                print(f'Creating new source: {cat_row["name"]}')
+            source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
+            source.cat_row = cat_row  # save the raw catalog row as well
+            report_dict["source"] = "new"
 
-                # file exists, try to load it:
-                if raw_data is not None:
-                    lock.acquire()
-                    try:
-                        raw_data.load()
-                    except KeyError as e:
-                        if "No object named" in str(e):
-                            # This does not exist in the file
+        for dt in self.pars.data_types:
+            # class of raw data (e.g., RawPhotometry)
+            DataClass = get_class_from_data_type(dt)
 
+            # if source existed in DB it should have raw data objects
+            # if it doesn't that means the data needs to be downloaded
+            raw_data = source.get_data(
+                obs=self.name,
+                data_type=dt,
+                level="raw",
+                session=session,
+                check_data=self.pars.check_data_exists,
+            )
+            raw_data = raw_data[0] if len(raw_data) > 0 else None
+            if self.pars.verbose > 9:
+                print(f"Is raw {dt} found in database: {raw_data is not None}")
+
+            if raw_data is not None:
+                report_dict[f"raw_{dt}"] = "database"
+            # if raw_data is not None and not raw_data.check_file_exists():
+            #     # TODO: should this be customizable behavior??
+            #     # session.delete(raw_data)
+            #     # raw_data = None
+            #     raise RuntimeError(
+            #         f"{DataClass} object for source {source.name} "
+            #         "exists in DB but file does not exist."
+            #     )
+            #
+            # # file exists, try to load it:
+            # if raw_data is not None:
+            #     lock.acquire()
+            #     try:
+            #         raw_data.load()
+            #     except KeyError as e:
+            #         if "No object named" in str(e):
+            #             # This does not exist in the file
+            #
+            #             # TODO: is delete the right thing to do?
+            #             source.remove_raw_data(
+            #                 obs=self.name, data_type=dt, session=session
+            #             )
+            #             session.flush()
+            #             raw_data = None
+            #         else:
+            #             raise e
+            #     finally:
+            #         lock.release()
+
+            if raw_data is not None and self.pars.check_download_pars:
+                # check if the download parameters used to save
+                # the data are consistent with those used now
+                if "download_pars" not in raw_data.altdata:
+                    # TODO: is delete the right thing to do?
+                    source.remove_raw_data(obs=self.name, data_type=dt, session=session)
+                    raw_data = None
+                else:
+                    for key in self.pars.download_pars_list:
+                        if (
+                            key not in raw_data.altdata["download_pars"]
+                            or raw_data.altdata["download_pars"][key]
+                            != download_pars[key]
+                        ):
                             # TODO: is delete the right thing to do?
+                            # print("removing data")
                             source.remove_raw_data(
                                 obs=self.name, data_type=dt, session=session
                             )
-                            session.flush()
                             raw_data = None
-                        else:
-                            raise e
-                    finally:
-                        lock.release()
+                            break
 
-                if raw_data is not None and self.pars.check_download_pars:
-                    # check if the download parameters used to save
-                    # the data are consistent with those used now
-                    if "download_pars" not in raw_data.altdata:
-                        # TODO: is delete the right thing to do?
-                        source.remove_raw_data(
-                            obs=self.name, data_type=dt, session=session
-                        )
-                        session.flush()
-                        raw_data = None
-                    else:
-                        for key in self.pars.download_pars_list:
-                            if (
-                                key not in raw_data.altdata["download_pars"]
-                                or raw_data.altdata["download_pars"][key]
-                                != download_pars[key]
-                            ):
-                                # TODO: is delete the right thing to do?
-                                source.remove_raw_data(
-                                    obs=self.name, data_type=dt, session=session
-                                )
-                                session.flush()
-                                raw_data = None
-                                break
+            # no data on DB/file, must re-download from observatory website:
+            if raw_data is None:
+                # <-- magic happens here! -- > #
+                data, altdata = self.download_from_observatory(cat_row, **download_args)
 
-                # no data on DB/file, must re-fetch from observatory website:
-                if raw_data is None:
-                    # <-- magic happens here! -- >
-                    data, altdata = self.fetch_data_from_observatory(
-                        cat_row, **fetch_args
-                    )
+                # save the catalog info
+                # TODO: should we get the full catalog row?
+                altdata["cat_row"] = cat_row
 
-                    # save the catalog info
-                    # TODO: should we get the full catalog row?
-                    altdata["cat_row"] = cat_row
+                # save the parameters involved with the download
+                altdata["download_pars"] = download_pars
 
-                    # save the parameters involved with the download
-                    altdata["download_pars"] = download_pars
+                # create a raw data for this class (e.g., RawPhotometry)
+                raw_data = DataClass(
+                    data=data,
+                    altdata=altdata,
+                    observatory=self.name,
+                    source_name=cat_row["name"],
+                    **dataset_args,
+                )  # Raw data doesn't have cfg_hash!
+                if raw_data is not None:
+                    report_dict[f"raw_{dt}"] = "new"
 
-                    raw_data = data_class(
-                        data=data,
-                        altdata=altdata,
-                        observatory=self.name,
-                        source_name=cat_row["name"],
-                        **dataset_args,
-                    )
-                    # keep track of new dataset that need
-                    # to be saved to disk and DB
-                    new_data.append(raw_data)
+            if raw_data is None:
+                raise ValueError("Raw data can not be None at this point!")
 
-                # this dataset is not appended to source yet:
-                if not any(
-                    [r.observatory == self.name for r in getattr(source, f"raw_{dt}")]
-                ):
-                    getattr(source, f"raw_{dt}").append(raw_data)
+            # add the raw data to the source
+            getattr(source, f"raw_{dt}").append(raw_data)
 
-                # here we explicitly set all relational collections
-                # to an empty list, so they are accessible (and empty)
-                # even if the source is no longer attached to the DB.
-                for name in ["reduced", "processed", "simulated"]:
-                    if len(getattr(source, f"{name}_{dt}")) == 0:
-                        setattr(source, f"{name}_{dt}", [])
-                if len(source.detections) == 0:
-                    source.detections = []
-                # add more collections here...
+            if reduce:  # reduce the data
+                reduced_datasets = source.get_data(
+                    obs=self.name,
+                    data_type=dt,
+                    level="reduced",
+                    session=session,
+                    check_data=self.pars.check_data_exists,
+                )
+                if reduced_datasets is not None and len(reduced_datasets) > 0:
+                    report_dict[f"reduced_{dt}"] = "database"
 
-            # unless debugging, you'd want to save this data
+                # could not find reduced data, so reduce it now
+                if len(reduced_datasets) == 0:
+                    reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
+                    report_dict[f"reduced_{dt}"] = "new"
+
+                # make sure to append new data unto source
+                for d in reduced_datasets:
+                    getattr(source, f"reduced_{dt}").append(d)
+
+            # if debugging or saving outside this function, set save=False
             if save:
-                if source.ra is not None:
-                    ra = source.ra
-                    ra_deg = np.floor(ra)
-                    if self.pars.save_ra_minutes:
-                        ra_minute = np.floor((ra - ra_deg) * 60)
-                    else:
-                        ra_minute = None
-                    if self.pars.save_ra_seconds:
-                        ra_second = np.floor((ra - ra_deg - ra_minute / 60) * 3600)
-                    else:
-                        ra_second = None
-                else:
-                    ra_deg = None
-                    ra_minute = None
-                    ra_second = None
-
                 try:
                     session.add(source)
-                    # try to save the data to disk
-                    lock.acquire()  # thread blocks at this line until it can obtain lock
-                    try:
-                        for data in new_data:
-                            data.save(
-                                overwrite=self.pars.overwrite_files,
-                                source_name=source.name,
-                                ra_deg=ra_deg,
-                                ra_minute=ra_minute,
-                                ra_second=ra_second,
-                                key_prefix=self.pars.filekey_prefix,
-                                key_suffix=self.pars.filekey_suffix,
-                            )
-                    finally:
-                        lock.release()
-                    # try to save the source+data to the database
                     session.commit()
                 except Exception:
                     session.rollback()
-                    # if saving to disk or database fails,
-                    # make sure we do not leave orphans
-                    for data in new_data:
-                        data.delete_data_from_disk()
                     raise
+
+                # try to save the raw data
+                save_kwargs = dict(
+                    overwrite=self.pars.overwrite_files,
+                    key_prefix=self.pars.filekey_prefix,
+                    key_suffix=self.pars.filekey_suffix,
+                )
+                commit_and_save(raw_data, session=session, save_kwargs=save_kwargs)
+
+                if reduce and self.pars.save_reduced:
+                    commit_and_save(
+                        reduced_datasets, session=session, save_kwargs=save_kwargs
+                    )
+
+        self.latest_source = source
+
+        if report is not None:
+            report.update(report_dict)
 
         return source
 
-    def fetch_data_from_observatory(self, cat_row, **kwargs):
+    def download_from_observatory(self, cat_row, **kwargs):
         """
         Fetch data from the observatory for a given source.
         Must return a dataframe (or equivalent), even if it is an empty one.
@@ -743,7 +820,7 @@ class VirtualObservatory:
 
         """
         raise NotImplementedError(
-            "fetch_data_from_observatory() must be implemented in subclass"
+            "download_from_observatory() must be implemented in subclass"
         )
 
     # TODO: this should be replaced by populate raw data?
@@ -858,104 +935,7 @@ class VirtualObservatory:
 
         return value
 
-    def commit_source(
-        self, data, data_type, cat_id, source_ids, filename, key, session
-    ):
-        """
-        Save a source to the database,
-        using the dataset loaded from file,
-        and matching it to the catalog.
-        If the source already exists in the database, nothing happens.
-        If the source does not exist in the database,
-        it is created, and its id is added to the source_ids.
-
-        Parameters
-        ----------
-        data: dataframe or other data types
-            Data loaded from file.
-            For HDF5 files this is a dataframe.
-        data_type: str
-            The type of data loaded from file,
-            e.g., 'photometry', 'spectroscopy', etc.
-        cat_id: str or int
-            The identifier that connects the data
-            to the catalog row. Can be a string
-            (the name of the source) or an integer
-            (the index of the source in the catalog).
-        source_ids: set of str or int
-            Set of identifiers for sources that already
-            exist in the database.
-            Any new data with the same identifier is skipped,
-            and any new data not in the set is added.
-        filename: str
-            Full path to the file from which the data was loaded.
-        key: str
-            Key inside the file if multiple datasets are in each file.
-        session: sqlalchemy.orm.session.Session
-            The current session to which we add
-            newly created sources.
-
-        """
-        if self.pars.verbose > 1:
-            print(
-                f"Loaded data for source {cat_id} | "
-                f"len(data): {len(data)} | "
-                f"id in source_ids: {cat_id in source_ids}"
-            )
-
-        if len(data) <= 0:
-            return  # no data
-
-        if cat_id in source_ids:
-            return  # source already exists
-
-        row = self.catalog.get_row(cat_id, self.pars.catalog_matching)
-
-        (
-            index,
-            name,
-            ra,
-            dec,
-            mag,
-            mag_err,
-            filter_name,
-            alias,
-        ) = self.catalog.values_from_row(row)
-
-        new_source = Source(
-            name=name,
-            ra=ra,
-            dec=dec,
-            project=self.project,
-            alias=[alias] if alias else None,
-            mag=mag,
-            mag_err=mag_err,
-            mag_filter=filter_name,
-        )
-        new_source.cat_id = name
-        new_source.cat_index = index
-        new_source.cat_name = self.catalog.pars.catalog_name
-
-        data_class = get_class_from_data_type(data_type)
-        raw_data = data_class(
-            data=data,
-            observatory=self.name,
-            filename=filename,
-            key=key,
-        )
-
-        setattr(new_source, f"raw_{data_type}", [raw_data])
-        setattr(new_source, f"reduced_{data_type}", self.reduce(new_source))
-        for d in getattr(new_source, f"reduced_{data_type}"):
-            d.save()
-
-        session.add(new_source)
-        session.commit()
-        source_ids.add(cat_id)
-
-        # TODO: is here the point where we also do analysis?
-
-    def reduce(self, source, data_type=None, output_type=None, **kwargs):
+    def reduce(self, source, data_type=None, output_type=None, session=None, **kwargs):
         """
         Reduce raw data into more useful,
         second level (reduced) data products.
@@ -979,6 +959,8 @@ class VirtualObservatory:
             (e.g., a RawPhotometry object) instead.
             If so, the data_type will be inferred from the object.
             In this case no source is given to the reduction function.
+            If no source is given, the reduced data is not saved,
+            regardless of the save_reduced parameter.
         data_type: str (optional)
             The type of data to reduce.
             Can be one of 'photometry', 'spectroscopy', 'images', 'cutouts'.
@@ -1008,7 +990,11 @@ class VirtualObservatory:
         # this is called without a session,
         # so raw data must be attached to source
         if isinstance(source, Source):
-            dataset = source.get_raw_data(obs=self.name, data_type=data_type)
+            dataset = source.get_data(obs=self.name, data_type=data_type, level="raw")[
+                0
+            ]
+            if data_type is None:
+                raise ValueError("Must provide a data_type if supplying a Source!")
             data_type = convert_data_type(data_type)
         elif isinstance(source, DatasetMixin):
             dataset = source
@@ -1055,6 +1041,16 @@ class VirtualObservatory:
         new_datasets = reducer(dataset, source, init_kwargs, **kwargs)
         new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
 
+        # make sure each reduced dataset has a serial number:
+        for i, d in enumerate(new_datasets):
+            d.series_number = i + 1
+            d.series_total = len(new_datasets)
+
+        if source is not None:
+            for d in new_datasets:
+                d.source_name = source.name
+                getattr(source, f"reduced_{data_type}").append(d)
+
         # copy some properties of the observatory into the new datasets
         copy_attrs = ["project", "cfg_hash"]
         for d in new_datasets:
@@ -1065,14 +1061,7 @@ class VirtualObservatory:
         for d in new_datasets:
             d.source = source
 
-        if source is not None:
-            old_datasets = getattr(source, f"reduced_{output_type}")
-            setattr(source, f"reduced_{output_type}", old_datasets + new_datasets)
-
-        # make sure each reduced dataset has a serial number:
-        for i, d in enumerate(new_datasets):
-            d.reduction_number = i + 1
-            d.reduction_total = len(new_datasets)
+        self.latest_reductions = new_datasets
 
         return new_datasets
 
@@ -1212,7 +1201,7 @@ class VirtualDemoObs(VirtualObservatory):
         # call this only after a pars object is set up
         super().__init__(name="demo")
 
-    def fetch_data_from_observatory(
+    def download_from_observatory(
         self,
         cat_row,
         wait_time=None,
@@ -1259,6 +1248,9 @@ class VirtualDemoObs(VirtualObservatory):
             Additional data to be stored in the RawPhotometry object.
 
         """
+        if self.pars.verbose > 9:
+            print(f"download_from_observatory for {cat_row['name']}")
+
         if wait_time is None:
             wait_time = self.pars.wait_time
         if wait_time_poisson is None:
@@ -1274,7 +1266,7 @@ class VirtualDemoObs(VirtualObservatory):
                 f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
             )
         total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
-        data = self.simulate_lightcurve(**sim_args)
+        data = self.simulate_lightcurve(cat_row, **sim_args)
         altdata = {
             "demo_boolean": self.pars.demo_boolean,
             "wait_time": total_wait_time_seconds,
@@ -1284,7 +1276,7 @@ class VirtualDemoObs(VirtualObservatory):
 
         if verbose:
             print(
-                f'Finished fetch data for source {cat_row["cat_index"]} '
+                f'Finished fetching data for source {cat_row["cat_index"]} '
                 f"after {total_wait_time_seconds} seconds"
             )
 
@@ -1292,6 +1284,7 @@ class VirtualDemoObs(VirtualObservatory):
 
     @staticmethod
     def simulate_lightcurve(
+        cat_row,
         num_points=100,
         mjd_range=(57000, 58000),
         shuffle_time=False,
@@ -1307,8 +1300,14 @@ class VirtualDemoObs(VirtualObservatory):
 
         mag_err = np.random.uniform(mag_err_range[0], mag_err_range[1], num_points)
         mag = np.random.normal(mean_mag, mag_err, num_points)
+        ra = cat_row["ra"] + np.random.normal(0, 0.0001, num_points)
+        ra = np.mod(ra, 360)
+        dec = cat_row["dec"] + np.random.normal(0, 0.0001, num_points)
+        dec = np.clip(dec, -90, 90)  # TODO: more realistic to "bounce back" from edges
         flag = np.zeros(num_points, dtype=bool)
-        test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filter, flag=flag)
+        test_data = dict(
+            mjd=mjd, mag=mag, mag_err=mag_err, ra=ra, dec=dec, filter=filter, flag=flag
+        )
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
 

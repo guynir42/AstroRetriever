@@ -101,7 +101,7 @@ Examples for storing and retrieving data products:
 
 Data that is saved to disk is automatically retrieved
 by `virtualobserver` so that each call to a method like
-`run()` on the project object or `download_all_sources()`
+`run()` on the project object or `fetch_all_sources()`
 on the observatory object will continue from where it left off,
 skipping the sources and files it has already completed.
 
@@ -563,7 +563,7 @@ Use only one of the observatories to download the data:
 proj = Project(name="default_test", obs_names=["ZTF"])
 obs = proj.observatories["ZTF"]  # can also use observatories[0]
 obs.pars.num_threads_download = 0  # can use higher values for multi-threading
-obs.download_all_sources(0, 1000, save=True)  # grab first 1000 sources in catalog
+obs.fetch_all_sources(0, 1000, save=True)  # grab first 1000 sources in catalog
 # use save=False to only download the data (for debugging)
 
 len(obs.sources)  # should only contain 100 latest Source objects

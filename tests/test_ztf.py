@@ -31,7 +31,7 @@ def test_ztf_download(ztf_project, wd_cat):
     # download the lightcurve:
     ztf_project.catalog = c
     ztf.catalog = c
-    ztf.download_all_sources()
+    ztf.fetch_all_sources()
 
     def cleanup():  # to be called at the end
         with Session() as session:
@@ -82,6 +82,8 @@ def test_ztf_reduction(ztf_project, new_source):
     assert "ztf" in ztf_project.observatories
     ztf = ztf_project.observatories["ztf"]
     assert isinstance(ztf, VirtualZTF)
+
+    ztf.pars.save_reduced = False
 
     # load the data into a RawData object
     new_source.project = "test_ZTF"

@@ -36,7 +36,9 @@ def test_tess_download(tess_project, wd_cat):
     # download the lightcurve:
     tess_project.catalog = c
     tess.catalog = c
-    tess.download_all_sources()
+    tess.fetch_all_sources(
+        reduce=False
+    )  # TODO: when finished adding reducer, remove this
 
     def cleanup():  # to be called at the end
         with Session() as session:

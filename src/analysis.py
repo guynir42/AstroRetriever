@@ -8,7 +8,7 @@ from sqlalchemy.orm.session import make_transient
 from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
-from src.database import Session
+from src.database import Session, CloseSession
 from src.source import Source
 from src.properties import Properties
 from src.utils import help_with_class, help_with_object
@@ -66,21 +66,21 @@ class ParsAnalysis(Parameters):
         )
 
         self.save_processed = self.add_par(
-            "commit_processed",
+            "save_processed",
             True,
             bool,
             "Save and commit processed lightcurves "
             "after finder and quality cuts with a new filename",
         )
         self.save_simulated = self.add_par(
-            "commit_simulated",
+            "save_simulated",
             True,
             bool,
             "Save and commit simulated lightcurves "
             "after finder and quality cuts with a new filename",
         )
         self.save_detections = self.add_par(
-            "commit_detections", True, bool, "Save detections to database"
+            "save_detections", True, bool, "Save detections to database"
         )
 
         self.save_histograms = self.add_par(
@@ -94,7 +94,6 @@ class ParsAnalysis(Parameters):
             "Filename for the histograms file",
         )  # TODO: should this be appended a cfg_hash?
 
-        self._enforce_type_checks = True
         self._enforce_no_new_attrs = True
 
         self.load_then_update(kwargs)
@@ -106,6 +105,7 @@ class ParsAnalysis(Parameters):
         """
         return "analysis"
 
+    # TODO: can we get rid of this?
     def need_to_save(self):
         """
         Check if any of the parameters require
@@ -193,7 +193,8 @@ class Analysis:
         self.quality_values = Histogram(**histogram_kwargs, name="quality_values")
 
         # update the kwargs with the right scores:
-        self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
+        # self.quality_values.pick_out_coords(self.checker.pars.cut_names, "score")
+        self.quality_values.pars.score_names = self.checker.pars.cut_names
 
         # the finder and simulator
         self.finder = self.pars.get_class_instance("finder", **finder_kwargs)
@@ -201,9 +202,11 @@ class Analysis:
         self.sim = self.pars.get_class_instance("simulator", **simulator_kwargs)
 
         self.all_scores = Histogram(**histogram_kwargs, name="all_scores")
-        self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        # self.all_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.all_scores.pars.score_names = self.finder.pars.score_names
         self.good_scores = Histogram(**histogram_kwargs, name="good_scores")
-        self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        # self.good_scores.pick_out_coords(self.finder.pars.score_names, "score")
+        self.good_scores.pars.score_names = self.finder.pars.score_names
 
         # this generates the xarrays in each histogram
         self.reset_histograms()
@@ -212,8 +215,27 @@ class Analysis:
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
 
-    def analyze_sources(self, sources):
+    def __setattr__(self, key, value):
+        if key == "output_folder":
+            if hasattr(self, "quality_values"):
+                self.quality_values.output_folder = value
+                self.all_scores.output_folder = value
+                self.good_scores.output_folder = value
+
+        super().__setattr__(key, value)
+
+    def analyze_sources(self, sources, session=None):
         """
+        Go over a bunch of sources and run
+        quality checks, event detection and
+        properties estimation for each one.
+        Each source must have already been
+        attached some reduced data (e.g.,
+        lightcurves) and will produce
+        processed and simulated data as well.
+        The processed/simulated could be
+        either saved or not at the end
+        of the analysis (based on pars).
 
         Parameters
         ----------
@@ -221,6 +243,12 @@ class Analysis:
             A list of sources to run the analysis on.
             After this batch is done will update
             the histogram on disk.
+        session: sqlalchemy session, optional
+            If provided, will use this session to
+            save the data to the database
+            (and will leave the session open).
+            If not given, will open a new session
+            and close it at the end of the analysis.
         """
         if isinstance(sources, Source):
             sources = [sources]
@@ -252,72 +280,85 @@ class Analysis:
             batch_detections += analysis_func(source)
 
             # get rid of data we don't want saved to the source
-            for dt in self.pars.data_types:
-                # do we also need to clear these from the raw data relationship?
-                if not self.pars.save_anything or not self.pars.save_processed:
-                    setattr(source, f"processed_{dt}", [])  # clear list
-                if not self.pars.save_anything or not self.pars.save_simulated:
-                    setattr(source, f"simulated_{dt}", [])  # clear list
+            # for dt in self.pars.data_types:
+            #     # do we also need to clear these from the raw data relationship?
+            #     if not self.pars.save_anything or not self.pars.save_processed:
+            #         setattr(source, f"processed_{dt}", [])  # clear list
+            #     if not self.pars.save_anything or not self.pars.save_simulated:
+            #         setattr(source, f"simulated_{dt}", [])  # clear list
 
             # TODO: what happens if more than one data type on each det?
             for det in batch_detections:
-                det.processed_data = None
+                det.processed_data = None  # TODO: is this necessary?
 
             # get rid of these new detections if we don't
             # want to save them to DB (e.g., for debugging)
-            if not self.pars.save_anything or not self.pars.save_detections:
-                source.detections = []
+            # if not self.pars.save_anything or not self.pars.save_detections:
+            #     source.detections = []
 
         # this gets appended but never committed
         self.detections += batch_detections
 
         # save the detections to the database
-        if self.pars.save_anything and self.pars.need_to_save():
+        if self.pars.save_anything:
 
-            with Session() as session:
-                try:  # if anything fails, must rollback all
-                    if self.pars.save_histograms:
-                        self._save_histograms(temp=True)
+            if session is None:
+                session = Session()
+                # make sure this session gets closed at end of function
+                _ = CloseSession(session)
 
-                    for source in sources:
-                        session.add(source)
-                        for dt in self.pars.data_types:
-                            for data in getattr(source, f"raw_{dt}"):
-                                if data.filename is None:
-                                    raise ValueError(
-                                        f"raw_{dt} (from {data.observatory}) "
-                                        f"on Source {source.id} has no filename. "
-                                        "Did you forget to save it?"
-                                    )
-                            for i, data in enumerate(getattr(source, f"reduced_{dt}")):
-                                if data.filename is None:
-                                    raise ValueError(
-                                        f"reduced_{dt} (number {i}) on Source {source.id} "
-                                        "has no filename. Did you forget to save it?"
-                                    )
-                            [data.save() for data in getattr(source, f"processed_{dt}")]
-                            [data.save() for data in getattr(source, f"simulated_{dt}")]
+            try:  # if anything fails, must rollback all
+                if self.pars.save_histograms:
+                    self._save_histograms(temp=True)
 
-                    session.commit()
+                for source in sources:
+                    source.save(session=session)
+                    source.save_detections(session=session)
 
-                    # if all the file saving and DB interactions work,
-                    # then we can commit the histograms (rename temp files)
-                    self._commit_histograms()
-                except Exception:
-                    self._rollback_histograms()
-                    session.rollback()
-                    for source in sources:
-                        for dt in self.pars.data_types:
-                            [
-                                lc.delete_data_from_disk()
-                                for lc in getattr(source, f"processed_{dt}")
-                            ]
-                            [
-                                lc.delete_data_from_disk()
-                                for lc in getattr(source, f"simulated_{dt}")
-                            ]
+                    for dt in self.pars.data_types:
+                        # for data in getattr(source, f"raw_{dt}"):
+                        #     if data.filename is None:
+                        #         raise ValueError(
+                        #             f"raw_{dt} (from {data.observatory}) "
+                        #             f"on Source {source.id} has no filename. "
+                        #             "Did you forget to save it?"
+                        #         )
 
-                    raise  # finally re-raise the exception
+                        # [data.save() for data in getattr(source, f"reduced_{dt}")] # saved earlier?
+                        # for i, data in enumerate(getattr(source, f"reduced_{dt}")):
+                        #     if data.filename is None:
+                        #         raise ValueError(
+                        #             f"reduced_{dt} (number {i}) on Source {source.id} "
+                        #             "has no filename. Did you forget to save it?"
+                        #         )
+
+                        if self.pars.save_processed:
+                            getattr(source, f"save_processed_{dt}")(session=session)
+                            # for data in getattr(source, f"processed_{dt}"):
+                            #     data.save()  # TODO: replace with autosave?
+                            #     session.add(data)
+                        if self.pars.save_simulated:
+                            getattr(source, f"save_simulated_{dt}")(session=session)
+                            # for data in getattr(source, f"simulated_{dt}"):
+                            #     data.save()  # TODO: replace with autosave?
+                            #     session.add(data)
+
+                session.commit()
+
+                # if all the file saving and DB interactions work,
+                # then we can commit the histograms (rename temp files)
+                self._commit_histograms()
+            except Exception:
+                self._rollback_histograms()
+                session.rollback()
+                for source in sources:
+                    for dt in self.pars.data_types:
+                        for lc in getattr(source, f"processed_{dt}"):
+                            lc.delete_data_from_disk()
+                        for lc in getattr(source, f"simulated_{dt}"):
+                            lc.delete_data_from_disk()
+
+                raise  # finally re-raise the exception
 
     def _analyze_photometry(self, source):
         """
@@ -355,12 +396,23 @@ class Analysis:
         # "reduced_lightcurves" to use as "processed_lightcurves"
         source.processed_lightcurves = lcs
         self._check_lightcurves(lcs, source)
+
+        # verify quality checker produced columns needed for histograms
+        for name in self.quality_values.pars.score_names:
+            if name not in lcs[0].data.columns:
+                raise ValueError(f'Score "{name}" not found in lightcurve data!')
+
         self._process_lightcurves(lcs, source)
+        # verify finder produced columns needed for histograms
+        for name in self.good_scores.pars.score_names:
+            if name not in lcs[0].data.columns:
+                raise ValueError(f'Score "{name}" not found in lightcurve data!')
+
         new_det = self._detect_in_lightcurves(lcs, source)
         # make sure to mark these as processed
         [setattr(lc, "was_processed", True) for lc in lcs]
 
-        self._calc_props_from_lightcurves(lcs, source)
+        self._calc_props_from_photometry(source, lcs)
 
         self._update_histograms(lcs, source)
 
@@ -377,10 +429,8 @@ class Analysis:
 
             # find detections in the simulated data
             sim_det += self._detect_in_lightcurves(sim_lcs, source, sim_pars)
-
         det = new_det + sim_det
         source.detections = det
-
         return det
 
     def _check_lightcurves(self, lightcurves, source, sim=None):
@@ -476,7 +526,7 @@ class Analysis:
         """
         return self.finder.detect(lightcurves, source, sim)
 
-    def _calc_props_from_lightcurves(self, lightcurves, source):
+    def _calc_props_from_photometry(self, source, lightcurves):
         """
         Calculate some Properties on this source
         based on the lightcurves given.
@@ -488,11 +538,11 @@ class Analysis:
 
         Parameters
         ----------
+        source: Source object
+            The lightcurves for this source are scanned.
         lightcurves: list of Lightcurve objects
             The lightcurves to check. For regular usage,
             this would be the "processed_lightcurves".
-        source: Source object
-            The lightcurves for this source are scanned.
         """
         # TODO: calculate best S/N and so on...
 
@@ -548,8 +598,9 @@ class Analysis:
         """
         Reset the histograms to zero arrays.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.initialize()
+            # hist.remove_data_from_file()
 
     def _update_histograms(self, lightcurves, source):
         """
@@ -584,11 +635,13 @@ class Analysis:
 
         """
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             for lc in lightcurves:
                 hist.add_data(source, lc.data)
 
-    def _get_all_histograms(self):
+            hist.add_source_name(source.name)
+
+    def get_all_histograms(self):
         """
         Get a list of all histograms that are
         associated with this Analysis object.
@@ -601,7 +654,7 @@ class Analysis:
         This is used to continue a previous run,
         or to use the histograms to make plots.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.load()
 
     def _save_histograms(self, temp=False):
@@ -616,7 +669,7 @@ class Analysis:
         """
         suffix = "temp" if temp else None
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.save(suffix=suffix)
 
     def _rollback_histograms(self):
@@ -625,7 +678,7 @@ class Analysis:
         This is called in case there was a problem
         saving or committing any data.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.remove_data_from_file(suffix="temp")
 
     def _commit_histograms(self):
@@ -636,7 +689,7 @@ class Analysis:
         there were no problems.
         Will also create backup files for the histograms.
         """
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             fullname = os.path.join(hist.output_folder, f"histograms_{hist.name}.nc")
             if os.path.exists(fullname):
                 os.rename(fullname, fullname + ".backup")
@@ -650,7 +703,7 @@ class Analysis:
         Use remove_backup=True to also delete the backup files.
         """
 
-        for hist in self._get_all_histograms():
+        for hist in self.get_all_histograms():
             hist.remove_data_from_file()
             hist.remove_data_from_file(suffix="temp")
             if remove_backup:

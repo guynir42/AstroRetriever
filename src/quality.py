@@ -100,7 +100,10 @@ class QualityChecker:
 
                 offset = np.sqrt(x**2 + y**2)
                 scatter = np.median(np.abs(offset - np.median(offset)))
-                offset_norm = (offset - np.median(offset)) / scatter
+                if scatter == 0:
+                    offset_norm = np.zeros_like(offset)
+                else:
+                    offset_norm = (offset - np.median(offset)) / scatter
 
                 lc.data["offset"] = offset_norm
                 lc.data["qflag"] |= np.abs(offset_norm) >= self.pars.offset_threshold

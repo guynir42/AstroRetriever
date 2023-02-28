@@ -8,8 +8,8 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import xarray as xr
+import threading
 
-import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -23,8 +23,11 @@ from sqlalchemy.ext.associationproxy import association_proxy
 
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base, Session, engine
+from src.database import Base, Session, engine, CloseSession
 from src.source import Source
+
+
+lock = threading.Lock()
 
 # root folder is either defined via an environment variable
 # or is the in the main repository, under subfolder "data"
@@ -79,12 +82,39 @@ def get_time_offset(time_str):
         return float(val.group(0).replace(" ", ""))
 
 
-def add_alias(att):
-    return property(
-        fget=lambda self: getattr(self, att),
-        fset=lambda self, value: setattr(self, att, value),
-        doc=f'Alias for "{att}"',
-    )
+def commit_and_save(datasets, session=None, save_kwargs={}):
+    """
+    Commit all datasets to the database, and then
+    save all datasets to disk.
+    If anything fails, will rollback the session
+    and delete the data from disk.
+    """
+    if session is None:
+        session = Session()
+        # make sure this session gets closed at end of function
+        _ = CloseSession(session)
+
+    if not isinstance(datasets, list):
+        datasets = [datasets]
+
+    if any([not isinstance(d, DatasetMixin) for d in datasets]):
+        raise ValueError("All datasets must be of type DatasetMixin")
+
+    for dataset in datasets:
+        try:
+            session.add(dataset)
+            if not dataset.check_file_exists():
+                lock.acquire()  # thread blocks at this line until it can obtain lock
+                try:
+                    dataset.save(**save_kwargs)
+                finally:
+                    lock.release()
+
+            session.commit()
+        except Exception:
+            session.rollback()
+            dataset.delete_data_from_disk()
+            raise
 
 
 class DatasetMixin:
@@ -118,126 +148,141 @@ class DatasetMixin:
 
     """
 
-    observatory = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Observatory this dataset is associated with",
-    )
+    if True:  # put all column definitions in a single block
+        source_name = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Name of the source for which this observation was taken",
+        )
 
-    # original series of images used to make this dataset
-    series_identifier = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Identifier of the series this dataset is associated with, "
-        "e.g., the set of images the include this source but others as well",
-    )
-    series_object = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Name of object relative to the series this dataset is associated with",
-    )
+        observatory = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Observatory this dataset is associated with",
+        )
 
-    # saving the data to file
-    filename = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Filename of the dataset, including relative path, "
-        "that may be appended to the folder attribute. ",
-    )
+        # original series of images used to make this dataset
+        run_identifier = sa.Column(
+            sa.String,
+            nullable=True,
+            index=True,
+            doc="Identifier of the observing run this dataset is associated with, "
+            "e.g., the set of images the include this source but others as well",
+        )
+        run_object = sa.Column(
+            sa.String,
+            nullable=True,
+            index=True,
+            doc="Name of object relative to the observing run this dataset is associated with",
+        )
 
-    folder = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Folder where this dataset is stored. "
-        "If relative path, it is relative to DATA_ROOT. "
-        "If given as absolute path that overlaps with DATA_ROOT, "
-        "it will be converted to a relative path, so it is portable. ",
-    )
+        # saving the data to file
+        filename = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Filename of the dataset, including relative path, "
+            "that may be appended to the folder attribute. ",
+        )
 
-    filekey = sa.Column(
-        sa.String,
-        nullable=True,
-        doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
-    )
+        folder = sa.Column(
+            sa.String,
+            nullable=True,
+            doc="Folder where this dataset is stored. "
+            "If relative path, it is relative to DATA_ROOT. "
+            "If given as absolute path that overlaps with DATA_ROOT, "
+            "it will be converted to a relative path, so it is portable. ",
+        )
 
-    format = sa.Column(
-        sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
-    )
+        filekey = sa.Column(
+            sa.String,
+            nullable=True,
+            doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
+        )
 
-    # TODO: add a method to use this dictionary
-    load_instructions = sa.Column(
-        JSONB,
-        nullable=True,
-        doc="Instructions dictionary for loading the data from disk",
-    )
+        format = sa.Column(
+            sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
+        )
 
-    altdata = sa.Column(
-        JSONB,
-        nullable=True,
-        doc="Additional meta-data associated with this dataset",
-    )
+        # TODO: add a method to use this dictionary
+        load_instructions = sa.Column(
+            JSONB,
+            nullable=True,
+            doc="Instructions dictionary for loading the data from disk",
+        )
 
-    # timing data and number / size of images
-    time_start = sa.Column(
-        sa.DateTime,
-        nullable=True,
-        doc="Start time of the dataset (e.g., time of first observation)",
-    )
-    time_end = sa.Column(
-        sa.DateTime,
-        nullable=True,
-        doc="End time of the dataset (e.g., time of last observation)",
-    )
+        altdata = sa.Column(
+            JSONB,
+            nullable=True,
+            doc="Additional meta-data associated with this dataset",
+        )
 
-    # data size and shape
-    shape = sa.Column(sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset")
-    number = sa.Column(
-        sa.Integer, nullable=False, doc="Number of observations/epochs in the dataset"
-    )
-    size = sa.Column(
-        sa.Integer,
-        nullable=False,
-        doc="Size of the dataset in bytes",
-    )
+        # timing data and number / size of images
+        time_start = sa.Column(
+            sa.DateTime,
+            nullable=True,
+            doc="Start time of the dataset (e.g., time of first observation)",
+        )
+        time_end = sa.Column(
+            sa.DateTime,
+            nullable=True,
+            doc="End time of the dataset (e.g., time of last observation)",
+        )
 
-    public = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        doc="Whether this dataset is publicly available",
-    )
+        # data size and shape
+        shape = sa.Column(
+            sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset"
+        )
+        number = sa.Column(
+            sa.Integer,
+            nullable=False,
+            doc="Number of observations/epochs in the dataset",
+        )
+        size = sa.Column(
+            sa.Integer,
+            nullable=False,
+            doc="Size of the dataset in bytes",
+        )
 
-    autoload = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=AUTOLOAD,
-        doc="Whether this dataset should be automatically loaded (lazy loaded)",
-    )
+        public = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=False,
+            doc="Whether this dataset is publicly available",
+        )
 
-    autosave = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=AUTOSAVE,
-        doc="Whether this dataset should be automatically saved",
-    )
+        autoload = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=AUTOLOAD,
+            doc="Whether this dataset should be automatically loaded (lazy loaded)",
+        )
 
-    overwrite = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=OVERWRITE,
-        doc="Whether the data on disk should be overwritten if it already exists "
-        "(if False, an error will be raised)",
-    )
+        # TODO: should this be persisted or defined
+        #  each time the dataset is made/loaded?
+        autosave = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=AUTOSAVE,
+            doc="Whether this dataset should be automatically saved",
+        )
+
+        overwrite = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=OVERWRITE,
+            doc="Whether the data on disk should be overwritten if it already exists "
+            "(if False, an error will be raised)",
+        )
 
     def __init__(self, **kwargs):
         self._data = None
         self.colmap = {}
         self._times = None
         self._mjds = None
+        self.source = None
         self.time_info = {}
 
         # these are only set when generating a new
@@ -276,13 +321,14 @@ class DatasetMixin:
         if self.format is None:
             self.format = self.guess_format()
 
+        self.loaded_status = "new"
         # TODO: figure out the series identifier and object
 
     def __setattr__(self, key, value):
         if key == "filename":
             if isinstance(value, str) and os.path.isabs(value):
                 raise ValueError("Filename must be a relative path, not absolute")
-        elif key == "folder":
+        if key == "folder":
             # if given as absolute path that overlaps with DATA_ROOT,
             # convert to relative path, so it is portable
             if isinstance(value, str) and os.path.isabs(value):
@@ -290,6 +336,10 @@ class DatasetMixin:
                     value = value[len(src.database.DATA_ROOT) :]
                     if value.startswith("/"):
                         value = value[1:]
+        if key == "source" and value is not None:
+            if not isinstance(value, Source):
+                raise ValueError(f"Source must be a Source object, not {type(value)}")
+            self.source_name = value.name
 
         super().__setattr__(key, value)
 
@@ -305,6 +355,8 @@ class DatasetMixin:
         self._times = None
         self._mjds = None
         self.time_info = {}
+        self.source = None
+        self.loaded_status = "database"
 
     def guess_format(self):
         """
@@ -508,26 +560,25 @@ class DatasetMixin:
         letters = list(string.ascii_lowercase)
         return "".join(np.random.choice(letters, length))
 
-    def get_source_name(self):
-        """
-        Get the name of the source as a string.
-
-        """
-        if hasattr(self, "source") and self.source is not None:
-            source_name = self.source.name
-        elif hasattr(self, "sources") and len(self.sources) > 0:
-            source_name = self.sources[0].name
-        else:
-            source_name = None
-
-        if source_name is not None:
-            if isinstance(source_name, bytes):
-                source_name = source_name.decode("utf-8")
-
-            if not isinstance(source_name, str):
-                raise TypeError("source name must be a string")
-
-        return source_name
+    # @property
+    # def source_name(self):
+    #     """
+    #     Get the name of the source as a string.
+    #
+    #     """
+    #     if self.source is not None:
+    #         source_name = self.source.name
+    #     else:
+    #         source_name = None
+    #
+    #     if source_name is not None:
+    #         if isinstance(source_name, bytes):
+    #             source_name = source_name.decode("utf-8")
+    #
+    #         if not isinstance(source_name, str):
+    #             raise TypeError("source name must be a string")
+    #
+    #     return source_name
 
     def invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
@@ -600,14 +651,10 @@ class DatasetMixin:
 
         """
         if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:
-            basename = os.path.splitext(self.raw_data_filename)[0]
-            if hasattr(self, "was_processed") and self.was_processed:
-                self.filename = basename + "_processed"
-            else:
-                self.filename = basename + "_reduced"
+            self.filename, _ = os.path.splitext(self.raw_data_filename)
         else:
             if source_name is None:
-                source_name = self.get_source_name()
+                source_name = self.source_name
             if source_name is None:
                 source_name = self.random_string()
             # need to make up a file name in a consistent way
@@ -637,6 +684,13 @@ class DatasetMixin:
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
             data_type = self.type if self.type is not None else "data"
             self.filename = os.path.join(binning, f"{obs}_{data_type}_{source_name}")
+
+        # check if need to add reduced/processed
+        if isinstance(self, Lightcurve):
+            if hasattr(self, "was_processed") and self.was_processed:
+                self.filename += "_processed"
+            else:
+                self.filename += "_reduced"
 
         # add extension
         self.filename += self.guess_extension()
@@ -668,10 +722,7 @@ class DatasetMixin:
             The key to use for the data in the file.
         """
         if source_name is None:
-            if hasattr(self, "source") and self.source is not None:
-                source_name = self.source.name
-            elif hasattr(self, "sources") and len(self.sources) > 0:
-                source_name = self.sources[0].name
+            source_name = self.source_name
 
         if source_name is not None:
             if isinstance(source_name, bytes):
@@ -752,10 +803,8 @@ class DatasetMixin:
             raise ValueError("No data to save!")
 
         if ra_deg is None:
-            if hasattr(self, "source") and self.source is not None:
+            if self.source is not None:
                 ra_deg = self.source.ra
-            elif hasattr(self, "sources") and len(self.sources) > 0:
-                ra_deg = self.sources[0].ra
 
         # if no filename/key are given, make them up
         if self.filename is None:
@@ -878,11 +927,14 @@ class DatasetMixin:
     def find_colmap(self):
         """
         Calculate the column map for the data.
-        This locates columns in the data that
-        correspond to known types of data and
-        assigns them.
+        Locates column names in the data that
+        correspond to standardized column names.
+        This mapping can be used to access data
+        columns with weird, observatory specific
+        naming conventions, using a uniform dict.
+        E.g., ZTF uses "filtercode", but it would
+        be accessed using colmap['filter'].
         """
-
         if isinstance(self._data, pd.DataFrame):
             columns = self._data.columns
         # other datatypes will call this differently...
@@ -1128,6 +1180,10 @@ class DatasetMixin:
         pass
 
     @property
+    def is_data_loaded(self):
+        return self._data is not None
+
+    @property
     def data(self):
         if self._data is None and self.autoload and self.filename is not None:
             self.load()
@@ -1238,8 +1294,8 @@ class RawPhotometry(DatasetMixin, Base):
     def __repr__(self):
         string = f"{self.__class__.__name__}(type={self.type}"
 
-        if len(self.sources) > 0:
-            f", source={self.sources[0].name}"
+        if self.source_name is not None:
+            string += f", source={self.source_name}"
 
         if self.observatory:
             string += f" ({self.observatory.upper()})"
@@ -1355,229 +1411,237 @@ class Lightcurve(DatasetMixin, Base):
 
     __tablename__ = "lightcurves"
 
-    source_id = sa.Column(
-        sa.Integer,
-        sa.ForeignKey("sources.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        doc="ID of the source this dataset is associated with",
-    )
+    # __table_args__ = (
+    #     UniqueConstraint("source_id", "observatory", "series_number", "simulation_number", "was_processed", "cfg_hash", name="_lightcurve_uc"),
+    # )
+    if True:  # put all the column definitions in one block
+        # source_id = sa.Column(
+        #     sa.Integer,
+        #     sa.ForeignKey("sources.id", ondelete="CASCADE"),
+        #     nullable=False,
+        #     index=True,
+        #     doc="ID of the source this dataset is associated with",
+        # )
+        #
+        # source = orm.relationship(
+        #     "Source",
+        #     doc="Source associated with this lightcurve dataset",
+        #     cascade="all",
+        #     foreign_keys="Lightcurve.source_id",
+        # )
+        #
+        # source_name = association_proxy("source", "name")
 
-    source = orm.relationship(
-        "Source",
-        doc="Source associated with this lightcurve dataset",
-        cascade="all",
-        foreign_keys="Lightcurve.source_id",
-    )
+        project = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Project this lightcurve is associated with",
+        )
 
-    source_name = association_proxy("source", "name")
+        cfg_hash = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            default="",
+            doc="Hash of the configuration used to generate this object."
+            "(leave empty if not using version control)",
+        )
 
-    project = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Project this lightcurve is associated with",
-    )
+        raw_data_id = sa.Column(
+            sa.Integer,
+            sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
+            index=True,
+            doc="ID of the raw dataset that was used "
+            "to produce this reduced dataset.",
+        )
 
-    cfg_hash = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        default="",
-        doc="Hash of the configuration used to generate this object."
-        "(leave empty if not using version control)",
-    )
+        raw_data_filename = sa.Column(
+            sa.String,
+            nullable=True,
+            index=True,
+            doc="Filename of the raw dataset that "
+            "was used to produce this reduced dataset.",
+        )
 
-    raw_data_id = sa.Column(
-        sa.Integer,
-        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
-        index=True,
-        doc="ID of the raw dataset that was used " "to produce this reduced dataset.",
-    )
+        series_number = sa.Column(
+            sa.Integer,
+            nullable=False,
+            default=1,
+            index=True,
+            doc="Serial number for this reduced dataset, "
+            "numbering it out of all reduced datasets "
+            "produced from the same raw data.",
+        )
 
-    raw_data_filename = sa.Column(
-        sa.String,
-        nullable=True,
-        index=True,
-        doc="Filename of the raw dataset that "
-        "was used to produce this reduced dataset.",
-    )
+        series_total = sa.Column(
+            sa.Integer,
+            nullable=False,
+            default=1,
+            index=True,
+            doc="Total number of reduced datasets, produced from the same raw data.",
+        )
 
-    reduction_number = sa.Column(
-        sa.Integer,
-        nullable=False,
-        default=1,
-        index=True,
-        doc="Serial number for this reduced dataset, "
-        "numbering it out of all reduced datasets "
-        "producted from the same raw data.",
-    )
+        simulation_number = sa.Column(
+            sa.Integer,
+            nullable=True,
+            index=False,
+            doc="Serial number for this reduced and simulated lightcurve. "
+            "For each reduced lightcurve can have multiple simulated ones. "
+            "This keeps track of the injection number for each reduced lightcurve.",
+        )
 
-    reduction_total = sa.Column(
-        sa.Integer,
-        nullable=False,
-        default=1,
-        index=True,
-        doc="Total number of reduced datasets, " "producted from the same raw data.",
-    )
+        simulation_total = sa.Column(
+            sa.Integer,
+            nullable=True,
+            index=False,
+            doc="Total number of simulated lightcurves made "
+            "for each reduced lightcurve. ",
+        )
 
-    simulation_number = sa.Column(
-        sa.Integer,
-        nullable=True,
-        index=False,
-        doc="Serial number for this reduced and simulated lightcurve. "
-        "For each reduced lightcurve can have multiple simulated ones. "
-        "This keeps track of the injection number for each reduced lightcurve.",
-    )
+        num_good = sa.Column(
+            sa.Integer,
+            nullable=False,
+            index=True,
+            doc="Number of good points in the lightcurve.",
+        )
 
-    simulation_total = sa.Column(
-        sa.Integer,
-        nullable=True,
-        index=False,
-        doc="Total number of simulated lightcurves made "
-        "for each reduced lightcurve. ",
-    )
+        flux_mean = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Mean flux of the dataset",
+        )
 
-    num_good = sa.Column(
-        sa.Integer,
-        nullable=False,
-        index=True,
-        doc="Number of good points in the lightcurve.",
-    )
+        @property
+        def mag_mean(self):
+            if self.flux_mean is None:
+                return None
+            return -2.5 * np.log10(self.flux_mean) + PHOT_ZP
 
-    flux_mean = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Mean flux of the dataset",
-    )
+        flux_rms = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Mean flux scatter of the dataset",
+        )
 
-    @property
-    def mag_mean(self):
-        if self.flux_mean is None:
-            return None
-        return -2.5 * np.log10(self.flux_mean) + PHOT_ZP
+        @property
+        def mag_rms(self):
+            if self.flux_mean and self.flux_rms is not None:
+                return self.flux_rms / self.flux_mean / LOG_BASES
+            else:
+                return None
 
-    flux_rms = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Mean flux scatter of the dataset",
-    )
+        flux_mean_robust = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Robust mean flux of the dataset" "calculated using sigma clipping",
+        )
 
-    @property
-    def mag_rms(self):
-        if self.flux_mean and self.flux_rms is not None:
-            return self.flux_rms / self.flux_mean / LOG_BASES
-        else:
-            return None
+        @property
+        def mag_mean_robust(self):
+            if self.flux_mean_robust is None:
+                return None
+            return -2.5 * np.log10(self.flux_mean_robust) + PHOT_ZP
 
-    flux_mean_robust = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Robust mean flux of the dataset" "calculated using sigma clipping",
-    )
+        flux_rms_robust = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Robust mean flux scatter of the dataset"
+            "calculated using sigma clipping",
+        )
 
-    @property
-    def mag_mean_robust(self):
-        if self.flux_mean_robust is None:
-            return None
-        return -2.5 * np.log10(self.flux_mean_robust) + PHOT_ZP
+        @property
+        def mag_rms_robust(self):
+            if self.flux_mean_robust and self.flux_rms_robust is not None:
+                return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+            else:
+                return None
 
-    flux_rms_robust = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Robust mean flux scatter of the dataset" "calculated using sigma clipping",
-    )
+        flux_max = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum flux of the dataset",
+        )
 
-    @property
-    def mag_rms_robust(self):
-        if self.flux_mean_robust and self.flux_rms_robust is not None:
-            return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
-        else:
-            return None
+        @property
+        def mag_min(self):
+            if self.flux_max is None:
+                return None
+            return -2.5 * np.log10(self.flux_max) + PHOT_ZP
 
-    flux_max = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Maximum flux of the dataset",
-    )
+        flux_min = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum flux of the dataset",
+        )
 
-    @property
-    def mag_min(self):
-        if self.flux_max is None:
-            return None
-        return -2.5 * np.log10(self.flux_max) + PHOT_ZP
+        @property
+        def mag_max(self):
+            if self.flux_min is None:
+                return None
+            return -2.5 * np.log10(self.flux_min) + PHOT_ZP
 
-    flux_min = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Minimum flux of the dataset",
-    )
+        snr_max = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum S/N of the dataset",
+        )
 
-    @property
-    def mag_max(self):
-        if self.flux_min is None:
-            return None
-        return -2.5 * np.log10(self.flux_min) + PHOT_ZP
+        snr_min = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum S/N of the dataset",
+        )
 
-    snr_max = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Maximum S/N of the dataset",
-    )
+        filter = sa.Column(
+            sa.String,
+            nullable=False,
+            index=True,
+            doc="Filter used to acquire this dataset",
+        )
 
-    snr_min = sa.Column(
-        sa.Float,
-        nullable=True,
-        index=True,
-        doc="Minimum S/N of the dataset",
-    )
+        exp_time = sa.Column(
+            sa.Float,
+            nullable=False,
+            doc="Median exposure time of each frame, in seconds.",
+        )
+        frame_rate = sa.Column(
+            sa.Float,
+            nullable=True,
+            doc="Median frame rate (frequency) of exposures in Hz.",
+        )
+        is_uniformly_sampled = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=False,
+            doc="Is the dataset sampled uniformly in time?",
+        )
 
-    filter = sa.Column(
-        sa.String,
-        nullable=False,
-        index=True,
-        doc="Filter used to acquire this dataset",
-    )
+        was_processed = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=False,
+            index=True,
+            doc="True when lightcurve has been processed/analyzed "
+            "and has quality cuts and S/N applied.",
+        )
 
-    exp_time = sa.Column(
-        sa.Float, nullable=False, doc="Median exposure time of each frame, in seconds."
-    )
-    frame_rate = sa.Column(
-        sa.Float,
-        nullable=True,
-        doc="Median frame rate (frequency) of exposures in Hz.",
-    )
-    is_uniformly_sampled = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        doc="Is the dataset sampled uniformly in time?",
-    )
-
-    was_processed = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        index=True,
-        doc="True when lightcurve has been processed/analyzed "
-        "and has quality cuts and S/N applied.",
-    )
-
-    is_simulated = sa.Column(
-        sa.Boolean,
-        nullable=False,
-        default=False,
-        index=True,
-        doc="True when lightcurve is simulated "
-        "(or when injected with simulated events).",
-    )
+        is_simulated = sa.Column(
+            sa.Boolean,
+            nullable=False,
+            default=False,
+            index=True,
+            doc="True when lightcurve is simulated "
+            "(or when injected with simulated events).",
+        )
 
     def __init__(self, data=None, **kwargs):
         """
@@ -1677,7 +1741,7 @@ class Lightcurve(DatasetMixin, Base):
             self.calc_best()
 
             # remove columns we don't use
-            self.drop_columns()
+            self.drop_and_rename_columns()
 
         except Exception:
             # if construction fails, don't want to leave
@@ -1687,21 +1751,31 @@ class Lightcurve(DatasetMixin, Base):
             raise
 
     def __repr__(self):
-        string = (
+        string = []
+        string.append(
             f"{self.__class__.__name__}("
             f"id={self.id}, "
             f"source={self.source_name}, "
             f"epochs={self.number}"
         )
+        if self.was_processed:
+            string.append("processed")
+            if self.is_simulated:
+                string[-1] += " (sim)"
+        else:
+            string.append("reduced")
+
         if self.observatory:
-            string += f" ({self.observatory.upper()})"
+            string.append(self.observatory.upper())
         if self.mag_mean_robust is not None and self.mag_rms_robust is not None:
-            string += f", mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f})"
-        string += f", file: {self.filename}"
+            string.append(
+                f"mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f}"
+            )
+        string.append(f"file: {self.filename}")
 
         if self.filekey:
-            string += f" (key: {self.filekey})"
-
+            string.append(f"key: {self.filekey}")
+        string = ", ".join(string)
         string += ")"
 
         return string
@@ -1714,8 +1788,8 @@ class Lightcurve(DatasetMixin, Base):
     def invent_filekey(self, source_name=None, prefix=None, suffix=None):
         DatasetMixin.invent_filekey(self, source_name, prefix, suffix)
 
-        number = self.reduction_number if self.reduction_number else 1
-        total = self.reduction_total if self.reduction_total else 1
+        number = self.series_number if self.series_number else 1
+        total = self.series_total if self.series_total else 1
 
         if not self.was_processed:  # reduced (unprocessed) data
             self.filekey += f"_reduction_{number:02d}_of_{total:02d}"
@@ -1925,12 +1999,41 @@ class Lightcurve(DatasetMixin, Base):
             self.flux_max = np.nanmax(flux)
             self.flux_min = np.nanmin(flux)
 
-    def drop_columns(self):
+    def drop_and_rename_columns(self):
+        """
+        Remove from the underying data the
+        unused columns (those not defined in
+        the colmap) and then rename them to match
+        the names in the colmap (e.g., filtercode-> filter).
 
-        cols = [self.colmap[c] for c in self.colmap.keys()]
+        This also changes the colmap so it has all
+        the new column names (it becomes an identity map),
+        to enable backward compatibility with methods that
+        need to access the data in its original form.
 
-        self.data = self.data[cols]
+        It also adds a column named "mjd" for convenience.
+        """
+        inv_colmap = {v: k for k, v in self.colmap.items()}
+        new_cols = list(inv_colmap.keys())
+        if isinstance(self.data, pd.DataFrame):
+            self.data = self.data[new_cols]
+            self.data.rename(columns=inv_colmap, inplace=True)
+
+            # just in case we still use the colmap, it should
+            # also point back to the new column names
+            self.colmap = {k: k for k in self.colmap.keys()}
+
+            # add a column with the MJD
+            self.data["mjd"] = self.time_info["to mjd"](self.data["time"])
+            self.colmap["mjd"] = "mjd"
+
         # what about other data types, e.g., xarrays?
+        elif isinstance(self.data, np.ndarray):
+            raise ValueError("Not implemented yet.")
+        elif isinstance(self.data, xr.Dataset):
+            raise ValueError("Not implemented yet.")
+        else:
+            raise ValueError(f"Unknown data type: {type(self.data)}")
 
     def copy(self):
         for k, v in self.__dict__.items():
@@ -2060,98 +2163,95 @@ Lightcurve.metadata.create_all(engine)
 # from different projects/git hashes can access
 # the same raw data
 # ref: https://docs.sqlalchemy.org/en/14/orm/basic_relationships.html#many-to-many
-source_raw_photometry_association = sa.Table(
-    "source_raw_photometry_association",
-    Base.metadata,
-    sa.Column(
-        "source_id",
-        sa.Integer,
-        sa.ForeignKey("sources.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    sa.Column(
-        "raw_photometry_id",
-        sa.Integer,
-        sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
-Source.raw_photometry = orm.relationship(
-    "RawPhotometry",
-    secondary=source_raw_photometry_association,
-    back_populates="sources",
-    lazy="selectin",
-    cascade="all",
-    order_by="RawPhotometry.time_start",
-    doc="Raw photometry associated with this source",
-)
-
-
-RawPhotometry.sources = orm.relationship(
-    "Source",
-    secondary=source_raw_photometry_association,
-    back_populates="raw_photometry",
-    lazy="selectin",
-    cascade="all",
-    doc="Sources associated with this raw photometry",
-)
-
-
-Source.reduced_lightcurves = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==False, "
-    "Lightcurve.is_simulated==False)",
-    back_populates="source",
-    overlaps="processed_lightcurves, simulated_lightcurves",
-    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
-    lazy="selectin",
-    single_parent=True,
-    passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced photometric datasets associated with this source",
-)
-
-Source.reduced_photometry = add_alias("reduced_lightcurves")
-Source.redu_lcs = add_alias("reduced_lightcurves")
+# source_raw_photometry_association = sa.Table(
+#     "source_raw_photometry_association",
+#     Base.metadata,
+#     sa.Column(
+#         "source_id",
+#         sa.Integer,
+#         sa.ForeignKey("sources.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+#     sa.Column(
+#         "raw_photometry_id",
+#         sa.Integer,
+#         sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
+#         primary_key=True,
+#     ),
+# )
+#
+# Source.raw_photometry = orm.relationship(
+#     "RawPhotometry",
+#     secondary=source_raw_photometry_association,
+#     back_populates="sources",
+#     lazy="selectin",
+#     cascade="",
+#     order_by="RawPhotometry.time_start",
+#     doc="Raw photometry associated with this source",
+# )
+#
+#
+# RawPhotometry.sources = orm.relationship(
+#     "Source",
+#     secondary=source_raw_photometry_association,
+#     back_populates="raw_photometry",
+#     lazy="selectin",
+#     cascade="",
+#     doc="Sources associated with this raw photometry",
+# )
 
 
-Source.processed_lightcurves = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==True, "
-    "Lightcurve.is_simulated==False)",
-    back_populates="source",
-    overlaps="reduced_lightcurves, simulated_lightcurves",
-    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
-    lazy="selectin",
-    single_parent=True,
-    passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced and processed photometric datasets associated with this source",
-)
+# Source._reduced_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==False, "
+#     "Lightcurve.is_simulated==False)",
+#     back_populates="source",
+#     overlaps="_processed_photometry_from_db, _simulated_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced photometric datasets associated with this source",
+# )
 
-Source.processed_photometry = add_alias("processed_lightcurves")
-Source.proc_lcs = add_alias("processed_lightcurves")
+# Source.redu_lcs = add_alias("reduced_photometry")
 
-Source.simulated_lightcurves = orm.relationship(
-    "Lightcurve",
-    primaryjoin="and_(Lightcurve.source_id==Source.id, "
-    "Lightcurve.was_processed==True, "
-    "Lightcurve.is_simulated==True)",
-    back_populates="source",
-    overlaps="reduced_lightcurves, processed_lightcurves",
-    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
-    lazy="selectin",
-    single_parent=True,
-    passive_deletes=True,
-    order_by="Lightcurve.time_start",
-    doc="Reduced and simulated photometric datasets associated with this source",
-)
 
-Source.simulated_photometry = add_alias("simulated_lightcurves")
-Source.sim_lcs = add_alias("simulated_lightcurves")
+# Source._processed_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==True, "
+#     "Lightcurve.is_simulated==False)",
+#     back_populates="source",
+#     overlaps="_reduced_photometry_from_db, _simulated_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced and processed photometric datasets associated with this source",
+# )
+
+# Source.proc_lcs = add_alias("processed_photometry")
+
+# Source._simulated_photometry_from_db = orm.relationship(
+#     "Lightcurve",
+#     primaryjoin="and_(Lightcurve.source_id==Source.id, "
+#     "Lightcurve.was_processed==True, "
+#     "Lightcurve.is_simulated==True)",
+#     back_populates="source",
+#     overlaps="_reduced_photometry_from_db, _processed_photometry_from_db",
+#     cascade="save-update, merge, refresh-expire, expunge",
+#     lazy="selectin",
+#     single_parent=True,
+#     # passive_deletes=True,
+#     order_by="Lightcurve.time_start",
+#     doc="Reduced and simulated photometric datasets associated with this source",
+# )
+
+# Source.sim_lcs = add_alias("simulated_photometry")
 
 
 # RawPhotometry does NOT link back to ALL associated lightcurves
@@ -2172,7 +2272,7 @@ Source.sim_lcs = add_alias("simulated_lightcurves")
 Lightcurve.raw_data = orm.relationship(
     "RawPhotometry",
     # back_populates="lightcurves",
-    cascade="all",
+    cascade="",
     doc="The raw dataset that was used to produce this reduced dataset.",
 )
 
@@ -2186,17 +2286,15 @@ def insert_new_dataset(mapper, connection, target):
     and if it doesn't exist, it creates it, if autosave is True,
     otherwise it raises an error.
     """
-
-    if target.filename is None:
-        raise ValueError(
-            "No filename specified for this dataset. "
-            "Save the dataset to disk to generate a (random) filename. "
-        )
-
     if not target.check_file_exists():
         if target.autosave:
             target.save()
         else:
+            if target.filename is None:
+                raise ValueError(
+                    f"No filename specified for {target}. "
+                    "Save the dataset to disk to generate a filename. "
+                )
             raise ValueError(
                 f"File {target.get_fullname()}"
                 "does not exist and autosave is disabled. "

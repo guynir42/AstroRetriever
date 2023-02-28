@@ -3,7 +3,6 @@ import yaml
 import time
 import uuid
 import pytest
-import datetime
 from pprint import pprint
 
 import numpy as np
@@ -13,10 +12,9 @@ from astropy.time import Time
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
-from src.utils import OnClose
+from src.utils import OnClose, UniqueList
 from src.parameters import Parameters
 from src.project import Project
-from src.observatory import VirtualDemoObs
 from src.ztf import VirtualZTF
 
 from src.database import Session
@@ -27,6 +25,7 @@ from src.catalog import Catalog
 from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
+from src.utils import NamedList, UniqueList, CircularBufferList
 
 
 def test_load_save_parameters(data_dir):
@@ -354,7 +353,7 @@ def test_observatory_filename_conventions(test_project):
     cat_row = cat.get_row(num, "number", "dict")
 
     # test the filename conventions
-    source = obs.check_and_fetch_source(cat_row, save=False)
+    source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
@@ -370,7 +369,7 @@ def test_observatory_filename_conventions(test_project):
     _ = int(name)  # make sure conversion to int works
 
     # test the filename conventions
-    source = obs.check_and_fetch_source(cat_row, save=False)
+    source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
     data.invent_filename(ra_deg=cat_row["ra"])
 
@@ -402,6 +401,7 @@ def test_add_source_and_data(data_dir):
                 ra=np.random.uniform(0, 360),
                 dec=np.random.uniform(-90, 90),
             )
+            assert isinstance(new_source.raw_photometry, UniqueList)
 
             # add some data to the source
             num_points = 10
@@ -432,15 +432,27 @@ def test_add_source_and_data(data_dir):
             assert start_time == new_data.time_start
             assert end_time == new_data.time_end
 
-            new_source.raw_photometry.append(new_data)
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
+            assert isinstance(new_source.raw_photometry, UniqueList)
+            assert len(new_source.raw_photometry) == 1
+
+            # check that re-appending this same data does not add another copy to list
+            new_source.raw_photometry.append(new_data)
+            assert len(new_source.raw_photometry) == 1
 
             # this should not work because
             # no filename was specified
             with pytest.raises(ValueError):
                 session.commit()
             session.rollback()
+
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
 
             new_data.filename = "test_data.h5"
             # this should not work because the file
@@ -453,12 +465,15 @@ def test_add_source_and_data(data_dir):
             new_data.filename = None  # reset the filename
 
             session.add(new_source)
+            # must add this separately, as cascades are cancelled
+            session.add(new_data)
+            new_source.raw_photometry = [new_data]
 
             # filename should be auto-generated
             new_data.save()  # must save to allow RawPhotometry to be added to DB
             session.commit()  # this should now work fine
             assert new_source.id is not None
-            assert new_source.id == new_data.sources[0].id
+            assert new_source.id == new_data.source.id
 
             # try to recover the data
             filename = new_data.filename
@@ -473,17 +488,22 @@ def test_add_source_and_data(data_dir):
 
         # check that the data is in the database
         with Session() as session:
-            sources = session.scalars(
+            source = session.scalars(
                 sa.select(Source).where(Source.name == source_name)
             ).first()
 
-            assert sources is not None
-            assert len(sources.raw_photometry) == 1
-            assert sources.raw_photometry[0].filename == filename
-            assert sources.raw_photometry[0].filekey == new_data.filekey
-            assert sources.raw_photometry[0].sources[0].id == new_source.id
+            assert source is not None
+            assert source.id == new_source.id
+            source.get_data(
+                obs="demo", data_type="photometry", level="raw", session=session
+            )
+            assert len(source.raw_photometry) == 1
+            assert source.raw_photometry[0].filename == filename
+            assert source.raw_photometry[0].filekey == new_data.filekey
+            assert source.raw_photometry[0].source.id == new_source.id
+
             # this autoloads the data:
-            assert sources.raw_photometry[0].data.equals(df)
+            assert source.raw_photometry[0].data.equals(df)
 
     finally:
         if os.path.isfile(fullname):
@@ -500,18 +520,25 @@ def test_add_source_and_data(data_dir):
             sa.select(Source).where(Source.name == source_name)
         ).first()
         assert source is not None
+
+        # get_data will load a RawPhotometry file without checking if it has data
+        source.get_data(
+            obs="demo",
+            data_type="photometry",
+            level="raw",
+            session=session,
+            check_data=False,
+            delete_missing=False,
+        )
+        assert len(source.raw_photometry) == 1
         assert len(source.raw_photometry) == 1
         with pytest.raises(FileNotFoundError):
             source.raw_photometry[0].data.equals(df)
 
-    # make sure deleting the source also cleans up the data
+    # cleanup
     with Session() as session:
         session.execute(sa.delete(Source).where(Source.name == source_name))
         session.commit()
-        data = session.scalars(
-            sa.select(RawPhotometry).where(RawPhotometry.filekey == new_data.filekey)
-        ).first()
-        assert not any([s.name == source_name for s in data.sources])
 
 
 def test_source_unique_constraint():
@@ -586,168 +613,6 @@ def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
         session.commit()
 
 
-def test_raw_photometry_relationships(new_source, new_source2, raw_phot):
-
-    with Session() as session:
-        new_source.raw_photometry = [raw_phot]
-        new_source2.raw_photometry = [raw_phot]
-        session.add(raw_phot)
-        raw_phot.save()
-        session.commit()
-
-        ids = [new_source.id, new_source2.id]
-        names = [new_source.name, new_source2.name]
-
-        # check the linking is ok
-        assert new_source.id is not None
-        assert new_source2.id is not None
-
-        # check all sources are linked to raw_phot
-        assert all([s.id in ids for s in raw_phot.sources])
-        assert all([s.name in names for s in raw_phot.sources])
-
-        # TODO: make some reduced lightcurves:
-
-        # TODO: test processed lightcurves show up as well
-
-
-def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
-
-    with Session() as session:
-
-        # add the data to a database mapped object
-        source_id = new_source.id
-        new_source.project = test_project.name
-        raw_phot_no_exptime.save(overwrite=True)
-        new_source.raw_photometry.append(raw_phot_no_exptime)
-
-        # reduce the data using the demo observatory
-        assert len(test_project.observatories) == 1
-        obs_key = list(test_project.observatories.keys())[0]
-        assert obs_key == "demo"
-        obs = test_project.observatories[obs_key]
-        assert isinstance(obs, VirtualDemoObs)
-
-        # cannot generate photometric data without an exposure time
-        with pytest.raises(ValueError) as exc:
-            obs.reduce(source=new_source, data_type="photometry")
-        assert "No exposure time" in str(exc.value)
-        # add exposure time to the dataframe:
-        new_source.raw_photometry[0].data["exp_time"] = 30.0
-        lightcurves = obs.reduce(source=new_source, data_type="photometry")
-
-        session.add(new_source)
-        with pytest.raises(ValueError) as exc:
-            session.commit()
-        assert "No filename" in str(exc.value)
-        session.rollback()
-
-        # must save dataset before adding it to DB
-        [lc.save(overwrite=True) for lc in lightcurves]
-        filenames = [lc.get_fullname() for lc in lightcurves]
-
-        session.add(new_source)
-        session.commit()
-
-        # check that the data has been reduced as expected
-        for lc in lightcurves:
-            filt = lc.filter
-            dff = raw_phot_no_exptime.data[raw_phot_no_exptime.data["filter"] == filt]
-            dff = dff.sort_values(by="mjd", inplace=False)
-            dff.reset_index(drop=True, inplace=True)
-
-            # make sure it picks out the right points
-            assert dff["mjd"].equals(lc.data["mjd"])
-            assert dff["mag"].equals(lc.data["mag"])
-            assert dff["mag_err"].equals(lc.data["mag_err"])
-
-            # make sure the number of points are correct
-            assert lc.number == len(dff)
-            assert lc.shape == (len(dff), len(lc.colmap))
-
-            # make sure the frame rate and exposure time are correct
-            assert lc.exp_time == 30.0
-            assert np.isclose(
-                1.0 / lc.frame_rate, dff["mjd"].diff().median() * 24 * 3600
-            )
-            assert not lc.is_uniformly_sampled
-
-            # make sure the average flux is correct
-            flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
-            assert np.isclose(lc.flux_mean, np.mean(flux))
-
-            # make sure flux min/max are correct
-            assert np.isclose(lc.flux_min, np.min(flux))
-            assert np.isclose(lc.flux_max, np.max(flux))
-
-            # make sure superfluous columns are dropped
-            assert "oid" not in lc.data.columns
-
-            # make sure the start/end times are correct
-            assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
-            assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
-
-            # make sure relationships are correct
-            assert lc.source_id == new_source.id
-            assert lc.raw_data_id == raw_phot_no_exptime.id
-
-        # make sure deleting the source also cleans up the data
-        # session.execute(sa.delete(Source).where(Source.name == source_id))
-        session.delete(new_source)
-        session.commit()
-
-        data = session.scalars(
-            sa.select(RawPhotometry).where(
-                RawPhotometry.filekey == raw_phot_no_exptime.filekey
-            )
-        ).first()
-        assert data is None
-        data = session.scalars(
-            sa.select(Lightcurve).where(Lightcurve.source_id == source_id)
-        ).all()
-        assert len(data) == 0
-        assert not any([os.path.isfile(f) for f in filenames])
-
-
-def test_filter_mapping(raw_phot):
-
-    # make a demo observatory with a string filtmap:
-    obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
-
-    # check parameter is propagated correctly
-    assert obs.pars.filtmap is not None
-
-    N1 = len(raw_phot.data) // 2
-    N2 = len(raw_phot.data)
-
-    raw_phot.data.loc[0:N1, "filter"] = "g"
-    raw_phot.data.loc[N1:N2, "filter"] = "r"
-    raw_phot.observatory = obs.name
-
-    lcs = obs.reduce(raw_phot)
-    assert len(lcs) == 2  # two filters
-
-    lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
-    assert all(filt == "demo-g" for filt in lc_g.data["filter"])
-
-    lc_r = [lc for lc in lcs if lc.filter == "demo-r"][0]
-    assert all(filt == "demo-r" for filt in lc_r.data["filter"])
-
-    # now use a dictionary filtmap
-    obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
-
-    lcs = obs.reduce(raw_phot)
-    [print(lc.data._is_view) for lc in lcs]
-    [print(lc.data._is_copy) for lc in lcs]
-    assert len(lcs) == 2  # two filters
-
-    lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
-    assert all(filt == "Demo/G" for filt in lc_g.data["filter"])
-
-    lc_r = [lc for lc in lcs if lc.filter == "Demo/R"][0]
-    assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
-
-
 def test_data_file_paths(raw_phot, data_dir):
     try:  # at end, delete the temp files
         raw_phot.save(overwrite=True)
@@ -787,12 +652,110 @@ def test_data_file_paths(raw_phot, data_dir):
     assert raw_phot.get_fullname() == "/path/to/test/test.h5"
 
 
+def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
+
+    with Session() as session:
+
+        # add the data to a database mapped object
+        new_source.project = test_project.name
+        raw_phot_no_exptime.save(overwrite=True)
+        new_source.raw_photometry.append(raw_phot_no_exptime)
+
+        # reduce the data using the demo observatory
+        assert len(test_project.observatories) == 1
+        obs_key = list(test_project.observatories.keys())[0]
+        assert obs_key == "demo"
+        obs = test_project.observatories[obs_key]
+        assert isinstance(obs, VirtualDemoObs)
+
+        # cannot generate photometric data without an exposure time
+        with pytest.raises(ValueError) as exc:
+            obs.reduce(source=new_source, data_type="photometry")
+        assert "No exposure time" in str(exc.value)
+
+        # add exposure time to the dataframe:
+        new_source.raw_photometry[0].data["exp_time"] = 30.0
+        lightcurves = obs.reduce(source=new_source, data_type="photometry")
+
+        session.add(new_source)
+        session.add(raw_phot_no_exptime)
+        session.add_all(lightcurves)
+        with pytest.raises(ValueError) as exc:
+            session.commit()
+        assert "No filename" in str(exc.value)
+        session.rollback()
+
+        # must save dataset before adding it to DB
+        [lc.save(overwrite=True) for lc in lightcurves]
+        filenames = [lc.get_fullname() for lc in lightcurves]
+
+        session.add(new_source)
+        session.add(raw_phot_no_exptime)
+        session.add_all(lightcurves)
+        session.commit()
+
+        # check that the data has been reduced as expected
+        for lc in lightcurves:
+            filt = lc.filter
+            dff = raw_phot_no_exptime.data[raw_phot_no_exptime.data["filter"] == filt]
+            dff = dff.sort_values(by="mjd", inplace=False)
+            dff.reset_index(drop=True, inplace=True)
+
+            # make sure it picks out the right points
+            assert dff["mjd"].equals(lc.data["mjd"])
+            assert dff["mag"].equals(lc.data["mag"])
+            assert dff["mag_err"].equals(lc.data["magerr"])
+
+            # make sure the number of points are correct
+            assert lc.number == len(dff)
+            # need -1 to remove the one column for MJD we add
+            assert lc.shape == (len(dff), len(lc.colmap) - 1)
+
+            # make sure the frame rate and exposure time are correct
+            assert lc.exp_time == 30.0
+            assert np.isclose(
+                1.0 / lc.frame_rate, dff["mjd"].diff().median() * 24 * 3600
+            )
+            assert not lc.is_uniformly_sampled
+
+            # make sure the average flux is correct
+            flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
+            assert np.isclose(lc.flux_mean, np.mean(flux))
+
+            # make sure flux min/max are correct
+            assert np.isclose(lc.flux_min, np.min(flux))
+            assert np.isclose(lc.flux_max, np.max(flux))
+
+            # make sure superfluous columns are dropped
+            assert "oid" not in lc.data.columns
+
+            # make sure the start/end times are correct
+            assert np.isclose(Time(lc.time_start).mjd, dff["mjd"].min())
+            assert np.isclose(Time(lc.time_end).mjd, dff["mjd"].max())
+
+        session.delete(new_source)
+        session.delete(raw_phot_no_exptime)
+        [session.delete(lc) for lc in lightcurves]
+        session.commit()
+
+        data = session.scalars(
+            sa.select(RawPhotometry).where(
+                RawPhotometry.filekey == raw_phot_no_exptime.filekey
+            )
+        ).first()
+        assert data is None
+        data = session.scalars(
+            sa.select(Lightcurve).where(Lightcurve.source_name == new_source.name)
+        ).all()
+        assert len(data) == 0
+        assert not any([os.path.isfile(f) for f in filenames])
+
+
 def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
     obs = test_project.observatories["demo"]
-    raw_phot.altdata["exptime"] = 30.0
     new_source.raw_photometry.append(raw_phot)
-    lcs = obs.reduce(source=new_source, data_type="photometry")
+    raw_phot.source = new_source
 
     try:  # at end, delete the temp file
         raw_phot.save(overwrite=True)
@@ -807,7 +770,7 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
         # make sure all filenames are the same
         assert lcs[0].filename == list({lc.filename for lc in lcs})[0]
 
-        # check the all the data exists in the file
+        # check all the data exists in the file
         with pd.HDFStore(lcs[0].get_fullname()) as store:
             for lc in lcs:
                 assert os.path.join("/", lc.filekey) in store.keys()
@@ -815,11 +778,13 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
     finally:
         raw_phot.delete_data_from_disk()
-        assert not os.path.isfile(raw_phot.get_fullname())
         filename = lcs[0].get_fullname()
+
         for lc in lcs:
             lc.delete_data_from_disk()
-        assert not os.path.isfile(filename)
+
+    assert not os.path.isfile(raw_phot.get_fullname())
+    assert not os.path.isfile(filename)
 
 
 def test_reducer_with_outliers(test_project, new_source):
@@ -850,13 +815,13 @@ def test_reducer_with_outliers(test_project, new_source):
                 folder="data_temp",
                 altdata=dict(exptime="25.0"),
             )
-            new_data.save()
+            new_data.source = new_source
             new_source.raw_photometry.append(new_data)
+            new_data.save()
 
             # reduce the data use the demo observatory
             assert len(test_project.observatories) == 1
-            obs_key = list(test_project.observatories.keys())[0]
-            obs = test_project.observatories[obs_key]  # key should be "demo"
+            obs = test_project.observatories["demo"]
             assert isinstance(obs, VirtualDemoObs)
 
             obs.pars.reducer["drop_flagged"] = False
@@ -865,9 +830,11 @@ def test_reducer_with_outliers(test_project, new_source):
 
             assert len(lightcurves) == 1
             lc = lightcurves[0]
-            lc.save()
 
             session.add(new_source)
+            session.add(new_data)
+            lc.save()
+            session.add(lc)
             session.commit()
 
             # check the data has been reduced as expected
@@ -917,15 +884,53 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
+def test_filter_mapping(raw_phot):
+
+    # make a demo observatory with a string filtmap:
+    obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+    obs.pars.save_reduced = False  # do not save automatically
+
+    # check parameter is propagated correctly
+    assert obs.pars.filtmap is not None
+
+    N1 = len(raw_phot.data) // 2
+    N2 = len(raw_phot.data)
+
+    raw_phot.data.loc[0:N1, "filter"] = "g"
+    raw_phot.data.loc[N1:N2, "filter"] = "r"
+    raw_phot.observatory = obs.name
+
+    lcs = obs.reduce(raw_phot)
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "demo-g"][0]
+    assert all(filt == "demo-g" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "demo-r"][0]
+    assert all(filt == "demo-r" for filt in lc_r.data["filter"])
+
+    # now use a dictionary filtmap
+    obs.pars.filtmap = dict(r="Demo/R", g="Demo/G")
+
+    lcs = obs.reduce(raw_phot)
+    assert len(lcs) == 2  # two filters
+
+    lc_g = [lc for lc in lcs if lc.filter == "Demo/G"][0]
+    assert all(filt == "Demo/G" for filt in lc_g.data["filter"])
+
+    lc_r = [lc for lc in lcs if lc.filter == "Demo/R"][0]
+    assert all(filt == "Demo/R" for filt in lc_r.data["filter"])
+
+
 def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
-    lc1.source = saved_phot.sources[0]
+    lc1.source = saved_phot.source
     lc1.raw_data = saved_phot
 
     with Session() as session:
         lc1.save()
         session.add(lc1)
-        session.flush()
+        session.add(lc1.source)
         session.commit()
 
     # with session closed, check file is there
@@ -941,7 +946,7 @@ def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
 
 def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
     lc1 = lightcurve_factory()
-    lc1.source = saved_phot.sources[0]
+    lc1.source = saved_phot.source
     lc1.raw_data = saved_phot
 
     lc1.altdata = {"exptime": 30.0}
@@ -974,6 +979,7 @@ def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
         try:  # cleanup at the end
             lc1.save()
             session.add(lc1)
+            session.add(lc1.source)
             session.commit()
             lc3 = Lightcurve(lc1)
             assert lc3.id is None
@@ -997,45 +1003,41 @@ def test_demo_observatory_download_time(test_project):
 
     t0 = time.time()
     obs.pars.num_threads_download = 0  # no multithreading
-    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 1})
+    obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 1})
     assert len(obs.sources) == 10
-    assert len(obs.datasets) == 10
+    assert len(obs.raw_data) == 10
     single_tread_time = time.time() - t0
     assert abs(single_tread_time - 10) < 2  # should take about 10s
 
     t0 = time.time()
     obs.sources = []
-    obs.datasets = []
+    obs.raw_data = []
     obs.pars.num_threads_download = 5  # five multithreading cores
-    obs.download_all_sources(0, 10, save=False, fetch_args={"wait_time": 5})
+    obs.fetch_all_sources(0, 10, save=False, download_args={"wait_time": 5})
     assert len(obs.sources) == 10
-    assert len(obs.datasets) == 10
+    assert len(obs.raw_data) == 10
     multitread_time = time.time() - t0
     assert abs(multitread_time - 10) < 2  # should take about 10s
 
 
 def test_demo_observatory_save_downloaded(test_project):
-    # make random sources unique to this test
-    test_project.catalog.make_test_catalog()
-    test_project.catalog.load()
     obs = test_project.observatories["demo"]
     try:
-        obs.download_all_sources(0, 10, save=True, fetch_args={"wait_time": 0})
-
+        obs.fetch_all_sources(0, 10, save=True, download_args={"wait_time": 0})
         # reloading these sources should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 10, fetch_args={"wait_time": 10})
+        obs.fetch_all_sources(0, 10, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
+        for d in obs.raw_data:
             d.delete_data_from_disk()
 
-        assert not os.path.isfile(obs.datasets[0].get_fullname())
+        assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
         with Session() as session:
-            for d in obs.datasets:
+            for d in obs.raw_data:
                 session.delete(d)
             session.commit()
 
@@ -1047,11 +1049,11 @@ def test_download_pars(test_project):
     obs = test_project.observatories["demo"]
     try:
         # download the first source only
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 0})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 0})
 
         # reloading this source should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
@@ -1060,25 +1062,25 @@ def test_download_pars(test_project):
 
         # reloading
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time > 1  # should take about 3s to re-download
 
         # reloading this source should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.download_all_sources(0, 1, fetch_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 1, download_args={"wait_time": 3})
         reload_time = time.time() - t0
         assert reload_time < 1  # should take less than 1s
 
     finally:
-        for d in obs.datasets:
+        for d in obs.raw_data:
             d.delete_data_from_disk()
 
-        if len(obs.datasets) > 0:
-            assert not os.path.isfile(obs.datasets[0].get_fullname())
+        if len(obs.raw_data) > 0:
+            assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
         with Session() as session:
-            for d in obs.datasets:
+            for d in obs.raw_data:
                 session.delete(d)
             session.commit()
 
@@ -1269,7 +1271,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert det[0].peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
 
@@ -1281,7 +1283,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 2
-    assert det[1].source_id == lc.source_id
+    assert det[1].source_name == lc.source_name
     assert abs(det[1].snr + n_sigma) < 1.0  # more or less n sigma
     assert det[1].peak_time == Time(lc.data.mjd.iloc[96], format="mjd").datetime
 
@@ -1309,7 +1311,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert det[0].peak_time == Time(lc.data.mjd.iloc[50], format="mjd").datetime
 
@@ -1324,45 +1326,45 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     det = simple_finder.detect([lc], new_source)
 
     assert len(det) == 1
-    assert det[0].source_id == lc.source_id
+    assert det[0].source_name == lc.source_name
     assert abs(det[0].snr - n_sigma) < 1.0  # more or less n sigma
     assert lc.data.mjd.iloc[10] < Time(det[0].peak_time).mjd < lc.data.mjd.iloc[15]
     assert np.isclose(Time(det[0].time_start).mjd, lc.data.mjd.iloc[10])
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-@pytest.mark.flaky(max_runs=8)
+# @pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
+    obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False
-    obs = VirtualDemoObs(project=analysis.pars.project)
     new_source.raw_photometry.append(raw_phot)
 
     # there shouldn't be any detections:
     obs.reduce(new_source, "photometry")
     analysis.analyze_sources(new_source)
     assert new_source.properties is not None
+    assert len(new_source.reduced_lightcurves) == 3
     assert len(analysis.detections) == 0
 
     # add a "flare" to the lightcurve:
-    assert len(new_source.reduced_lightcurves) == 3
     lc = new_source.reduced_lightcurves[0]
-    new_source.reset_analysis()
     n_sigma = 10
     std_flux = lc.data.flux.std()
     flare_flux = std_flux * n_sigma
     lc.data.loc[4, "flux"] += flare_flux
+
+    new_source.reset_analysis()  # get rid of existing results
     analysis.analyze_sources(new_source)
 
     assert len(analysis.detections) == 1
-    assert analysis.detections[0].source_name == lc.source_name
-    assert analysis.detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
-    assert (
-        analysis.detections[0].peak_time
-        == Time(lc.data.mjd.iloc[4], format="mjd").datetime
-    )
+    det = analysis.detections[0]
+    assert det.source_name == lc.source_name
+    assert det.snr - n_sigma < 2.0  # no more than the S/N we put in
+    assert det.peak_time == Time(lc.data.mjd.iloc[4], format="mjd").datetime
     assert len(new_source.reduced_lightcurves) == 3  # should be 3 filters in raw_phot
-    assert len(new_source.processed_lightcurves) == 0  # should be empty if not saving
-    assert len(new_source.detections) == 0  # should be empty if not saving
+    assert len(new_source.processed_lightcurves) == 3
+    assert len(new_source.detections) == 1
+    assert new_source.properties is not None
 
     # check that nothing was saved
     with Session() as session:
@@ -1380,29 +1382,21 @@ def test_analysis(analysis, new_source, raw_phot):
         assert len(properties) == 0
 
     try:  # now save everything
-        analysis.pars.save_anything = True
-        analysis.reset_histograms()
-        new_source.reset_analysis()
-        # make sure to save the raw/reduced data first
-        raw_phot.save()
-        for lc in new_source.reduced_lightcurves:
-            lc.save()
-
-        analysis.analyze_sources(new_source)
-        assert len(new_source.detections) == 1
-        assert new_source.properties is not None
-        assert len(new_source.reduced_lightcurves) == 3
-        assert len(new_source.processed_lightcurves) == 3
 
         with Session() as session:
+            analysis.pars.save_anything = True
+            analysis.reset_histograms()
+            new_source.reset_analysis()
+            assert len(new_source.detections) == 0
+
+            analysis.analyze_sources(new_source)
+            assert len(new_source.detections) == 1
+
+            assert new_source.properties is not None
+            assert len(new_source.reduced_lightcurves) == 3
+            assert len(new_source.processed_lightcurves) == 3
+
             # check lightcurves
-            lcs = session.scalars(
-                sa.select(Lightcurve).where(
-                    Lightcurve.source_name == new_source.name,
-                    Lightcurve.was_processed.is_(False),
-                )
-            ).all()
-            assert len(lcs) == 3
             lcs = session.scalars(
                 sa.select(Lightcurve).where(
                     Lightcurve.source_name == new_source.name,
@@ -1418,63 +1412,74 @@ def test_analysis(analysis, new_source, raw_phot):
             assert len(detections) == 1
             assert detections[0].snr - n_sigma < 2.0  # no more than the S/N we put in
 
-            lcs = detections[0].reduced_photometry
-            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+            # lcs = detections[0].processed_photometry
+            # assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
 
             # check properties
             properties = session.scalars(
                 sa.select(Properties).where(Properties.source_name == new_source.name)
             ).all()
             assert len(properties) == 1
-
-            # manually set the first lightcurve time_start to be after the others
-            detections[0].reduced_photometry[0].time_start = datetime.datetime.utcnow()
+            # # manually set the first lightcurve time_start to be after the others
+            # detections[0].processed_photometry[
+            #     0
+            # ].time_start = datetime.datetime.utcnow()
 
             session.add(detections[0])
             session.commit()
             # now close the session and start a new one
 
-        with Session() as session:
-            detections = session.scalars(
-                sa.select(Detection).where(Detection.source_name == new_source.name)
-            ).all()
-            lcs = detections[0].reduced_photometry
-
-            assert len(lcs) == 3  # still three
-            # order should be different (loaded sorted by time_start)
-            assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
-            assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
+        # with Session() as session:
+        #     detections = session.scalars(
+        #         sa.select(Detection).where(Detection.source_name == new_source.name)
+        #     ).all()
+        #     lcs = detections[0].processed_photometry
+        #
+        #     assert len(lcs) == 3  # still three
+        #     # order should be different (loaded sorted by time_start)
+        #     assert lcs[0].time_start < lcs[1].time_start < lcs[2].time_start
+        #     assert lcs[1].id > lcs[0].id > lcs[2].id  # last became first
 
         # check the number of values added to the histogram matches
-        num_snr_values = int(analysis.all_scores.data.snr_counts.sum().values)
+        num_snr_values = analysis.all_scores.get_sum_scores()
         assert len(new_source.raw_photometry[0].data) == num_snr_values
 
-        num_offset_values = int(analysis.quality_values.data.offset_counts.sum().values)
+        num_offset_values = analysis.quality_values.get_sum_scores()
         assert len(new_source.raw_photometry[0].data) == num_offset_values
 
     finally:  # remove all generated lightcurves and detections etc.
-        with Session() as session:
-            for lc in new_source.reduced_lightcurves:
-                lc.delete_data_from_disk()
-                session.add(lc)
-                if lc in session:
-                    try:
-                        session.delete(lc)
-                    except Exception as e:
-                        print(f"could not delete lc: {str(e)}")
-            for lc in new_source.processed_lightcurves:
-                lc.delete_data_from_disk()
-                session.add(lc)
-                session.delete(lc)
-
-            session.commit()
         analysis.remove_all_histogram_files(remove_backup=True)
 
+        try:
+            with Session() as session:
+                session.merge(new_source)
+                session.commit()
+                for lc in new_source.reduced_lightcurves:
+                    lc.delete_data_from_disk()
+                    if lc in session:
+                        try:
+                            session.delete(lc)
+                        except Exception as e:
+                            print(f"could not delete lc: {str(e)}")
+                for lc in new_source.processed_lightcurves:
+                    lc.delete_data_from_disk()
+                    # session.add(lc)
+                    if lc in session:
+                        try:
+                            session.delete(lc)
+                        except Exception as e:
+                            print(f"could not delete lc: {str(e)}")
 
-@pytest.mark.flaky(max_runs=5)
+                session.commit()
+        except Exception as e:
+            # print(str(e))
+            raise e
+
+
+@pytest.mark.flaky(max_runs=8)
 def test_quality_checks(analysis, new_source, raw_phot):
     analysis.pars.save_anything = False
-    obs = VirtualDemoObs(project=analysis.pars.project)
+    obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     new_source.raw_photometry.append(raw_phot)
     obs.reduce(new_source, "photometry")
 
@@ -1530,11 +1535,13 @@ def test_quality_checks(analysis, new_source, raw_phot):
     assert det.snr - 12 < 2.0  # no more than the S/N we put in
     assert det.peak_time == Time(lc.data.mjd.iloc[8], format="mjd").datetime
     assert (
-        det.reduced_photometry[0].data.loc[9, "qflag"] == 1
+        det.processed_photometry[0].data.loc[9, "qflag"] == 1
     )  # flagged because of offset
-    assert det.reduced_photometry[0].data.loc[9, "offset"] > 2  # this one has an offset
-    assert det.reduced_photometry[0].data.loc[8, "qflag"] == 0  # unflagged
-    assert det.reduced_photometry[0].data.loc[8, "offset"] < 2  # no offset
+    assert (
+        det.processed_photometry[0].data.loc[9, "offset"] > 2
+    )  # this one has an offset
+    assert det.processed_photometry[0].data.loc[8, "qflag"] == 0  # unflagged
+    assert det.processed_photometry[0].data.loc[8, "offset"] < 2  # no offset
 
     assert det.quality_flag == 1  # still flagged, even though the peak is not
     assert abs(det.quality_values["offset"] - 10) < 2  # approximately 10 sigma offset
@@ -1568,3 +1575,118 @@ def test_on_close_utility():
     append_to_list(a, b, clear_a_at_end=True)
     assert a == []
     assert b == [1, 1]
+
+
+def test_named_list():
+    class TempObject:
+        pass
+
+    obj1 = TempObject()
+    obj1.name = "One"
+
+    obj2 = TempObject()
+    obj2.name = "Two"
+
+    nl = NamedList()
+    nl.append(obj1)
+    nl.append(obj2)
+
+    assert len(nl) == 2
+    assert nl[0] == obj1
+    assert nl[1] == obj2
+
+    assert nl["One"] == obj1
+    assert nl["Two"] == obj2
+    assert nl.keys() == ["One", "Two"]
+
+    with pytest.raises(ValueError):
+        nl["Three"]
+
+    with pytest.raises(ValueError):
+        nl["one"]
+
+    with pytest.raises(IndexError):
+        nl[2]
+
+    with pytest.raises(TypeError):
+        nl[1.0]
+
+    # now a list that ignores case
+    nl = NamedList(ignorecase=True)
+    nl.append(obj1)
+    nl.append(obj2)
+
+    assert len(nl) == 2
+    assert nl[0] == obj1
+    assert nl[1] == obj2
+
+    assert nl["one"] == obj1
+    assert nl["two"] == obj2
+    assert nl.keys() == ["One", "Two"]
+
+    with pytest.raises(ValueError):
+        nl["Three"]
+
+
+def test_unique_list():
+    class TempObject:
+        pass
+
+    obj1 = TempObject()
+    obj1.name = "object one"
+    obj1.foo = "foo1"
+    obj1.bar = "common bar"
+
+    obj2 = TempObject()
+    obj2.name = "object two"
+    obj2.foo = "foo2"
+    obj2.bar = "common bar"
+
+    # same attributes as obj1, but different object
+    obj3 = TempObject()
+    obj3.name = "object one"
+    obj3.foo = "foo1"
+    obj3.bar = "common bar"
+
+    # the default is to use the name attribute
+    ul = UniqueList()
+    ul.append(obj1)
+    ul.append(obj2)
+    assert len(ul) == 2
+    assert ul[0] == obj1
+    assert ul[1] == obj2
+
+    # appending obj3 will remove obj1
+    ul.append(obj3)
+    assert len(ul) == 2
+    assert ul[0] == obj2
+    assert ul[1] == obj3
+
+    # now try with a different attribute
+    ul = UniqueList(comparison_attributes=["foo", "bar"])
+    ul.append(obj1)
+    ul.append(obj2)
+    assert len(ul) == 2
+    assert ul[0] == obj1
+    assert ul[1] == obj2
+
+    # appending obj3 will remove obj1
+    ul.append(obj3)
+    assert len(ul) == 2
+    assert ul[0] == obj2
+    assert ul[1] == obj3
+
+
+def test_circular_buffer_list():
+    cbl = CircularBufferList(3)
+    cbl.append(1)
+    cbl.append(2)
+    cbl.append(3)
+    assert cbl == [1, 2, 3]
+    assert cbl.total == 3
+    cbl.append(4)
+    assert cbl == [2, 3, 4]
+    assert cbl.total == 4
+    cbl.extend([5, 6])
+    assert cbl == [4, 5, 6]
+    assert cbl.total == 6

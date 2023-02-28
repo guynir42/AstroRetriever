@@ -65,6 +65,12 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the score axes",
         )
+        self.score_names = self.add_par(
+            "score_names",
+            None,
+            (list, None),
+            "Use only these scores (if None, use all)",
+        )
 
         default_source_coords = {
             "mag": (15, 21, 0.5),
@@ -75,6 +81,7 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the source axes",
         )
+        # TODO: we could consider adding a source_names parameter
 
         default_obs_coords = {
             "exptime": (30, 1),
@@ -86,6 +93,7 @@ class ParsHistogram(Parameters):
             dict,
             "Coordinate specs for the observation axes",
         )
+        # TODO: we could consider adding an obs_names parameter
 
         self.raise_on_repeat_source = self.add_par(
             "raise_on_repeat_source",
@@ -97,11 +105,15 @@ class ParsHistogram(Parameters):
 
         self._enforce_no_new_attrs = True
 
+        self.load_then_update(kwargs)
+
     def __setattr__(self, key, value):
         if key == "dtype" and value not in ("uint16", "uint32"):
             raise ValueError(
                 f"Unsupported dtype: {value}, " f"must be uint16 or uint32."
             )
+        if key in ["score_coords", "source_coords", "obs_coords"]:
+            value = {k: list(v) for k, v in value.items()}
 
         super().__setattr__(key, value)
 
@@ -186,10 +198,14 @@ class Histogram:
 
         self.pars = ParsHistogram(**kwargs)
         self.data = None
+        self.source_names = set()
 
         if can_initialize:
             self.initialize()
 
+    # TODO: remove this function as we don't want to remove
+    #  the score coordinates from the pars, as it will be
+    #  written that way to the output config file.
     def pick_out_coords(self, names, input_type="score"):
         """
         Pick only a subset of the coordinate specs based
@@ -252,6 +268,11 @@ class Histogram:
         coords = {}
         for input_ in ("score", "source", "obs"):
             for k, v in getattr(self.pars, f"{input_}_coords").items():
+                # if we have a names override, only use those names
+                names = getattr(self.pars, f"{input_}_names", None)
+                if names is not None and k not in names:
+                    continue
+
                 coords[k] = self._create_coordinate(k, v)
                 coords[k].attrs["input"] = input_
 
@@ -276,7 +297,8 @@ class Histogram:
         if self.name is not None:
             self.data.attrs["name"] = self.name
 
-        self.data.attrs["source_names"] = set()
+        self.data.attrs["source_names"] = []
+        self.source_names = set()
 
         if self.output_folder is None:
             self.output_folder = os.getcwd()
@@ -297,11 +319,11 @@ class Histogram:
         name: str
             The name of the coordinate.
         specs:
-            A tuple of (start, stop, step) for a fixed range,
-            or an empty tuple or a 2-tuple (start, step) for a dynamic range.
+            A tuple/list of (start, stop, step) for a fixed range,
+            or an empty tuple/list or a 2-tuple/list (start, step) for a dynamic range.
             An extra last element can be given as a string
             to specify the units of the coordinate.
-            In that case the tuple will be (start, stop, step, units)
+            In that case the tuple/list will be (start, stop, step, units)
             or (start, step, units) or (units).
 
         Returns
@@ -459,6 +481,24 @@ class Histogram:
 
         return total_size / unit_convert_bytes(units)
 
+    def get_sum_scores(self):
+        """
+        Get the sum of all the scores in the histogram.
+
+        Returns
+        -------
+        dict
+            A dictionary with the sum of each score.
+        """
+        score = self.pars.score_names[0]
+        sums = int(self.data[f"{score}_counts"].sum().values)
+        for coord in self.data.coords:
+            sums += int(self.data[coord].attrs.get("overflow", 0))
+            sums += int(self.data[coord].attrs.get("underflow", 0))
+            # TODO: what about a NaNs count?
+
+        return sums
+
     def add_data(self, *args, **kwargs):
         """
         Input a dataframe, and other possible objects
@@ -470,8 +510,11 @@ class Histogram:
         or if some of the columns contain unique values,
         those scalar values will be used to slice into
         the histogram, and speed up the binning process.
-        All the other values will be binned using ...
-        # TODO: finish description
+        All the other values will be binned using
+        np.histogramdd, with the assumption that each
+        data point goes into the bin based on being
+        closest to the center of the bin
+        (i.e., we keep track of bin centers, not edges).
 
         Parameters
         ----------
@@ -483,7 +526,13 @@ class Histogram:
 
         kwargs:
             Additional arguments to pass to the binning function.
-            Currently there are no additional arguments.
+            Optional keywords are:
+            - source_name: add the source name to the list of sources
+              that have already been added to the histogram. This is
+              a shortcut for using add_source_name().
+              Sources that have already been added would either be ignored
+              in subsequent calls to add_data(), or would raise an exception
+              if pars.raise_on_repeat_source is True.
         """
         # input data is a dictionary with a key for each axis,
         # and each value is a scalar or an array of values.
@@ -494,13 +543,16 @@ class Histogram:
         # check if source is already in the histogram
         for arg in args:
             if isinstance(arg, Source):
-                if arg.name in self.data.attrs["source_names"]:
+                if arg.name in self.source_names:
                     if self.pars.raise_on_repeat_source:
                         raise ValueError(
                             f"Source {arg.name} already exists in histogram"
                         )
                     else:
                         return  # quietly exit without adding the data
+                # this doesn't work because we often add multiple LCs from the same source:
+                # else:
+                #     self.source_names.add(arg.name)
 
         # go over args and see if any objects
         # have attributes that match one of the axes.
@@ -510,7 +562,8 @@ class Histogram:
                 values = None
                 if hasattr(obj, "__contains__") and axis in obj:
                     values = obj[axis]
-                elif hasattr(obj, axis):
+                elif hasattr(obj, axis) and not isinstance(obj, pd.DataFrame):
+                    # only get this attribute if it isn't e.g., "filter"
                     values = getattr(obj, axis)
 
                 if values is not None:
@@ -564,7 +617,7 @@ class Histogram:
             ):
                 if not set(input_data[axis]).issubset(self.data.coords[axis].values):
                     self._expand_axis(axis, input_data[axis])
-            else:
+            else:  # array of numbers
                 mx = max(self.data[axis] + self.data[axis].attrs["step"] / 2)
                 mn = min(self.data[axis] - self.data[axis].attrs["step"] / 2)
                 if hasattr(input_data[axis], "__len__"):
@@ -687,6 +740,21 @@ class Histogram:
                                 num_values_to_add * correction
                             )
 
+        if "source_name" in kwargs:
+            self.add_source_name(kwargs["source_name"])
+
+    def add_source_name(self, source_name):
+        """
+        Add a source name to the list of source names.
+
+        Parameters
+        ----------
+        source_name : str
+            Name of the source to add to the list of source names.
+        """
+        if source_name not in self.source_names:
+            self.source_names.add(source_name)
+
     def _expand_axis(self, axis, new_values):
         """
         Expand the axis to include the new values.
@@ -738,18 +806,19 @@ class Histogram:
                 mx = round(mx / step) * step  # round to nearest step
                 mn = min(min(new_values), min(self.data[axis].values))
                 mn = round(mn / step) * step  # round to nearest step
-
                 # the new values up to the original axis
                 lower = np.arange(mn, min(self.data[axis]), step)
-                if np.isclose(lower[-1], min(self.data[axis])):
-                    lower = lower[:-1]
+                new_coord = self.data[axis]
+                if len(lower) > 0:
+                    if np.isclose(lower[-1], min(self.data[axis])):
+                        lower = lower[:-1]
 
-                new_coord = np.concatenate((lower, self.data[axis]))
+                    new_coord = np.concatenate((lower, new_coord))
 
                 # the new values after the original axis
                 upper = np.arange(max(new_coord) + step, mx + step, step)
-
-                new_coord = np.concatenate((new_coord, upper))
+                if len(upper) > 0:
+                    new_coord = np.concatenate((new_coord, upper))
 
         # make a new array with all the same coords,
         # except replace the one axis with the new coord
@@ -845,20 +914,22 @@ class Histogram:
             parameters = json.loads(data.attrs["pars"])
             h.pars = ParsHistogram(**parameters)
         if "source_names" in data.attrs:
-            data.attrs["source_names"] = set(data.attrs["source_names"])
+            if isinstance(data.attrs["source_names"], list):
+                names = data.attrs["source_names"]
+            else:
+                names = [data.attrs["source_names"]]
+            h.source_names = set(names)
 
         h.output_folder = folder
         h.data = data
 
         return h
 
-    def load(self, suffix=None):
+    def get_fullname(self, suffix=None):
         """
-        Load the data from the file.
-        If suffix is given, will add that to the
-        filename, after the extension
-        (e.g., "histograms_all_score.nc.temp")
+        Get the name (path included) of the file associated with this histogram.
         """
+
         filename = "histograms"
         if self.name is not None:
             filename += f"_{self.name}"
@@ -870,6 +941,17 @@ class Histogram:
             filename += suffix
 
         fullname = os.path.join(self.output_folder, filename)
+
+        return fullname
+
+    def load(self, suffix=None):
+        """
+        Load the data from the file.
+        If suffix is given, will add that to the
+        filename, after the extension
+        (e.g., "histograms_all_score.nc.temp")
+        """
+        fullname = self.get_fullname(suffix=suffix)
         if os.path.exists(fullname):
             with xr.open_dataset(fullname) as ds:
                 self.data = ds.load()
@@ -882,7 +964,11 @@ class Histogram:
                 self.pars = ParsHistogram(**parameters)
 
             if "source_names" in self.data.attrs:
-                self.data.attrs["source_names"] = set(self.data.attrs["source_names"])
+                if isinstance(self.data.attrs["source_names"], list):
+                    names = self.data.attrs["source_names"]
+                else:
+                    names = [self.data.attrs["source_names"]]
+                self.source_names = set(names)
 
     def save(self, suffix=None):
         """
@@ -891,41 +977,27 @@ class Histogram:
         filename, after the extension
         (e.g., "histograms_all_score.nc.temp")
         """
-        filename = "histograms"
-        if self.name is not None:
-            filename += f"_{self.name}"
-        filename += ".nc"
 
-        if suffix is not None:
-            if not suffix.startswith("."):
-                suffix = "." + suffix
-            filename += suffix
-
+        fullname = self.get_fullname(suffix=suffix)
         # netCDF files can't store dicts, must convert to string
         self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
-        self.data.attrs["source_names"] = list(self.data.attrs["source_names"])
-        self.data.to_netcdf(os.path.join(self.output_folder, filename), mode="w")
+        self.data.attrs["source_names"] = list(self.source_names)
+        self.data.to_netcdf(fullname, mode="w")
 
-    def remove_data_from_file(self, suffix=None):
+    def remove_data_from_file(self, suffix=None, remove_backup=False):
         """
         Save the data to the file.
         If suffix is given, will add that to the
         filename, after the extension
         (e.g., "histograms_all_score.nc.temp")
         """
-        filename = "histograms"
-        if self.name is not None:
-            filename += f"_{self.name}"
-        filename += ".nc"
-
-        if suffix is not None:
-            if not suffix.startswith("."):
-                suffix = "." + suffix
-            filename += suffix
-
-        fullname = os.path.join(self.output_folder, filename)
+        fullname = self.get_fullname(suffix=suffix)
         if os.path.exists(fullname):
             os.remove(fullname)
+        if remove_backup:
+            backup = fullname + ".backup"
+            if os.path.exists(backup):
+                os.remove(backup)
 
     def help(self=None, owner_pars=None):
         """

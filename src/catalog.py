@@ -48,21 +48,21 @@ class ParsCatalog(Parameters):
         )
         self.pm_ra_column = self.add_par(
             "pm_ra_column",
-            "pmra",
-            str,
+            None,
+            [None, str],
             "Name of the column with source proper motion "
             "in right ascension (times cos declination)",
         )
         self.pm_dec_column = self.add_par(
             "pm_dec_column",
-            "pmdec",
-            str,
+            None,
+            [None, str],
             "Name of the column with source proper motion in declination",
         )
         self.parallax_column = self.add_par(
             "parallax_column",
-            "parallax",
-            str,
+            None,
+            [None, str],
             "Name of the column with source parallax",
         )
         self.mag_column = self.add_par(
@@ -160,6 +160,9 @@ class ParsCatalog(Parameters):
             self.mag_column = "mag"
             self.mag_error_column = "magerr"
             self.mag_filter_name = "R"
+            self.pm_ra_column = None
+            self.pm_dec_column = None
+            self.parallax_column = None
             self.filename = "test.csv"
         elif default in ("wd", "wds", "white dwarf", "white_dwarfs"):
             self.catalog_name = "Gaia eDR3 white dwarfs"
@@ -185,6 +188,7 @@ class ParsCatalog(Parameters):
             self.mag_filter_name = "Gaia_G"
             self.pm_ra_column = "pmra"
             self.pm_dec_column = "pmdec"
+            self.parallax_column = "parallax"
             self.catalog_observation_year = 2016.5
 
     def __setattr__(self, key, value):
@@ -239,6 +243,7 @@ class Catalog:
         self.inverse_name_index = None
         self.names = None
         self.cat_hash = None
+        self.cfg_hash = None
 
     def __len__(self):
         return len(self.data)
@@ -416,24 +421,30 @@ class Catalog:
         c = Catalog(name=self.pars.catalog_name + "_small")
         c.pars = self.pars.copy()
         c.data = self.get_data_slice(idx)
-
+        c._make_inverse_index()
         return c
 
-    def get_all_sources(self, session=None):
+    def get_all_sources(self, session=None, project=None):
         """
         Get all sources in the catalog that have a
         corresponding row in the database.
 
         """
-        # TODO: add cfg_hash to this
-        names = [str(name) for name in self.data[self.pars.name_column]]
 
-        stmt = sa.select(Source).where(Source.name.in_(names))
-
+        if project is None:
+            project = self.pars.project
+        hash = self.cfg_hash if self.cfg_hash is not None else ""
         if session is None:
             session = Session()
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
+
+        names = [str(name) for name in self.data[self.pars.name_column]]
+
+        stmt = sa.select(Source).where(
+            Source.name.in_(names), Source.project == project, Source.cfg_hash == hash
+        )
+
         sources = session.scalars(stmt).all()
 
         return sources
@@ -593,7 +604,7 @@ class Catalog:
         if index_type == "number":
             idx = int(loc)
         elif index_type == "name":
-            idx = int([self.get_index_from_name(loc)])
+            idx = int(self.get_index_from_name(loc))
         else:
             raise ValueError('index_type must be "number" or "name"')
 
@@ -696,6 +707,8 @@ class Catalog:
         dec = row[self.pars.dec_column]
         pm_ra = row[self.pars.pm_ra_column] if self.pars.pm_ra_column else 0.0
         pm_dec = row[self.pars.pm_dec_column] if self.pars.pm_dec_column else 0.0
+        parallax = row[self.pars.parallax_column] if self.pars.parallax_column else 0.0
+        dist = Distance(parallax=parallax * u.mas) if parallax > 0.0 else 0.0 * u.pc
 
         coords = SkyCoord(
             ra=ra * u.deg,
@@ -706,7 +719,7 @@ class Catalog:
             ),  # reference epoch for Gaia DR3
             pm_ra_cosdec=pm_ra * u.mas / u.yr,
             pm_dec=pm_dec * u.mas / u.yr,
-            distance=Distance(parallax=row[self.pars.parallax_column] * u.mas),
+            distance=dist,
         )
         if obstime is not None:
             if isinstance(obstime, (str, int, float)):
