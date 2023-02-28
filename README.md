@@ -52,7 +52,7 @@ pytest
 
 #### Data folder
 
-Raw data folder should be set up with the environment variable `VO_DATA`.
+Raw data folder should be set up with the environment variable `RETRIEVER_DATA`.
 This folder should be on a drive with enough space to contain the raw data.
 Internally, the `DATA_ROOT` variable in `src/dataset.py` can be modified
 to temporarily save data to other places (e.g., for testing):
@@ -109,7 +109,7 @@ skipping the sources and files it has already completed.
 
 Raw data is downloaded from separate surveys,
 and is saved under the `DATA_ROOT` folder,
-(by default this is given by the environmental variable `VO_DATA`).
+(by default this is given by the environmental variable `RETRIEVER_DATA`).
 Under that folder data is saved in a separate folder for each observatory
 (observatory names are pushed to upper case when used in folder names).
 For example, saving data from ZTF will put the raw
