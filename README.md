@@ -1,4 +1,4 @@
-# virtualobserver
+# AstroRetriever
 
 A package used for downloading and processing images from various astronomical surveys.
 
@@ -17,7 +17,7 @@ sudo apt install postgresql libpq-dev
 Download the code from github:
 
 ```commandline
-git clone https://github.com/guynir42/virtualobserver.git
+git clone https://github.com/guynir42/AstroRetriever.git
 ```
 
 To develop and contribute to this repo,
@@ -28,7 +28,7 @@ on the GitHub page, then clone your fork to your local machine
 Generate a virtual environment and install the required python packages:
 
 ```commandline
-cd virtualobserver/
+cd AstroRetriever/
 virtualenv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -36,7 +36,7 @@ pip install -r requirements.txt
 
 Virtual environments can be deactivated using `deactivate`.
 To re-activate the environment, use `source venv/bin/activate`,
-inside the `virtualobserver` directory.
+inside the `AstroRetriever` directory.
 This makes sure that the code uses the specific versions of the packages
 given by the `requirements.txt` file.
 
@@ -64,7 +64,7 @@ dataset.DATA_ROOT = "/path/to/data/folder"
 
 #### Additional folders:
 
-You may want to generate folders for `catalogs` and `configs` in the root `virtualobserver` directory.
+You may want to generate folders for `catalogs` and `configs` in the root `AstroRetriever` directory.
 These folder may be generated automatically.
 
 ## Architecture
@@ -100,7 +100,7 @@ Examples for storing and retrieving data products:
   which is loaded into a multidimensional `xarray` when needed.
 
 Data that is saved to disk is automatically retrieved
-by `virtualobserver` so that each call to a method like
+by `AstroRetriever` so that each call to a method like
 `run()` on the project object or `fetch_all_sources()`
 on the observatory object will continue from where it left off,
 skipping the sources and files it has already completed.
@@ -226,7 +226,7 @@ When disabled, the output folder will just be named
 by the project name, and the content in it could be
 outdated if the code/parameters were changed.
 This is useful for exploratory analysis.
-Note that `virtualobserver` will quietly re-use
+Note that `AstroRetriever` will quietly re-use
 existing data products even if changes were made
 to the code or parameters, so if version control is
 disabled, the user must be responsible for clearing
@@ -300,7 +300,7 @@ Data class objects are how we store outputs from the pipeline and quickly query 
   There are one or more `RawPhotometry` objects associated with each `Source`, one per observatory.
   Raw data is saved once per observatory, and can be reused in different projects (if they share sources).
   If the source has no data for an observatory, it must still have a `RawPhotometry` object,
-  with `is_empty=True`, and an empty dataframe on disk. This allows `virtualobserver` to check if
+  with `is_empty=True`, and an empty dataframe on disk. This allows `AstroRetriever` to check if
   a source has already been downloaded (even if no data was returned, it still counts as "downloaded").
 - `Lightcurve`: a set of time vs. flux measurements for a single object. Inherits from `DatasetMixin`.
   There are zero or more `Lightcurve` objects for each `Source`.
@@ -461,7 +461,7 @@ The last method may require some re-initialization for some objects.
 
 ### Using custom code and arguments
 
-The analysis pipeline given as default by `virtualobserver` is rather limited.
+The analysis pipeline given as default by `AstroRetriever` is rather limited.
 It calculates the S/N and searches for single-epoch detections.
 More complicated analysis can be used by changing the parameters or by adding custom code
 as subclasses where some methods are overwritten.
