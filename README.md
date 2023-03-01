@@ -1,5 +1,3 @@
-# AstroRetriever
-
 ![Astro Retriever](images/logo.png?raw=true)
 
 A customizable package for downloading and processing images
@@ -91,6 +89,16 @@ Each of these steps uses parameters that are stored in a configuration file.
 Each of these steps produces data products that are saved in a way that is easy
 to retrieve from disk and to continue the workflow without having to redo previous steps.
 We use several modes of persistence, and objects that lazy load the content from disk when needed.
+
+### Quick start
+
+#### Using an observatory to download data
+
+#### Using a catalog
+
+#### Getting all sources and raw data from catalog
+
+#### Using light curves on sources
 
 ### Persistence of data
 
