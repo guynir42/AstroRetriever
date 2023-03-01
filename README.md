@@ -1,6 +1,9 @@
 # AstroRetriever
 
-A package used for downloading and processing images from various astronomical surveys.
+![Astro Retriever](images/logo.png?raw=true)
+
+A customizable package for downloading and processing images
+from various astronomical surveys.
 
 ## Installation
 
@@ -52,7 +55,7 @@ pytest
 
 #### Data folder
 
-Raw data folder should be set up with the environment variable `RETRIEVER_DATA`.
+The raw data folder should be defined using an environment variable `RETRIEVER_DATA`.
 This folder should be on a drive with enough space to contain the raw data.
 Internally, the `DATA_ROOT` variable in `src/dataset.py` can be modified
 to temporarily save data to other places (e.g., for testing):
@@ -64,7 +67,8 @@ dataset.DATA_ROOT = "/path/to/data/folder"
 
 #### Additional folders:
 
-You may want to generate folders for `catalogs` and `configs` in the root `AstroRetriever` directory.
+You may want to generate folders for `catalogs` and `configs`
+in the root `AstroRetriever` directory.
 These folder may be generated automatically.
 
 ## Architecture
@@ -77,10 +81,11 @@ originating in various astronomical surveys.
 
 The workflow is as follows:
 
-1. Choose a list of targets based on some criteria from a catalog (e.g. Gaia).
+1. Choose a list of targets based on some criteria from a catalog (e.g., Gaia).
 2. Download images or photometry from one or more surveys.
 3. Reduce the raw data into a format where data is uniform enough to be used in analysis.
-4. Run analysis on the data and save the results per source, and some statistics on the data as a whole.
+4. Run analysis on the data and save the results per source,
+   and some statistics on the data as a whole.
 
 Each of these steps uses parameters that are stored in a configuration file.
 Each of these steps produces data products that are saved in a way that is easy
@@ -94,15 +99,15 @@ Examples for storing and retrieving data products:
 - A `Project` object can load a configuration file and store the parameters in memory.
 - A `Catalog` can read FITS or CSV files with a table of sources.
 - Instances of `Source` and `RawPhotometry` and `Lightcurve` are persisted in a postgres database.
-- Data objects like `RawPhotometry` keep the name and path of a file on disk (in HDF5 or FITS format),
-  and load the data from disk when needed.
-- A `Histograms` object is associated with a netCDF file on disk,
+- Data objects like `RawPhotometry` keep the name and path of a file on disk
+  (in HDF5 or FITS format), and load the data from disk when needed.
+- A `Histogram` object is associated with a netCDF file on disk,
   which is loaded into a multidimensional `xarray` when needed.
 
 Data that is saved to disk is automatically retrieved
 by `AstroRetriever` so that each call to a method like
-`run()` on the project object or `fetch_all_sources()`
-on the observatory object will continue from where it left off,
+`run()` on the project object, or `fetch_all_sources()`
+on the observatory object, will continue from where it left off,
 skipping the sources and files it has already completed.
 
 ### Data folders
@@ -110,7 +115,7 @@ skipping the sources and files it has already completed.
 Raw data is downloaded from separate surveys,
 and is saved under the `DATA_ROOT` folder,
 (by default this is given by the environmental variable `RETRIEVER_DATA`).
-Under that folder data is saved in a separate folder for each observatory
+Under that folder data is saved in a sub-folder for each observatory
 (observatory names are pushed to upper case when used in folder names).
 For example, saving data from ZTF will put the raw
 data files into the `DATA_ROOT/ZTF` folder.
@@ -123,36 +128,21 @@ If using version control, that folder would
 be appended the hash of the final config file,
 to make sure that the data is not overwritten
 when the config file is changed.
-E.g, `DATA_ROOT/PROJECT_NAME_<md5 hash of config file>`
-The project folder will also contain the final config file
-used in the analysis, saved with the name
-`00_config_<md5 hash of config file>.yaml`.
+E.g, `DATA_ROOT/PROJECT_NAME_<sha256 hash of config file>`
+The project folder will also contain the output config file
+used in the analysis, saved as `config.yaml`.
 
 ### Raw file names and keys
 
-Raw data files are saved in the `DATA_ROOT/OBSERVATORY` folder,
-with a filename that helps find the data easily even without the
+Raw data files are saved in the `DATA_ROOT/<OBSERVATORY>` folder,
+with subfolders and filenames that help find the data easily even without the
 associated database objects.
 
-The default setting, is to store HDF5 files with data for each
-object saved as a different group key in the file.
 By default, datasets for all sources in an integer right ascension (RA) degree bin,
-are saved in a single file.
-That means data for two sources with RA 123.1 degrees and 123.7 degrees
-will both be saved into a file named:
-`DATA_ROOT/ZTF/ZTF_photometry_RA123.h5`,
-where it is assumed the observatory is ZTF and the data is photometry.
-Inside this file, the key for each source will be the source name in the catalog.
-That means that data downloaded for different projects,
-using different catalogs, may end up saving the same source (with different names)
-into the same file, with redundancy.
-If the name of the source is the same across both catalogs,
-the data will not be saved twice.
-The reason to combine sources by their RA is to make sure
-the source data is spread out across a manageable number of files,
-without making any of the files too large.
-This allows separate threads to download data for different sources
-and still keep multiple sources organized into a single file.
+are saved in a sub-folder like RA012 (where the RA range is 12-13 degrees).
+The filename itself would be <OBSERVATORY>_<DATA_TYPE>_<SOURCE_NAME>.<EXTENSION>.
+Observatory is in upper-case, the data type is e.g., "photometry", the source name
+is given by the input catalog, and the extension is typically ".h5".
 
 Note that we always save all raw data for a given source,
 from a given observatory, into a single file, and a single key (HDF5 group).
@@ -183,9 +173,9 @@ are determined by the specific observatory object and reduction parameters.
 
 When saving a `Lightcurve` object,
 it would be placed, by default, into a folder named after the project (in upper case),
-with a filename identical to the raw data file,
+with a sub-folder and filename identical to the raw data file,
 with an appended `_reduced` suffix before the file extension.
-E.g., `DATA_ROOT/TEST_PROJECT/DEMO_photometry_RA123_reduced.h5`.
+E.g., `DATA_ROOT/TEST_PROJECT/RA123/DEMO_photometry_source456_reduced.h5`.
 This is because the reduced data depends on the details of the project,
 and is not shared across projects.
 If using version control, the folder would be appended the hash of the final config file,
@@ -194,49 +184,50 @@ as explained below.
 The file key for the lightcurve object would be the source name in the catalog,
 appended with `_reduction_XX_of_YY` where `XX` is the number of the reduction (starting at 1),
 out of a total of `YY` reductions.
-The reduction number is just the order the lightcurves were created by the analysis code,
-and do not necessarily reflect the time of observations.
+The reduction number is ordered by the start time of observations of each of the lightcurves.
 
 ### Version control
 
-**This is not yet implemented.**
-
 The way version control works is that
-when running a project (using the `run` command),
+when running a project (using the `run()` command),
 the parameters for all different classes are collected
-into a new config file, including changes applied by the user
+into an _output config file_, including changes applied by the user
 through interactive or script commands.
-The _final config file_ will also contain
+The _output config file_ will also contain
 a hash of the git commit that was used,
 so that even when running the same project
-with the same parameters but with different code,
-the final config hash will still be different.
-It is saved in the project folder,
-for future reference, and its hash
+with the same parameters but with different code versions,
+the final config hash will be different.
+The _output config file_ is saved in the project folder,
+for future reference, and its sha256 hash
+(the value is stored in the `cfg_hash` attribute)
 is used to tag the data products folder,
 containing the reduced data and the analysis results.
 
-To turn on version control, specify a parameter
-`version_control: True` in the project config
+To turn on version control, specify the parameter
+`version_control: true` in the project config.yaml file,
+or to the `Project` constructor (`Project(version_control=True)`)
 or directly to the parameters object
 `project.pars.version_control = True`.
 You can also use `vc` as short for `version_control`.
 
 When disabled, the output folder will just be named
-by the project name, and the content in it could be
+by the project name (in upper case),
+and the content in it could be
 outdated if the code/parameters were changed.
 This is useful for exploratory analysis.
-Note that `AstroRetriever` will quietly re-use
+Note that when version control is off,
+`AstroRetriever` will quietly re-use
 existing data products even if changes were made
-to the code or parameters, so if version control is
-disabled, the user must be responsible for clearing
-the old database rows and data folders when making
-substantial changes.
+to the code or parameters.
+If version control is disabled,
+the user must be responsible for clearing
+the old database rows and data folders when making substantial changes.
 
 An important caveat is that raw data,
 downloaded directly from each survey,
 is not managed by version control,
-and is shared between projects.
+and is shared between projects and versions.
 This is because downloading raw data usually takes
 a long time, and is meant to be unaffected by
 the code or parameters chosen for different projects.
@@ -254,51 +245,51 @@ and quickly continue their download/analysis process from where they left off.
   with a particular project. After initializing a project, with a given configuration, the object can then download
   any files not yet saved to disk, load files from disk, reduce the data and run analysis.
 - `Parameters`: Keep track of parameters from the user input or from a config file.
-  These objects are attributes of obejcts like `Project`, `VirtualObservatory` or `Analysis` (among others),
+  These objects are attributes of objects like `Project`, `VirtualObservatory` or `Analysis` (among others),
   so all the tunable parameters can be maintained for each parent object.
   Each class that has parameters will usually add a subclass of the `Parameters` class,
-  where specific attibutes are added using the `add_par` method. See for example the `ParsProject` class.
-- `Catalog`: stores a list of objects, each with a name, RA, Dec, and magnitude etc.
-  Has code to load such a list from CSV, FITS or HDF5 files.
+  where specific attributes are added using the `add_par` method. See for example the `ParsProject` class.
+- `Catalog`: stores a list of objects, each with a name, RA, Dec, magnitude etc.
+  Has code to load such a list from CSV, FITS or HDF5 files, and optionally has code to download such files.
 - `VirtualObservatory`: contains methods to download and store images, lightcurves, or other datasets.
   Subclasses of the `VirtualObservatory` class are used to download data from specific surveys.
   An example subclass would be `VirtualZTF` to download and reduce data from the Zwicky Transient Facility
   (<https://www.ztf.caltech.edu/>).
   The observatory objects are also used to reduce data (e.g., from raw photometry to usable lightcurves).
-- `Analysis`: runs some custom pipeline to reduce the data to smaller summary statistics, find interesting events, etc.
+- `Analysis`: runs a custom pipeline to reduce the data to smaller summary statistics, find interesting events, etc.
 - `QualityChecker`: this object scans the reduced lightcurves and checks that data quality is good.
   It can be used to flag bad data, or to remove bad data from the analysis. Generally each epoch in a lightcurve is flagged
-  using the `qflag` column, which is `True` for bad data, and `False` if the data is good in that time range.
+  using the `qflag` column, which is `True` for bad data, and `False` if the data is good at that time.
 - `Finder`: this object scans the reduced lightcurves and calculates scores like S/N, that can be used to make detections.
   The current implementation performs a simple peak detection in photometry data. Subclasses should implement more sophisticated
-  tools for setting the scores of each lightcurve, make more complicated detection algotithms (e.g., using a matched-filter)
+  tools for setting the scores of each lightcurve, use more complicated detection algorithms (e.g., using a matched-filter)
   or run analysis on other data types like spectra or images.
   The combination of the `QualityChecker` and `Finder`'s operations on the reduced data (lightcurves or otherwise)
   is to make "processed" data products. These are used for detections and for parameter estimation.
-  Both classes should be able to run multiple times on the same data (ignoring the previous results)
+  Both classes should be able to run multiple times on the same data (without memory of the previous runs)
   such that they can be applied to the original data once, and to any simulated data with injected events
   multiple times to test the detection rates, etc.
 - `Simulator`: takes the processed data that is used by the `Finder` detection code and injects a simulated event into it.
   The `Analysis` object automatically applies this "simulation mode", which produces `Detection` objects marked as "simulated".
 
 The data classes are mapped to rows in the database.
-Each one contains some meta data and some also contain paths to files on disk.
+Each one contains some metadata and some also contain paths to files on disk.
 Data class objects are how we store outputs from the pipeline and quickly query them later.
 
-- `Source`: an entry for a single astronomical object, includes a row from the catalog,
-  and links to associated lightcurves, images, etc., and analysis results
-  in the form of a `Properties` object and possibly `Detection` objects.
-  Each `Source` can be applied an `Analysis` object, which appends some summary statistics to that object,
+- `Source`: an entry for a single astronomical object. Includes a row from the catalog,
+  and is associated with lightcurves, images, etc., analysis results
+  in the form of a `Properties` object and zero or more `Detection` objects.
+  Each `Source` can be given to an `Analysis` object, which appends a `Properties` object to the source,
   and may find some `Detection` objects.
 - `DatasetMixin`: a base class for various types of data, including images, lightcurves, and other data.
   A `DatasetMixin` has the ability to save data to a file and later retrieve it.
   All astronomical data classes have `times` (a vector of datetime objects) and `mjds`
-  (a vector of modified julian dates) as attributes. They all have a filename and if required,
+  (a vector of modified Julian dates) as attributes. They all have a filename and if required,
   will also keep an in-file key for files containing multiple entries (e.g., HDF5 files with groups).
-- `RawPhotometry` is used to store unprocessed photometric data. Inherits from `DatasetMixin`.
+- `RawPhotometry`: used to store unprocessed photometric data. Inherits from `DatasetMixin`.
   This class is mostly used to store filenames to allow data to be easily saved/loaded for future analysis.
-  There are one or more `RawPhotometry` objects associated with each `Source`, one per observatory.
-  Raw data is saved once per observatory, and can be reused in different projects (if they share sources).
+  There is one `RawPhotometry` object associated with each `Source` for each observatory.
+  Raw data is saved once per observatory, and can be re-used in different projects (if they share source names).
   If the source has no data for an observatory, it must still have a `RawPhotometry` object,
   with `is_empty=True`, and an empty dataframe on disk. This allows `AstroRetriever` to check if
   a source has already been downloaded (even if no data was returned, it still counts as "downloaded").
@@ -307,15 +298,17 @@ Data class objects are how we store outputs from the pipeline and quickly query 
   Each `Lightcurve` is for a single filter in a single survey, usually for a single observing season/run.
   An `Analysis` applied to a `Source` can, for example, use the lightcurves as the input data.
   There are one or more `Lightcurve` objects associated with each `RawPhotometry` object.
-- `Detection`: A class for all sorts of detection objects. For example, a photometry based search would produce
+  `Lightcurve` objects can be used as reduced, processed, or simulated datasets.
+- `Detection`: a class for all sorts of detection objects. For example, a photometry based search would produce
   objects that store information about a time-local events like transients.
-  Other detection objects may have attibutes for wavelengths in spectra, for pixel coordinates in images, etc.
+  Other detection objects may have attributes for wavelengths in spectra, for pixel coordinates in images, etc.
   A `Source` can contain zero or more `Detection`s.
-- `Properties`: A class for storing summary statistics for a `Source`.
+- `Properties`: a class for storing summary statistics for a `Source`.
   An `Analysis` applied to a `Source` will produce one such object for each source that was analyzed.
   It may contain simple statistics like best S/N or more complicated results from, e.g., parameter
-  estimation methods. There are zero or more `Properties` objects associated with each `Source`.
-- `Histogram`: A multidimensional array (in `xarray` format) that saves statistics on the analysis.
+  estimation methods. There are zero or one `Properties` objects associated with each `Source`.
+  If no `Properties` object is associated with a `Source`, that means it has not yet been analyzed.
+- `Histogram`: contains a multidimensional array (in `xarray` format) that saves statistics on the analysis.
   This can be important to maintain a record of, e.g., how many epochs each source was observed,
   so any detections (or null detections) can be translated into rates or upper limits on rates.
   The multiple dimensions of these histograms are used to bin the data along different values
@@ -337,8 +330,8 @@ The directory structure is as follows:
 Important files in the `src` folder are:
 
 - Each of the following modules contains a single class with a similar name:
-  `analysis.py`, `catalog.py`, `detection.py`, `finder.py`, `histograms.py`, `parameters.py`, `project.py`,
-  `simulator.py`, and `source.py`.
+  `analysis.py`, `catalog.py`, `detection.py`, `finder.py`, `histogram.py`, `parameters.py`,
+  `project.py`, `properties.py`, `simulator.py`, and `source.py`.
 - `observatory.py` contains the `VirtualObservatory` class, which is a base class for all survey-specific classes.
   It also contains the `VirtualDemoObs` which is an example observatory that can be used for testing data reduction.
 - `database.py` does not contain any classes, but is used to set up the database connection using SQLAlchemy.
@@ -346,8 +339,11 @@ Important files in the `src` folder are:
   It also contains the `RawPhotometry` class, which is used to store filenames for data that has not yet been reduced,
   and the `Lightcurve` class, which is used to store reduced photometry (lightcurves).
 - `quality.py` contains the `QualityChecker` class, which is used in conjunction with the `Finder` class inside `Analysis`.
+- `utils.py` contains some useful functions and classes.
 - `ztf.py` contains the `VirtualZTF` class, which is a subclass of `VirtualObservatory`
   and is used to download data from ZTF, and reduce the data into usable products.
+- `tess.py` contains the `VirtualTESS` class, which is a subclass of `VirtualObservatory`,
+  and is used to download data from the Transiting Exoplanet Survey Satellite (TESS).
 
 ## Usage examples
 
@@ -404,7 +400,7 @@ Each `Source` will also have a `Properties` object in the database,
 which marks it as having been analyzed.
 Some `Detections` objects in the database could be created,
 each linked to a specific `Source`.
-Finally, there would be a histograms file containing statistics on the
+Finally, there would be histogram files containing statistics on the
 data that has been processed so far.
 Optionally, there could be additional `Lightcurve` objects on the DB,
 linking to files in the output folder, that contain processed data
@@ -428,13 +424,15 @@ For example, the above code can be written as:
 proj = Project(name='project_name', cfg_file="project_name.cfg", cfg_key="project")
 ```
 
-The `cfg_file` must be an absolute path, otherwise it should be
+The `cfg_file` can be an absolute path, otherwise it should be
 specified without a relative path, and is assumed to be in the `configs` folder.
 In addition, even if the `cfg_file` and `cfg_key` are not specified,
 the `Parameters` object of the project will try to find a file
 named `configs/<project name>.yaml` and look for a `project` key in it.
 Only if `cfg_file` is specified, the code will raise an error if no such file exists.
-To explicitly avoid loading a config file, use `cfg_file=None`.
+If `cfg_file=None` the default file will be searched for, but will not raise an exception
+if no such file exists (named after the project and stored in the `configs` folder).
+To explicitly avoid loading a config file, use `cfg_file=False`.
 Note that passing arguments to a sub-object (e.g., `Analysis` inside a `Project`)
 the user will pass an `analysis_kwargs` dictionary to the `Project` constructor.
 In the config file, these arguments should be specified under the `analysis` key,
@@ -446,10 +444,11 @@ Only after they are constructed, the sub objects can search for the appropriate 
 
 If mixing config file arguments and constructor arguments,
 the constructor arguments override those in the config file.
-If the user changes any of the attributes of the any of `Parameters` objects,
+If the user changes any of the attributes of the `Parameters` objects,
 after the objects are already constructed,
 those new values will be used instead of the previous definitions.
-Note that some classes may require some initialization after parameters are changed.
+Note that some classes may require some initialization after parameters are changed
+(e.g., a `Histogram` object must be initialized after its parameters are chosen).
 
 It is recommended that the user inputs all parameters in one method:
 
@@ -464,7 +463,7 @@ The last method may require some re-initialization for some objects.
 The analysis pipeline given as default by `AstroRetriever` is rather limited.
 It calculates the S/N and searches for single-epoch detections.
 More complicated analysis can be used by changing the parameters or by adding custom code
-as subclasses where some methods are overwritten.
+as subclasses in which some methods would be overwritten.
 
 As an example, initialize a project with an Analysis object,
 but change the default detection threshold:
@@ -557,17 +556,17 @@ and read it from memory if it is not already loaded.
 
 ### Downloading data
 
-Use only one of the observatories to download the data:
+To use one observatory to download the data (ZTF in this case):
 
 ```python
 proj = Project(name="default_test", obs_names=["ZTF"])
-obs = proj.observatories["ZTF"]  # can also use observatories[0]
+obs = proj.observatories["ZTF"]  # can also use proj.observatories[0] or proj.ztf
 obs.pars.num_threads_download = 0  # can use higher values for multi-threading
 obs.fetch_all_sources(0, 1000, save=True)  # grab first 1000 sources in catalog
-# use save=False to only download the data (for debugging)
+# use save=False to only download the data and not save it (for debugging)
 
 len(obs.sources)  # should only contain 100 latest Source objects
-len(obs.datasets)  # should only contain 100 latest RawPhotometry objects
+len(obs.raw_data)  # should only contain 100 latest RawPhotometry objects
 ```
 
 This code will download all the data for the first 1000 sources in the catalog.
@@ -577,7 +576,7 @@ Internally, the `VirtualObservatory` superclass will
 take care of database interaction and file creation,
 possibly running multiple threads
 (controlled by the `pars.num_threads_download` parameter).
-Inside this code is a function `fetch_data_from_observatory()`,
+Inside this code is a function `download_from_observatory()`,
 an abstract method that is only implemented in observatory subclasses
 (i.e., not on the base class).
 This function gets a `cat_row` dictionary with some
@@ -640,7 +639,7 @@ session = Session()
 
 To get full objects (rather than tuples with specific columns)
 use the `session.scalars()`.
-Inside the `scalars` block, use the `sa.select(Class)` method
+Inside the `scalars` function, use the `sa.select(Class)` method
 to select from one of the tables of mapped objects
 (mapped classes include `Source`, `RawPhotometry`, `Lightcurve`, `Detection`, etc).
 Use the `all()` or `first()` methods to get all or the first object.
@@ -704,7 +703,7 @@ with Session() as session:
 ### loading data from disk
 
 Raw data and reduced data should always be associated
-with a database object, either a `RawPhotometry` or `Lightcurve` object.
+with a database object, e.g., a `RawPhotometry` or `Lightcurve` object.
 Each of them has a `get_fullname()` method that returns the full path
 to the file on disk, and if relevant, also has a `filekey` attribute
 that keeps track of the in-file key for this dataset (e.g., in HDF5 files).
@@ -718,13 +717,13 @@ and the file key will be the source name.
 
 ```python
 raw_data.save()
-raw_data.filename  # ZTF_photometry_RA123.h5
-raw_data.get_fullname()  # /path/to/dataroot/ZTF/ZTF_photometry_RA123.h5
+raw_data.filename  # RA123/ZTF_photometry_J123.1-32.13.h5
+raw_data.get_fullname()  # /path/to/dataroot/ZTF/RA123/ZTF_photometry_J123.1-32.13.h5
 raw_data.filekey  # J123.1-32.13
 
 lc.save()
-lc.filename  #  ZTF_photometry_RA123_reduced.h5
-lc.get_fullname()  # /path/to/dataroot/PROJ_NAME/ZTF_photometry_RA123_reduced.h5
+lc.filename  #  RA123/ZTF_photometry_J123.1-32.13_reduced.h5
+lc.get_fullname()  # /path/to/dataroot/PROJ_NAME/RA123/ZTF_photometry_J123.1-32.13_reduced.h5
 lc.filekey  # J123.1-32.13_reduction_01_of_03
 ```
 
@@ -770,20 +769,21 @@ so the file key matches the correct column in the catalog.
 
 ### Analysis results
 
-For each `Source` we use `Analysis` objects to reduce the data to a summary statistic,
-that is persisted and queryable for all sources.
+For each `Source` we use the `Analysis` object
+to reduce the data to some summary statistics,
+that are persisted and queryable for all sources.
 The products of the `Analysis` include:
 
 - `Properties` objects, one per source, that store the summary statistics.
-  and let us know the source was already analyzed.
+  and lets us know the source was already analyzed.
 - `Detection` objects, which can be used to find real or simulated events.
 - Some histograms including an estimate of the amount of data of various quality
   that was scanned across all sources in the catalog.
-  This is represented by the `Histograms` class.
-  These are additive to allow joining results from parallel sessions
-  each outputting different `Histograms` objects.
+  This is represented by the `Histogram` class.
+  These are additive to allow joining results from parallel sessions,
+  each outputting different `Histogram` objects.
 
 A `Simulator` object can be used to inject simulated events into the data,
 which produces simulated `Detection` objects. This allows testing of the
-sensitivity of the analysis. These objects should be saved along with the
+sensitivity of the analysis. These objects are saved along with the
 real events but are marked as simulated using a hidden attribute.

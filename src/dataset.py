@@ -565,38 +565,45 @@ class DatasetMixin:
     ):
 
         """
-        Generate a filename with some pre-defined format
-        that is consistent enough to have multiple sources
-        saved to the same file in a logical way that is
+        Generate a filename and sub-folder with some pre-defined
+        format that is consistent enough to have multiple sources
+        saved to the same folder in a logical way that is
         easy to figure out even when file data is orphaned
         from the database objects.
 
+        The filename will be <Observatory>_<data_type>_<source_name>.<ext>
+        where <observatory> is the upper-case observatory name,
+        the <data_type> is e.g., "photometry",
+        the <source_name> is given by the input catalog
+        and <.ext> is the extension (usually .h5).
+        Inside the file, the HDF5 key will be <data_type>_<source_name>.
+        If the dataset is reduced or processed, the key will be numbered
+        as "reduction_1_of_3", or "processed_1_of_4", etc.
+        The same is for simulated datasets, that can have multiple
+        different simulated versions for each processed dataset:
+        e.g., "processed_1_of_3_simulated_1_of_2".
+
         The default way to decide which source goes into which
-        file is using RA (right ascension).
+        sub-folder is using RA (right ascension).
         This is a closed interval (0-360) and for most
-        all sky surveys the sources are spread out (mostly)
+        all-sky surveys the sources are spread out (mostly)
         evenly, although the galactic center may be more dense
-        with sources, causing larger files with RA~270.
+        with sources, causing larger folders at RA~270.
 
         If given only ra_deg, will split the sources into
-        360 files, one for each integer degree bin.
-        The filename will be <Observatory>_<data_type>_RA<ra_deg>.ext
-        where .ext is the extension and ra_deg will be a 3-digit integer
-        value (zero padded) containing all sources with RA in the range
-        [ra_deg, ra_deg+1).
+        360 folders, one for each integer degree bin.
 
-        If ra_minute is given, will split the sources into 360x60 files,
-        one for each integer minute bin. That means the filename will be:
-        <Observatory>_<data_type>_RA<ra_deg>_<ra_minute>.ext
+        If ra_minute is given, will split the sources into 360x60 sub-folders,
+        one for each integer minute bin. That means the path will be:
+        RA<ra_deg>/<ra_minute>/
         If adding seconds, this will be:
-        <Observatory>_<data_type>_RA<ra_deg>_<ra_minute>_<ra_second>.ext
+        RA<ra_deg>/<ra_minute>/<ra_second>/
         These modes are useful if the survey you are working with
         has very dense coverage in a small area, and you want to
-        split the sources into smaller files.
+        split the sources into smaller folders.
 
         If not given a source right ascension at all,
         the ra range will be replaced with a random string.
-        <observatory>_<data_type>_<random 16 char string>.ext
 
         For subclasses that are reductions of the data
         found in another file (and have a "raw_data_filename" attribute),
@@ -614,20 +621,19 @@ class DatasetMixin:
         ra_deg : int, optional
             The integer degree of the right ascension of the source.
             If given as float, will just use floor(ra_deg).
-            If given as None, filename will have a random string instead.
-            (that means each source will have its own file).
+            If given as None, folder will be a random string instead.
             The default is None, but it is highly recommended to give
             the RA of the source when saving.
         ra_minute : int, optional
             The integer minute of the right ascension of the source.
             If given as float, will just use floor(ra_minute).
             if given as None, will only split sources into integer
-            degree filenames (default).
+            degree sub-folders (default).
         ra_second : int, optional
             The integer second of the right ascension of the source.
             If given as float, will just use floor(ra_second).
             if given as None, will only split sources into integer
-            degree and possibly minute filenames (default).
+            degree and possibly minute sub-folders (default).
 
         """
         if hasattr(self, "raw_data_filename") and self.raw_data_filename is not None:

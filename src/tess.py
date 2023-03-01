@@ -258,6 +258,8 @@ class VirtualTESS(VirtualObservatory):
 
         return data, altdata
 
+    # def download_by_tic(self, tic_number, verbose=0):
+
     def _try_query(self, query_fn, params, verbose):
         """
         Makes an astroquery request repeatedly, ignoring any timeout errors.
