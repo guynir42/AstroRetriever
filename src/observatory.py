@@ -935,7 +935,7 @@ class VirtualObservatory:
 
         return value
 
-    def reduce(self, source, data_type=None, output_type=None, session=None, **kwargs):
+    def reduce(self, source, data_type=None, output_type=None, **kwargs):
         """
         Reduce raw data into more useful,
         second level (reduced) data products.
@@ -1056,10 +1056,6 @@ class VirtualObservatory:
         for d in new_datasets:
             for attr in copy_attrs:
                 setattr(d, attr, getattr(self, attr))
-
-        # make sure each reduced dataset is associated with a source
-        for d in new_datasets:
-            d.source = source
 
         self.latest_reductions = new_datasets
 
