@@ -52,7 +52,7 @@ pytest
 
 #### Data folder
 
-Raw data folder should be set up with the environment variable `RETRIEVER_DATA`.
+The raw data folder should be defined using an environment variable `RETRIEVER_DATA`.
 This folder should be on a drive with enough space to contain the raw data.
 Internally, the `DATA_ROOT` variable in `src/dataset.py` can be modified
 to temporarily save data to other places (e.g., for testing):
