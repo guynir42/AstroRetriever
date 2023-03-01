@@ -1,6 +1,9 @@
 # AstroRetriever
 
-A package used for downloading and processing images from various astronomical surveys.
+![Astro Retriever](images/logo.png?raw=true)
+
+A customizable package for downloading and processing images
+from various astronomical surveys.
 
 ## Installation
 
