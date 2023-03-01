@@ -443,7 +443,7 @@ class DatasetMixin:
         """
         Get the full path to the data file.
         """
-        if self.filename:
+        if self.get_path() is not None and self.filename is not None:
             return os.path.join(self.get_path(), self.filename)
         else:
             return None

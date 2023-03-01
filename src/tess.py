@@ -98,7 +98,9 @@ class VirtualTESS(VirtualObservatory):
         Not implemented yet.
         Similar to reduce() from ztf.py.
         """
-        raise NotImplementedError()
+        raise NotImplementedError(
+            "The reduction method is not yet implemented in VirtualTESS."
+        )
 
     def download_from_observatory(
         self,
@@ -309,7 +311,7 @@ class VirtualTESS(VirtualObservatory):
 
 
 if __name__ == "__main__":
-    tess = VirtualTESS(project="testing VirtualTESS")
+    tess = VirtualTESS(project="testing VirtualTESS", verbose=10)
     white_dwarfs = Catalog(default="wd")
     white_dwarfs.load()
 
@@ -317,27 +319,34 @@ if __name__ == "__main__":
 
     count = 0
     for i in range(len(white_dwarfs.data)):
+        if i > 20:
+            break
+
         cat_row = white_dwarfs.get_row(i, output="dict")
         if cat_row["mag"] > 16:
             continue
 
-        print(f"\n\nindex={i}, count={count}")
-        result = tess.fetch_data_from_observatory(cat_row, verbose=1)
-        if not result[1]:  # failed fetch returns empty dict
-            continue
+        print(f"index={i}, cat_row: {cat_row}")
+        tess.fetch_source(cat_row, reduce=False)
 
-        lc_data, altdata = result
-        print(
-            f"TICID = {altdata['TICID']}, GAIA mag = {cat_row['mag']}, TESS mag = {altdata['TESSMAG']}"
-        )
+        # result = tess.download_from_observatory(cat_row, verbose=1)
+        # if not result[1]:  # failed fetch returns empty dict
+        #     continue
+        #
+        #
+        #
+        # lc_data, altdata = result
+        # print(
+        #     f"TICID = {altdata['TICID']}, GAIA mag = {cat_row['mag']}, TESS mag = {altdata['TESSMAG']}"
+        # )
         count += 1
-
-        ticid = altdata["TICID"]
-        print("saving to disk...")
-        lc_data.to_hdf(
-            "/Users/felix_3gpdyfd/astro_research/virtualobserver"
-            f"/notebook/tess_data_TEST/tess_lc_{ticid}.h5",
-            key="df",
-        )
+        #
+        # ticid = altdata["TICID"]
+        # print("saving to disk...")
+        # lc_data.to_hdf(
+        #     "/Users/felix_3gpdyfd/astro_research/virtualobserver"
+        #     f"/notebook/tess_data_TEST/tess_lc_{ticid}.h5",
+        #     key="df",
+        # )
 
     print(f"\n\nFinal Count: {count}")

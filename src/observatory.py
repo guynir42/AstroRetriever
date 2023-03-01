@@ -21,7 +21,7 @@ from src.parameters import (
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
-from src.utils import CircularBufferList
+from src.utils import help_with_class, help_with_object, CircularBufferList
 
 lock = threading.Lock()
 
@@ -723,6 +723,9 @@ class VirtualObservatory:
                 # <-- magic happens here! -- > #
                 data, altdata = self.download_from_observatory(cat_row, **download_args)
 
+                if self.pars.verbose > 9:
+                    print(f"len(data)= {len(data)} | altdata= {altdata}")
+
                 # save the catalog info
                 # TODO: should we get the full catalog row?
                 altdata["cat_row"] = cat_row
@@ -740,6 +743,8 @@ class VirtualObservatory:
                 )  # Raw data doesn't have cfg_hash!
                 if raw_data is not None:
                     report_dict[f"raw_{dt}"] = "new"
+
+                raw_data.source = source
 
             if raw_data is None:
                 raise ValueError("Raw data can not be None at this point!")
@@ -763,13 +768,16 @@ class VirtualObservatory:
                     reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
                     report_dict[f"reduced_{dt}"] = "new"
 
-                # make sure to append new data unto source
+                # make sure to append new data unto source and vice-versa
                 for d in reduced_datasets:
                     getattr(source, f"reduced_{dt}").append(d)
+                    d.source = source
 
             # if debugging or saving outside this function, set save=False
             if save:
                 try:
+                    if self.pars.verbose > 9:
+                        print(f"Saving source {source.name}")
                     session.add(source)
                     session.commit()
                 except Exception:
@@ -789,7 +797,8 @@ class VirtualObservatory:
                         reduced_datasets, session=session, save_kwargs=save_kwargs
                     )
 
-        self.latest_source = source
+        if source is not None:
+            self.latest_source = source
 
         if report is not None:
             report.update(report_dict)
@@ -1016,7 +1025,7 @@ class VirtualObservatory:
         init_kwargs = self._make_init_kwargs(dataset)
 
         # choose which kind of reduction to do
-        if output_type is None:
+        if output_type is None:  # output is same as input
             output_type = data_type
         else:
             output_type = convert_data_type(output_type)
