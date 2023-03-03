@@ -69,7 +69,7 @@ def test_tess_download(tess_project, wd_cat):
                 key = store.keys()[0]
                 df = store[key]
                 assert len(df) > 0
-                assert np.all(df["BJD - 2457000, days"] > 0)
+                assert np.all(df["TIME"] > 0)
                 assert np.all(df.loc[~np.isnan(df["SAP_FLUX"]), "SAP_FLUX"] > 0)
 
                 metadata = store.get_storer(key).attrs["altdata"]
@@ -77,9 +77,9 @@ def test_tess_download(tess_project, wd_cat):
                 assert "cat_row" in metadata
                 assert metadata["cat_row"] == s.cat_row
                 assert "TICID" in metadata
-                assert abs(metadata["source mag"] - s.cat_row["mag"]) < 1
+                assert abs(metadata["source_mag"] - s.cat_row["mag"]) < 1
                 assert len(metadata["sectors"]) >= 1
-                assert isinstance(metadata["aperture matrix"], list)
+                assert isinstance(metadata["aperture_matrix"], list)
 
                 num_sources_with_data += 1
 

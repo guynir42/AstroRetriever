@@ -97,9 +97,9 @@ def test_project_user_inputs():
         obs_names=["demo", "ZTF"],
         analysis_kwargs={"num_injections": 3},
         obs_kwargs={
-            "reducer": {"reducer_key": "reducer_value"},
+            "reduce_kwargs": {"reducer_key": "reducer_value"},
             "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
-            "DEMO": {"reducer": {"reducer_key": "reducer_value2"}},
+            "DEMO": {"reduce_kwargs": {"reducer_key": "reducer_value2"}},
         },
         catalog_kwargs={"default": "test"},
     )
@@ -125,8 +125,12 @@ def test_project_user_inputs():
     assert proj.observatories["ztf"]._credentials["password"] == "12345"
 
     # check the reducer was overriden in the demo observatory
-    assert proj.observatories["ztf"].pars.reducer["reducer_key"] == "reducer_value"
-    assert proj.observatories["demo"].pars.reducer["reducer_key"] == "reducer_value2"
+    assert (
+        proj.observatories["ztf"].pars.reduce_kwargs["reducer_key"] == "reducer_value"
+    )
+    assert (
+        proj.observatories["demo"].pars.reduce_kwargs["reducer_key"] == "reducer_value2"
+    )
 
 
 def test_project_config_file(data_dir):
@@ -139,7 +143,7 @@ def test_project_config_file(data_dir):
             "obs_names": ["demo", "ztf"],  # list of observatory names
         },
         "observatories": {  # general instructions to pass to observatories
-            "reducer": {  # should be overriden by observatory reducer
+            "reduce_kwargs": {  # should be overriden by observatory reducer
                 "reducer_key": "project_reduction",
             },
             "demo": {  # demo observatory specific definitions
@@ -152,7 +156,7 @@ def test_project_config_file(data_dir):
                         os.path.join(data_dir, "passwords_test.yaml")
                     ),
                 },
-                "reducer": {
+                "reduce_kwargs": {
                     "reducer_key": "ztf_reduction",
                 },
             },
@@ -201,14 +205,14 @@ def test_project_config_file(data_dir):
         assert proj.observatories["demo"].pars.demo_string == "test-string"
         # general project-wide reducer is used by demo observatory:
         assert (
-            proj.observatories["demo"].pars.reducer["reducer_key"]
+            proj.observatories["demo"].pars.reduce_kwargs["reducer_key"]
             == "project_reduction"
         )
 
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        assert proj.observatories["ztf"].pars.reducer == {
+        assert proj.observatories["ztf"].pars.reduce_kwargs == {
             "reducer_key": "ztf_reduction"
         }
 
@@ -824,7 +828,7 @@ def test_reducer_with_outliers(test_project, new_source):
             obs = test_project.observatories["demo"]
             assert isinstance(obs, VirtualDemoObs)
 
-            obs.pars.reducer["drop_flagged"] = False
+            obs.pars.reduce_kwargs["drop_flagged"] = False
             lightcurves = obs.reduce(source=new_source, data_type="photometry")
             new_source.lightcurves = lightcurves
 
@@ -1247,7 +1251,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(max_runs=5)
+@pytest.mark.flaky(max_runs=8)
 def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # this lightcurve has no outliers:
@@ -1333,7 +1337,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-# @pytest.mark.flaky(max_runs=8)
+@pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False

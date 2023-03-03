@@ -5,6 +5,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from astropy.time import Time
+
 from ztfquery import lightcurve
 
 from src.source import angle_diff
@@ -228,7 +230,14 @@ class VirtualZTF(VirtualObservatory):
         data = dataset.data
 
         time_col = dataset.colmap["time"]
-        mjd_conversion = dataset.time_info["to mjd"]
+
+        def mjd_conversion(t):
+            return Time(
+                t + dataset.time_info["offset"],
+                format=dataset.time_info["format"],
+                scale="utc",
+            ).mjd
+
         exp_col = dataset.colmap["exptime"]
         filt_col = dataset.colmap["filter"]
         flag_col = dataset.colmap["flag"] if "flag" in dataset.colmap else None

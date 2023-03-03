@@ -293,9 +293,13 @@ class DatasetMixin:
         )
 
     def __init__(self, **kwargs):
+        # this is commented out because sometimes you want
+        # to create an empty raw data and give it a filename
+        # and have it loaded into this object from there
+        # if "data" not in kwargs:
+        #     raise ValueError("Must provide data to initialize a Dataset object")
+
         self._data = None
-        # self.colmap = {}
-        # self.time_info = {}
         self._times = None
         self._mjds = None
         self.source = None
@@ -307,19 +311,17 @@ class DatasetMixin:
         self.overwrite = OVERWRITE
 
         # if given any info on the column mapping or time parsing:
-        self.colmap = kwargs.pop("colmap", {})
-        self.time_info = kwargs.pop("time_info", {})
+        self.colmap = kwargs.pop("colmap", {}).copy()
+        self.time_info = kwargs.pop("time_info", {}).copy()
 
         # first input data to allow
         # the object to calculate some attributes
-        if "data" not in kwargs:
-            raise ValueError("Must provide data to initialize a Dataset object")
+        if "data" in kwargs:
+            data = kwargs.pop("data")
 
-        data = kwargs.pop("data")
-
-        # first figure out the data columns and time conversions
-        self.update_colmap(data)
-        self.data = data  # also calculate times and other stats
+            # first figure out the data columns and time conversions
+            self.update_colmap(data)
+            self.data = data  # also calculate times and other stats
 
         # override any existing attributes
         for k, v in list(kwargs.items()):
@@ -376,8 +378,6 @@ class DatasetMixin:
         ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
         """
         self._data = None
-        # self.colmap = {}
-        # self.time_info = {}
         self._times = None
         self._mjds = None
         self.source = None
@@ -536,17 +536,21 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         if self.format == "hdf5":
-            self.load_hdf5()
+            data, altdata = self.load_hdf5()
         elif self.format == "fits":
-            self.load_fits()
+            data, altdata = self.load_fits()
         elif self.format == "csv":
-            self.load_csv()
+            data, altdata = self.load_csv()
         elif self.format == "json":
-            self.load_json()
+            data, altdata = self.load_json()
         elif self.format == "netcdf":
-            self.load_netcdf()
+            data, altdata = self.load_netcdf()
         else:
             raise ValueError(f"Unknown format {self.format}")
+
+        self.update_colmap(data)
+        self.data = data
+        self.altdata = altdata
 
     def load_hdf5(self):
         """
@@ -561,18 +565,23 @@ class DatasetMixin:
                     raise ValueError("No key specified and multiple keys found in file")
 
             # load the data
-            self.data = store.get(key)
-            if self.data is None:
+            data = store.get(key)
+            if data is None:
                 raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
+
             # load metadata
             if store.get_storer(key).attrs and "altdata" in store.get_storer(key).attrs:
-                self.altdata = store.get_storer(key).attrs["altdata"]
+                altdata = store.get_storer(key).attrs["altdata"]
+
+            return data, altdata
 
     def load_fits(self):
         pass
 
     def load_csv(self):
-        self.data = pd.read_csv(self.get_fullname())
+        data = pd.read_csv(self.get_fullname())
+
+        return data, {}
 
     def load_json(self):
         pass
@@ -952,6 +961,7 @@ class DatasetMixin:
         # TODO: get the columns for other data types
 
         for c in columns:  # timestamps
+            example = data[c].iloc[0]
             if simplify(c) in ("jd", "juliandate"):
                 self.time_info["format"] = "jd"
                 self.time_info["offset"] = get_time_offset(c)  # e.g., JD-12345000
@@ -991,9 +1001,9 @@ class DatasetMixin:
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "datetime") and isinstance(
-                data[c][0], (str, bytes)
+                example, (str, bytes)
             ):
-                if "T" in data[c][0]:
+                if "T" in example:
                     self.time_info["format"] = "isot"
                     # self.time_info["to datetime"] = lambda t: Time(
                     #     t, format="isot", scale="utc"
@@ -1091,16 +1101,17 @@ class DatasetMixin:
 
         def time_parser(t):
             return Time(
-                t - self.time_info["offset"],
+                t + self.time_info["offset"],
                 format=self.time_info["format"],
                 scale="utc",
             )
 
-        self.times = time_parser(self._data[self.colmap["time"]]).datetime
+        t = time_parser(self._data[self.colmap["time"]])
+        self.times = t.datetime
         self.time_start = min(self.times)
         self.time_end = max(self.times)
 
-        self.mjds = time_parser(self._data[self.colmap["time"]]).mjd
+        self.mjds = t.mjd
 
     def plot(self, ax=None, **kwargs):
         """
@@ -1284,6 +1295,8 @@ class DatasetMixin:
         "observatory",
         "cfg_hash",
         "folder",
+        "colmap",
+        "time_info",
     ]
 
     # automatically update the dictionaries
@@ -1725,7 +1738,14 @@ class Lightcurve(DatasetMixin, Base):
             raise ValueError("Lightcurve must be initialized with data")
 
         self.filtmap = None  # get this as possible argument
+
         DatasetMixin.__init__(self, **kwargs)
+
+        # if given a colmap, make sure to remove columns
+        # that are not in the data anymore
+        for k, v in self.colmap.copy().items():
+            if v not in data.columns:
+                self.colmap.pop(k)
 
         fcol = self.colmap.get("filter")  # shorthand
 
@@ -1890,6 +1910,8 @@ class Lightcurve(DatasetMixin, Base):
                 self.data["magerr"] = magerr
                 self.colmap["magerr"] = "magerr"
 
+        # TODO: should there be another option for when both are given?
+
     def find_cadence(self):
         """
         Find the exposure time and frame rate of the data.
@@ -2044,6 +2066,7 @@ class Lightcurve(DatasetMixin, Base):
 
         It also adds a column named "mjd" for convenience.
         """
+
         inv_colmap = {v: k for k, v in self.colmap.items()}
         new_cols = list(inv_colmap.keys())
         if isinstance(self.data, pd.DataFrame):

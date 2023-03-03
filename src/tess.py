@@ -165,7 +165,7 @@ class VirtualTESS(VirtualObservatory):
 
         return new_datasets
 
-    def update_colmap(self, data, altdata):
+    def get_colmap_time_info(self, data, altdata):
         """
         Update the column map of the dataset.
         This parses the time and flux columns

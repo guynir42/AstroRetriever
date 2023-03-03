@@ -416,9 +416,9 @@ class Project:
         # TODO: separate reducer and use pars.get_class_instance to load it
         # parse parameters for reduction methods for this observatory
         # reducer_dict = {}
-        # reducer_dict.update(self.pars.reducer)  # project pars
-        # reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
-        # new_obs.pars.reducer = reducer_dict
+        # reducer_dict.update(self.pars.reduce_kwargsr)  # project pars
+        # reducer_dict.update(new_obs.pars.reduce_kwargsr)  # observatory specific pars
+        # new_obs.pars.reduce_kwargsr = reducer_dict
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog

@@ -57,8 +57,8 @@ class ParsObservatory(Parameters):
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
 
-        self.reducer = self.add_par(
-            "reducer", {}, dict, "Argumnets to pass to reduction method"
+        self.reduce_kwargs = self.add_par(
+            "reduce_kwargs", {}, dict, "Arguments to pass to reduction method"
         )
 
         self.credentials = self.add_par(
@@ -733,6 +733,13 @@ class VirtualObservatory:
                 # save the parameters involved with the download
                 altdata["download_pars"] = download_pars
 
+                # specific observatories will have some adjustments to make
+                # to the colmap and time_info parameters
+                colmap, time_info = self.get_colmap_time_info(data, altdata)
+
+                dataset_args["colmap"] = colmap
+                dataset_args["time_info"] = time_info
+
                 # create a raw data for this class (e.g., RawPhotometry)
                 raw_data = DataClass(
                     data=data,
@@ -832,7 +839,7 @@ class VirtualObservatory:
             "download_from_observatory() must be implemented in subclass"
         )
 
-    def update_colmap_time_info(self, data, altdata):
+    def get_colmap_time_info(self, data, altdata):
         """
         Update the colmap (column mapping) and time_info dictionaries
         for a RawPhotometry object.
@@ -1055,9 +1062,9 @@ class VirtualObservatory:
         # parameters for the reduction
         # are taken from the config first,
         # then from the user inputs
-        if "reducer" in self.pars and isinstance(self.pars.reducer, dict):
+        if "reduce_kwargs" in self.pars and isinstance(self.pars.reduce_kwargs, dict):
             parameters = {}
-            parameters.update(self.pars.reducer)
+            parameters.update(self.pars.reduce_kwargs)
             parameters.update(kwargs)
             kwargs = parameters
 

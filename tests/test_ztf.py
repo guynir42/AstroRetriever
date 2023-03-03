@@ -97,6 +97,7 @@ def test_ztf_reduction(ztf_project, new_source):
     new_source.ra = raw_data.data.ra.median()
     new_source.dec = raw_data.data.dec.median()
     new_source.raw_photometry.append(raw_data)
+
     new_lcs = ztf.reduce(source=new_source, data_type="photometry", gap=40)
     new_lc_epochs = np.sum([lc.number for lc in new_lcs])
 
@@ -131,6 +132,7 @@ def test_ztf_reduction(ztf_project, new_source):
 
     # check that flagged points are removed
     flags = (raw_data.data["catflags"] > 0) | np.isnan(raw_data.data.mag)
+
     new_lcs = ztf.reduce(
         source=new_source, data_type="photometry", gap=40, drop_bad=True
     )
