@@ -47,7 +47,7 @@ UNIFORMITY_THRESHOLD = 0.01
 
 def simplify(key):
     """
-    Cleans up (and bumps to lower case)
+    Cleans up (AND bumps to lower case)
     a string to compare it to a list of expected
     keywords such as "jd" or "timestamps".
 
@@ -213,6 +213,21 @@ class DatasetMixin:
             doc="Instructions dictionary for loading the data from disk",
         )
 
+        colmap = sa.Column(
+            JSONB,
+            nullable=False,
+            default={},
+            doc="Dictionary mapping column names to column indices",
+        )
+
+        time_info = sa.Column(
+            JSONB,
+            nullable=False,
+            default={},
+            doc="Dictionary containing information about the time column "
+            "(e.g., how to parse the time, with format and offset info).",
+        )
+
         altdata = sa.Column(
             JSONB,
             nullable=True,
@@ -279,11 +294,11 @@ class DatasetMixin:
 
     def __init__(self, **kwargs):
         self._data = None
-        self.colmap = {}
+        # self.colmap = {}
+        # self.time_info = {}
         self._times = None
         self._mjds = None
         self.source = None
-        self.time_info = {}
 
         # these are only set when generating a new
         # object, not when loading from database
@@ -291,10 +306,20 @@ class DatasetMixin:
         self.autosave = AUTOSAVE
         self.overwrite = OVERWRITE
 
+        # if given any info on the column mapping or time parsing:
+        self.colmap = kwargs.pop("colmap", {})
+        self.time_info = kwargs.pop("time_info", {})
+
         # first input data to allow
         # the object to calculate some attributes
-        if "data" in kwargs:
-            self.data = kwargs.pop("data")
+        if "data" not in kwargs:
+            raise ValueError("Must provide data to initialize a Dataset object")
+
+        data = kwargs.pop("data")
+
+        # first figure out the data columns and time conversions
+        self.update_colmap(data)
+        self.data = data  # also calculate times and other stats
 
         # override any existing attributes
         for k, v in list(kwargs.items()):
@@ -351,10 +376,10 @@ class DatasetMixin:
         ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
         """
         self._data = None
-        self.colmap = {}
+        # self.colmap = {}
+        # self.time_info = {}
         self._times = None
         self._mjds = None
-        self.time_info = {}
         self.source = None
         self.loaded_status = "database"
 
@@ -910,7 +935,7 @@ class DatasetMixin:
                     if len(os.listdir(path)) == 0:
                         os.rmdir(path)
 
-    def find_colmap(self):
+    def update_colmap(self, data):
         """
         Calculate the column map for the data.
         Locates column names in the data that
@@ -921,79 +946,81 @@ class DatasetMixin:
         E.g., ZTF uses "filtercode", but it would
         be accessed using colmap['filter'].
         """
-        if isinstance(self._data, pd.DataFrame):
-            columns = self._data.columns
+        if isinstance(data, pd.DataFrame):
+            columns = data.columns
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
         for c in columns:  # timestamps
             if simplify(c) in ("jd", "juliandate"):
-                self.time_info["format"] = "mjd"
-                offset = get_time_offset(c)  # e.g., JD-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).mjd
-                self.time_info["offset"] = offset
+                self.time_info["format"] = "jd"
+                self.time_info["offset"] = get_time_offset(c)  # e.g., JD-12345000
+                # self.time_info["to datetime"] = lambda t: Time(
+                #     t - offset, format="jd", scale="utc"
+                # ).datetime
+                # self.time_info["to mjd"] = lambda t: Time(
+                #     t - offset, format="jd", scale="utc"
+                # ).mjd
+                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("mjd",):
                 self.time_info["format"] = "mjd"
-                offset = get_time_offset(c)  # e.g., MJD-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="mjd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: t + offset
-                self.time_info["offset"] = offset
+                self.time_info["offset"] = get_time_offset(c)  # e.g., MJD-12345000
+                # self.time_info["to datetime"] = lambda t: Time(
+                #     t - offset, format="mjd", scale="utc"
+                # ).datetime
+                # self.time_info["to mjd"] = lambda t: t + offset
+                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("bjd",):
-                self.time_info["format"] = "bjd"
-                offset = get_time_offset(c)  # e.g., BJD-12345000
+                self.time_info["format"] = "jd"
+                self.time_info["offset"] = get_time_offset(
+                    c
+                )  # e.g., BJD-12345000 for TESS
                 # TODO: must add some conversion between JD and BJD
                 #  e.g., https://mail.python.org/pipermail/astropy/2014-April/002844.html
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).mjd
-                self.time_info["offset"] = offset
+                # self.time_info["to datetime"] = lambda t: Time(
+                #     t - offset, format="jd", scale="utc"
+                # ).datetime
+                # self.time_info["to mjd"] = lambda t: Time(
+                #     t - offset, format="jd", scale="utc"
+                # ).mjd
+                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "datetime") and isinstance(
-                self._data[c][0], (str, bytes)
+                data[c][0], (str, bytes)
             ):
-                if "T" in self._data[c][0]:
+                if "T" in data[c][0]:
                     self.time_info["format"] = "isot"
-                    self.time_info["to datetime"] = lambda t: Time(
-                        t, format="isot", scale="utc"
-                    ).datetime
-                    self.time_info["to mjd"] = lambda t: Time(
-                        t, format="isot", scale="utc"
-                    ).mjd
+                    # self.time_info["to datetime"] = lambda t: Time(
+                    #     t, format="isot", scale="utc"
+                    # ).datetime
+                    # self.time_info["to mjd"] = lambda t: Time(
+                    #     t, format="isot", scale="utc"
+                    # ).mjd
                 else:
                     self.time_info["format"] = "iso"
-                    self.time_info["to datetime"] = lambda t: Time(
-                        t, format="iso", scale="utc"
-                    ).datetime
-                    self.time_info["to mjd"] = lambda t: Time(
-                        t, format="iso", scale="utc"
-                    ).mjd
+                    # self.time_info["to datetime"] = lambda t: Time(
+                    #     t, format="iso", scale="utc"
+                    # ).datetime
+                    # self.time_info["to mjd"] = lambda t: Time(
+                    #     t, format="iso", scale="utc"
+                    # ).mjd
                 self.time_info["offset"] = 0
                 self.colmap["time"] = c
                 break
             elif simplify(c) == ("time", "unix", "timestamp"):
                 self.time_info["format"] = "unix"
                 offset = get_time_offset(c)  # e.g., Unix-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="unix", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="unix", scale="utc"
-                ).mjd
+                # self.time_info["to datetime"] = lambda t: Time(
+                #     t - offset, format="unix", scale="utc"
+                # ).datetime
+                # self.time_info["to mjd"] = lambda t: Time(
+                #     t - offset, format="unix", scale="utc"
+                # ).mjd
                 self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
@@ -1043,6 +1070,10 @@ class DatasetMixin:
                 self.colmap["flag"] = c
                 break
 
+            if simplify(c) == simplify("QUALITY"):  # Kepler/TESS
+                self.colmap["flag"] = c
+                break
+
     def calc_times(self):
         """
         Calculate datetimes and MJDs for each epoch,
@@ -1053,11 +1084,23 @@ class DatasetMixin:
         """
         if len(self._data) == 0:
             return
-        self.times = self.time_info["to datetime"](self._data[self.colmap["time"]])
+        if len(self.time_info) == 0:
+            raise ValueError(
+                "No time_info was found. Make sure to run update_colmap() first..."
+            )
+
+        def time_parser(t):
+            return Time(
+                t - self.time_info["offset"],
+                format=self.time_info["format"],
+                scale="utc",
+            )
+
+        self.times = time_parser(self._data[self.colmap["time"]]).datetime
         self.time_start = min(self.times)
         self.time_end = max(self.times)
 
-        self.mjds = self.time_info["to mjd"](self._data[self.colmap["time"]])
+        self.mjds = time_parser(self._data[self.colmap["time"]]).mjd
 
     def plot(self, ax=None, **kwargs):
         """
@@ -1185,7 +1228,6 @@ class DatasetMixin:
             )
 
         self._data = data
-        self.find_colmap()
 
         # remove rows with nan timestamps
         if len(self._data.index) > 0 and "time" in self.colmap:
@@ -1300,8 +1342,8 @@ class RawPhotometry(DatasetMixin, Base):
     def type(self):
         return "photometry"
 
+    @staticmethod
     def make_random_photometry(
-        self,
         number=100,
         mag_min=15,
         mag_max=20,
@@ -1390,7 +1432,7 @@ class RawPhotometry(DatasetMixin, Base):
         if exptime:
             df["exptime"] = exptime
 
-        self.data = df
+        return df
 
 
 class Lightcurve(DatasetMixin, Base):
@@ -1685,9 +1727,11 @@ class Lightcurve(DatasetMixin, Base):
         self.filtmap = None  # get this as possible argument
         DatasetMixin.__init__(self, **kwargs)
 
-        try:
-            fcol = self.colmap["filter"]  # shorthand
+        fcol = self.colmap.get("filter")  # shorthand
 
+        if fcol is None:  # no filter, use observatory name instead
+            self.filter = self.observatory.upper()
+        else:  # use the filtmap to convert to a standard filter name
             # replace the filter name with a more specific one
             if "filtmap" in kwargs and kwargs["filtmap"] is not None:
                 if isinstance(kwargs["filtmap"], dict):
@@ -1707,43 +1751,36 @@ class Lightcurve(DatasetMixin, Base):
 
                 self.data.loc[:, fcol] = self.data.loc[:, fcol].map(filter_mapping)
 
-            filters = self.data[fcol].values
-            if not all([f == filters[0] for f in filters]):
+            filters = self.data[fcol].unique()
+            if len(filters) > 1:
                 raise ValueError("All filters must be the same for a Lightcurve")
             self.filter = filters[0]
 
-            # sort the data by time it was recorded
-            if isinstance(self.data, pd.DataFrame):
-                self.data = self.data.sort_values([self.colmap["time"]], inplace=False)
-                self.data.reset_index(drop=True, inplace=True)
+        # sort the data by time it was recorded
+        if isinstance(self.data, pd.DataFrame):
+            self.data = self.data.sort_values([self.colmap["time"]], inplace=False)
+            self.data.reset_index(drop=True, inplace=True)
 
-            # get flux from mag or vice-versa
-            self.calc_mag_flux()
+        # get flux from mag or vice-versa
+        self.calc_mag_flux()
 
-            # make sure keys in altdata are standardized
-            self.translate_altdata()
+        # make sure keys in altdata are standardized
+        self.translate_altdata()
 
-            # find exposure time, frame rate, uniformity
-            self.find_cadence()
+        # find exposure time, frame rate, uniformity
+        self.find_cadence()
 
-            # get averages and standard deviations
-            self.calc_stats()
+        # get averages and standard deviations
+        self.calc_stats()
 
-            # get the signal-to-noise ratio
-            self.calc_snr()
+        # get the signal-to-noise ratio
+        self.calc_snr()
 
-            # get the peak flux and S/N
-            self.calc_best()
+        # get the peak flux and S/N
+        self.calc_best()
 
-            # remove columns we don't use
-            self.drop_and_rename_columns()
-
-        except Exception:
-            # if construction fails, don't want to leave
-            # this object attached to the raw data object
-            self.raw_data = None
-            self.raw_data_id = None
-            raise
+        # remove columns we don't use
+        self.drop_and_rename_columns()
 
     def __repr__(self):
         string = []
@@ -1805,8 +1842,8 @@ class Lightcurve(DatasetMixin, Base):
         if self.altdata is None:
             return
 
-        for key, value in self.altdata.items():
-            if simplify(key) in ("exposure_time"):
+        for key, value in self.altdata.copy().items():
+            if simplify(key) == "exposuretime":
                 self.altdata["exptime"] = value
                 del self.altdata[key]
 
@@ -1842,7 +1879,7 @@ class Lightcurve(DatasetMixin, Base):
             good_points = np.logical_and(np.invert(np.isnan(fluxes)), fluxes > 0)
             mags = -2.5 * np.log10(fluxes, where=good_points) + PHOT_ZP
             mags[np.invert(good_points)] = np.nan
-            self.data[self.colmap["mag"]] = mags
+            self.data["mag"] = mags
             self.colmap["mag"] = "mag"
 
             # what about the errors?
@@ -1858,13 +1895,13 @@ class Lightcurve(DatasetMixin, Base):
         Find the exposure time and frame rate of the data.
         """
         if "exptime" in self.colmap:
-            self.exp_time = np.median(self.data[self.colmap["exptime"]])
+            self.exp_time = float(np.median(self.data[self.colmap["exptime"]]))
         elif self.altdata:
 
             keys = ["exp_time", "exptime", "exposure_time", "exposuretime"]
             for key in keys:
                 if key in self.altdata:
-                    self.exp_time = self.altdata[key]
+                    self.exp_time = float(self.altdata[key])
                     break
 
         if self.exp_time is None:
@@ -1873,10 +1910,9 @@ class Lightcurve(DatasetMixin, Base):
         if len(self.times) > 1:
             dt = np.diff(self.times.astype(np.datetime64))
             dt = dt.astype(np.int64) / 1e6  # convert microseconds to seconds
-            self.frame_rate = 1 / np.nanmedian(dt)
+            self.frame_rate = float(1 / np.nanmedian(dt))
 
-            # check the relative amplitude of the time difference
-            # between measurements.
+            # check the relative amplitude of the time difference between measurements.
             dt_amp = np.quantile(dt, 0.95) - np.quantile(dt, 0.05)
             dt_amp *= self.frame_rate  # divide by median(dt)
             self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
@@ -1891,8 +1927,8 @@ class Lightcurve(DatasetMixin, Base):
             flags = self.data[self.colmap["flag"]].values.astype(bool)
             fluxes = fluxes[np.invert(flags)]
 
-        self.flux_mean = np.nanmean(fluxes) if len(fluxes) else None
-        self.flux_rms = np.nanstd(fluxes) if len(fluxes) else None
+        self.flux_mean = float(np.nanmean(fluxes)) if len(fluxes) else None
+        self.flux_rms = float(np.nanstd(fluxes)) if len(fluxes) else None
 
         # robust statistics
         self.flux_mean_robust, self.flux_rms_robust = self.sigma_clipping(fluxes)
@@ -1961,7 +1997,7 @@ class Lightcurve(DatasetMixin, Base):
             mean_value = np.nanmedian(values)
             scatter = np.nanstd(values)
 
-        return mean_value, scatter
+        return float(mean_value), float(scatter)
 
     def calc_snr(self):
         fluxes = self.data[self.colmap["flux"]]
@@ -1989,10 +2025,10 @@ class Lightcurve(DatasetMixin, Base):
             flux = flux[np.invert(flags)]
 
         if len(snr) > 0:
-            self.snr_max = np.nanmax(snr)
-            self.snr_min = np.nanmin(snr)
-            self.flux_max = np.nanmax(flux)
-            self.flux_min = np.nanmin(flux)
+            self.snr_max = float(np.nanmax(snr))
+            self.snr_min = float(np.nanmin(snr))
+            self.flux_max = float(np.nanmax(flux))
+            self.flux_min = float(np.nanmin(flux))
 
     def drop_and_rename_columns(self):
         """
@@ -2019,7 +2055,7 @@ class Lightcurve(DatasetMixin, Base):
             self.colmap = {k: k for k in self.colmap.keys()}
 
             # add a column with the MJD
-            self.data["mjd"] = self.time_info["to mjd"](self.data["time"])
+            self.data["mjd"] = self.mjds
             self.colmap["mjd"] = "mjd"
 
         # what about other data types, e.g., xarrays?
@@ -2034,6 +2070,7 @@ class Lightcurve(DatasetMixin, Base):
         for k, v in self.__dict__.items():
             if k != "_sa_instance_state":
                 pass
+        # TODO: we need to finish this!
 
     def get_filter_plot_color(self):
         """

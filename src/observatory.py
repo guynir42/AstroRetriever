@@ -832,6 +832,46 @@ class VirtualObservatory:
             "download_from_observatory() must be implemented in subclass"
         )
 
+    def update_colmap_time_info(self, data, altdata):
+        """
+        Update the colmap (column mapping) and time_info dictionaries
+        for a RawPhotometry object.
+        In some cases the native dataset.DatasetMixin class
+        can find all the columns and figure out what they are.
+        For example, a ZTF dataframe would have a "mjd" column,
+        and the dataset can figure it out.
+        In such a case, this function returns empty dicts.
+        However, in other cases, the dataset might have weird column
+        names or names that don't have useful information to parse them.
+        For example, a TESS dataframe has columns like "TIME", and "PDCSAP_FLUX".
+        The "TIME" column name doesn't tell that it is an BJD with some offset,
+        and "PDCSAP_FLUX" is only one of the types of fluxes that are available.
+        In that case, the VirtualTESS object would implement this function
+        and make the required adjustments to the two dictionaries.
+        These dictionaries should be given to the initialization kwargs
+        of the raw dataset, to allow it to correctly parse the data.
+        The reduced datasets would already be correct, since they are
+        created from the raw dataset.
+
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            The raw data to be parsed. Sometimes the raw data
+            contains information about the columns or the time format.
+        altdata: dict
+            The altdata dictionary to be updated.
+            Sometimes the altdata contains info like the time offset.
+
+        Returns
+        -------
+        colmap: dict
+            A dictionary mapping the column names in the raw dataset
+            to the standardized names in the raw dataset.
+        time_info: dict
+            A dictionary with information about the time column in the raw dataset.
+        """
+        return {}, {}
+
     # TODO: this should be replaced by populate raw data?
     def populate_sources(self, files_glob="*.h5", num_files=None, num_sources=None):
         """
@@ -1093,14 +1133,13 @@ class VirtualObservatory:
             if hasattr(dataset, att):
                 init_kwargs[att] = getattr(dataset, att)
 
-        # TODO: What if dataset has not been committed yet and has no id?
-        init_kwargs["raw_data_id"] = dataset.id
         init_kwargs["raw_data"] = dataset
 
         # TODO: what if dataset has not been saved yet and has no filename?
         if "raw_data_filename" not in init_kwargs:
             init_kwargs["raw_data_filename"] = dataset.filename
 
+        # pass along other attributes like altdata
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}
             new_value = getattr(dataset, att)
@@ -1112,6 +1151,36 @@ class VirtualObservatory:
         init_kwargs["filtmap"] = self.pars.filtmap
 
         return init_kwargs
+
+    @staticmethod
+    def _check_dataset(dataset, DataClass, allowed_dataclasses=[pd.DataFrame]):
+        """
+        Check that the dataset is of the correct type,
+        and that the underlying data is the correct type
+        (usually this would be a pandas DataFrame).
+        Raises a TypeError if these conditions are false.
+
+        Parameters
+        ----------
+        dataset: a dataset object
+            The dataset to check.
+        DataClass: a subclass of src.dataset.Dataset
+            The type of dataset to check for.
+        allowed_dataclasses: list
+            A list of allowed types of dataset.
+            The default is a list containing only pandas DataFrames.
+
+        """
+        if not isinstance(dataset, DataClass):
+            raise TypeError(
+                f"Dataset must be a {DataClass.__name__} or a subclass! "
+                f"Got {type(dataset)} instead..."
+            )
+        if not isinstance(dataset.data, tuple(allowed_dataclasses)):
+            raise TypeError(
+                f"Dataset data must be a one of: {allowed_dataclasses}! "
+                f"Got {type(dataset.data)} instead..."
+            )
 
     def help(self=None, owner_pars=None):
         """
@@ -1358,16 +1427,9 @@ class VirtualDemoObs(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_dataclasses = pd.DataFrame
-        if not isinstance(dataset, RawPhotometry):
-            raise TypeError(
-                f"dataset must be a RawPhotometry object, not {type(dataset)}"
-            )
-        if not isinstance(dataset.data, allowed_dataclasses):
-            raise ValueError(
-                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                f"but data was given as a {type(dataset.data)} object."
-            )
+        self._check_dataset(
+            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
+        )
 
         # check the source magnitude is within the range
         if source and source.mag is not None and mag_range:

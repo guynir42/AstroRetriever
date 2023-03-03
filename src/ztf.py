@@ -221,17 +221,9 @@ class VirtualZTF(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_dataclasses = pd.DataFrame
-
-        if not isinstance(dataset, RawPhotometry):
-            raise ValueError(
-                f"Expected RawPhotometry object, got {type(dataset)} instead."
-            )
-        if not isinstance(dataset.data, allowed_dataclasses):
-            raise ValueError(
-                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                f"but data was given as a {type(dataset.data)} object."
-            )
+        self._check_dataset(
+            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
+        )
 
         data = dataset.data
 

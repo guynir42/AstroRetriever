@@ -12,11 +12,12 @@ from timeit import default_timer as timer
 
 from astroquery.mast import Observations, Catalogs
 from astropy.coordinates import SkyCoord
-from astropy.table import Table
+from astropy.time import Time
 import astropy.io.fits as fits
 
 # from src.source import angle_diff
 from src.observatory import VirtualObservatory, ParsObservatory
+from src.dataset import RawPhotometry, Lightcurve
 from src.catalog import Catalog
 
 # from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
@@ -56,6 +57,13 @@ class ParsObsTESS(ParsObservatory):
             "Observations query is to find data from TIC for given source.",
         )
 
+        self.use_simple_flux = self.add_par(
+            "use_simple_flux",
+            False,
+            bool,
+            "Use simple flux (SAP_FLUX) instead of calibrated flux (PDCSAP_FLUX) for TESS data.",
+        )
+
         self.download_pars_list = ["distance_thresh", "magdiff_thresh", "query_radius"]
 
         self._enforce_type_checks = True
@@ -83,24 +91,124 @@ class VirtualTESS(VirtualObservatory):
         self.pars = ParsObsTESS(**kwargs)
         super().__init__(name="tess")
 
-    def reduce_to_lightcurves(
+    def reduce_photometry(
         self,
         dataset,
         source=None,
         init_kwargs={},
-        mag_range=0.75,
-        radius=3,
-        gap=40,
-        drop_bad=False,
         **_,
     ):
         """
-        Not implemented yet.
-        Similar to reduce() from ztf.py.
+        Reduce the raw photometry to usable lightcurves.
+        The data is all from a single filter, but it should
+        still be split up into sectors.
+
+        Parameters
+        ----------
+        dataset: a src.dataset.RawPhotometry object
+            The raw data to reduce.
+        source: src.source.Source object
+            The source to which the dataset belongs.
+            If None, the reduction will not use any
+            data of the source, such as the expected
+            magnitude, the position, etc.
+        init_kwargs: dict
+            A dictionary of keyword arguments to be
+            passed to the constructor of the new dataset.
+        # TODO: need to add more parameters for advanced detrending
+
+         Returns
+        -------
+        a list of src.dataset.Lightcurve objects
+            The reduced datasets, after minimal processing.
+            The reduced datasets will have uniform filter,
+            each dataset will be sorted by time,
+            and some initial processing will be done,
+            using the "reducer" parameter (or function inputs).
         """
-        raise NotImplementedError(
-            "The reduction method is not yet implemented in VirtualTESS."
+        self._check_dataset(
+            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
         )
+
+        # mjd_conversion = dataset.time_info["to mjd"]
+        # c = dataset.colmap
+
+        # get the altdata from the init_kwargs (if it is there)
+        altdata = init_kwargs.pop("altdata", dataset.altdata)
+
+        # split the dataframe into sectors
+        dfs = dataset.data.groupby("SECTOR")
+
+        # figure out the exposure time
+        # ref: https://archive.stsci.edu/files/live/sites/mast/files/home/missions-and-data/active-missions/tess/_documents/EXP-TESS-ARC-ICD-TM-0014-Rev-F.pdf page 20
+        num_frames = altdata["CRBLKSZ"]  # this many frames per block
+        # brightest and dimmest frames are removed to avoid cosmic rays
+        if altdata["CRMITEN"] or altdata["CRSPLIT"]:
+            num_frames -= 2
+
+        # native exposure time for each TESS image is 2.0s minus 0.04s dead time
+        exp_time = 0.98 * 2.0 * num_frames
+
+        new_datasets = []
+        for df_tuple in dfs:
+            sector = df_tuple[0]
+            df = df_tuple[1]
+            new_altdata = altdata.copy()
+            new_altdata["sectors"] = sector
+            new_altdata["exptime"] = exp_time
+            if len(df) > 0:
+                new_datasets.append(
+                    Lightcurve(data=df, altdata=new_altdata, **init_kwargs)
+                )
+
+        # TODO: add more processing here (e.g., detrending)
+
+        return new_datasets
+
+    def update_colmap(self, data, altdata):
+        """
+        Update the column map of the dataset.
+        This parses the time and flux columns
+        correctly, including the specific time offset
+        of this mission and the preferred flux type.
+
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            The raw data to be parsed. Sometimes the raw data
+            contains information about the columns or the time format.
+        altdata: dict
+            The altdata dictionary to be updated.
+            Sometimes the altdata contains info like the time offset.
+
+        Returns
+        -------
+        colmap: dict
+            A dictionary mapping the column names in the raw dataset
+            to the standardized names in the raw dataset.
+        time_info: dict
+            A dictionary with information about the time column in the raw dataset.
+        """
+        colmap = {}
+        time_info = {}
+
+        time_info["offset"] = 2457000.0  # TODO: get this from the altdata
+        time_info["format"] = "jd"
+        # time_info["to datetime"] = lambda t: Time(
+        #     t - offset, format="jd", scale="utc"
+        # ).datetime
+        # time_info["to mjd"] = lambda t: Time(
+        #     t - offset, format="jd", scale="utc"
+        # ).mjd
+        colmap["time"] = "TIME"
+
+        colmap["flux"] = "PDCSAP_FLUX"
+        colmap["fluxerr"] = "PDCSAP_FLUX_ERR"
+        if self.pars.use_simple_flux:
+            colmap["flux"] = "SAP_FLUX"
+            colmap["fluxerr"] = "SAP_FLUX_ERR"
+
+        return colmap, time_info
 
     def download_from_observatory(
         self,
@@ -209,7 +317,8 @@ class VirtualTESS(VirtualObservatory):
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
-        header_attributes_to_save = [
+        file_header_attributes_to_save = [
+            "CCD",
             "TICVER",
             "RA_OBJ",
             "DEC_OBJ",
@@ -224,43 +333,63 @@ class VirtualTESS(VirtualObservatory):
             "CRSPOC",
             "CRBLKSZ",
         ]
+        lightcurve_header_attributes_to_save = [
+            "BJDREFF",
+            "BJDREFI",
+            "EXPOSURE",
+            "FRAMETIM",
+            "INT_TIME",
+            "LIVETIME",
+        ]
+
         df_list = []
         altdata = {}
         altdata["TICID"] = ticid
-        altdata["source mag"] = mag
-        altdata["source coordinates"] = f"{ra} {dec}"
+        altdata["source_mag"] = mag
+        altdata["source_coordinates"] = f"{ra} {dec}"
         sectors = set()
         for i in lc_indices:
             uri = data_query["dataURL"][i]
-            hdul0header, hdul1data, hdul2data, time_units = self._try_open_fits(
-                base_url + uri
-            )
-            table = Table(hdul1data)
+            (
+                file_header,
+                lightcurve_data,
+                lightcurve_header,
+                aperture_array,
+                aperture_header,
+            ) = self._try_open_fits(base_url + uri)
 
-            table["TICID"] = hdul0header["TICID"]
-            sectors.add(hdul0header["SECTOR"])
-            table["SECTOR"] = hdul0header["SECTOR"]
-            table[time_units] = table["TIME"]
-            table.remove_column("TIME")
-            df_list.append(table.to_pandas())
+            sectors.add(file_header["SECTOR"])
+            lightcurve_data["SECTOR"] = file_header["SECTOR"]
+            df_list.append(lightcurve_data)
 
             # TODO: what if below attributes have diff values
-            # over all lightcurve files? save all?
-            # right now we only save values for first file
-            for attribute in header_attributes_to_save:
+            #  over all lightcurve files? save all?
+            #  right now we only save values for first file
+            for attribute in file_header_attributes_to_save:
                 if attribute not in altdata:
-                    altdata[attribute] = hdul0header[attribute]
+                    altdata[attribute] = file_header[attribute]
 
-            if "aperture matrix" not in altdata:
+            for attribute in lightcurve_header_attributes_to_save:
+                if attribute not in altdata:
+                    altdata[attribute] = lightcurve_header[attribute]
+
+            if "file_header" not in altdata:
+                altdata["file_header"] = file_header
+            if "lightcurve_header" not in altdata:
+                altdata["lightcurve_header"] = lightcurve_header
+            if "aperture_matrix" not in altdata:
                 # convert the aperture matrix into a nested list
-                altdata["aperture matrix"] = hdul2data.tolist()
+                altdata["aperture_matrix"] = aperture_array.tolist()
+            if "aperture_header" not in altdata:
+                altdata["aperture_header"] = aperture_header
 
         data = pd.concat(df_list, ignore_index=True)
         altdata["sectors"] = list(sectors)
 
         return data, altdata
 
-    # def download_by_tic(self, tic_number, verbose=0):
+    def download_by_tic(self, tic_number, verbose=0):
+        pass  # TODO: finish this
 
     def _try_query(self, query_fn, params, verbose):
         """
@@ -284,19 +413,45 @@ class VirtualTESS(VirtualObservatory):
         """
         Tries to open fits file repeatedly, ignoring any timeout errors.
         Returns first successful response, otherwise raises TimeoutError.
+
+        Returns
+        -------
+        file_header: dict
+            Header of the FITS file.
+        lightcurve_data: np.ndarray
+            Data from the first extension,
+            including the lightcurve for this file.
+        lightcurve_header: dict
+            Header of the first extension,
+            including metadata for the lightcurve.
+        aperture_array: nested 2D list
+            Data from the second extension,
+            including an aperture mask for this source.
+        aperture_header: dict
+            Header of the second extension,
+            with some metadata about the aperture.
         """
         for _ in range(10):
             try:
-                header0 = None
-                data1 = None
-                data2 = None
-                time_units = None
+                # TODO: can we store some of the extra info from FITS
+                #  e.g., the units on the data columns?
                 with fits.open(url, cache=False) as hdul:
-                    header0 = hdul[0].header
-                    data1 = hdul[1].data
-                    data2 = hdul[2].data
-                    time_units = hdul[1].header["TUNIT1"]
-                return header0, data1, data2, time_units
+                    file_header = dict(hdul[0].header)
+                    lightcurve_data = pd.DataFrame(hdul[1].data)
+                    lightcurve_header = dict(hdul[1].header)
+                    aperture_array = hdul[2].data
+                    aperture_header = dict(hdul[2].header)
+
+                    # rename the TIME column of the lightcurve
+                    # this will help make sure we know the units and offset from JD
+                    # lightcurve_data.rename(columns={"TIME": lightcurve_header['TUNIT1']}, inplace=True)
+                return (
+                    file_header,
+                    lightcurve_data,
+                    lightcurve_header,
+                    aperture_array,
+                    aperture_header,
+                )
             except socket.timeout:
                 continue
 
@@ -311,7 +466,7 @@ class VirtualTESS(VirtualObservatory):
 
 
 if __name__ == "__main__":
-    tess = VirtualTESS(project="testing VirtualTESS", verbose=10)
+    tess = VirtualTESS(project="testing VirtualTESS", verbose=0)
     white_dwarfs = Catalog(default="wd")
     white_dwarfs.load()
 
@@ -327,7 +482,7 @@ if __name__ == "__main__":
             continue
 
         print(f"index={i}, cat_row: {cat_row}")
-        tess.fetch_source(cat_row, reduce=False)
+        tess.fetch_source(cat_row, reduce=True, save=False)
 
         # result = tess.download_from_observatory(cat_row, verbose=1)
         # if not result[1]:  # failed fetch returns empty dict
@@ -349,4 +504,5 @@ if __name__ == "__main__":
         #     key="df",
         # )
 
-    print(f"\n\nFinal Count: {count}")
+    print(f"\nFinal Count: {count}")
+    print(tess.latest_source.raw_photometry[0].loaded_status)
