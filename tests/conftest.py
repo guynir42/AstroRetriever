@@ -84,7 +84,7 @@ def raw_phot():
 
 @pytest.fixture
 def raw_phot_no_exptime():
-    df = RawPhotometry.make_random_photometry(number=100)
+    df = RawPhotometry.make_random_photometry(number=100, exptime=None)
     data = RawPhotometry(
         data=df,
         folder="data_temp",
