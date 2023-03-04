@@ -247,7 +247,7 @@ class VirtualTESS(VirtualObservatory):
                         raw_data = rd
                         break
 
-            if raw_data is not None:
+            if raw_data is not None and "file_headers" in raw_data.altdata:
                 source.local_names[self.name.upper()] = raw_data.altdata[
                     "file_headers"
                 ][0]["TICID"]
