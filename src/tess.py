@@ -234,6 +234,24 @@ class VirtualTESS(VirtualObservatory):
 
         return colmap, time_info
 
+    def _append_local_name(self, source):
+        """
+        Append to the local_names of the source.
+        In this case the alias is the TIC ID.
+        """
+        if self.name.upper() not in source.local_names:
+            raw_data = None
+            for dt in self.pars.data_types:
+                for rd in getattr(source, f"raw_{dt}"):
+                    if rd.observatory == self.name:
+                        raw_data = rd
+                        break
+
+            if raw_data is not None:
+                source.local_names[self.name.upper()] = raw_data.altdata[
+                    "file_headers"
+                ][0]["TICID"]
+
     @staticmethod
     def _get_exposure_time(altdata):
         """
@@ -377,7 +395,7 @@ class VirtualTESS(VirtualObservatory):
 
         df_list = []
         altdata = {}
-        altdata["TICID"] = ticid
+        altdata["TICID"] = int(ticid)
 
         sectors = set()
         for i in lc_indices:

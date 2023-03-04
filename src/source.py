@@ -155,6 +155,16 @@ class Source(Base, conesearch_alchemy.Point):
             doc="A list of additional names for this source",
         )
 
+        local_names = sa.Column(
+            JSONB,
+            nullable=False,
+            default={},
+            doc="A dictionary of local names for this source, "
+            "where the key is the observatory name (upper case)"
+            "and the value is the name of the source in each observatories"
+            "internal naming convention. ",
+        )
+
         # magnitude of the source
         mag = sa.Column(
             sa.Float,
@@ -205,7 +215,8 @@ class Source(Base, conesearch_alchemy.Point):
         self.mag = kwargs.pop("mag", None)
         self.mag_err = kwargs.pop("mag_err", None)
         self.mag_filter = kwargs.pop("mag_filter", None)
-        self.alias = kwargs.pop("alias", None)
+        self.aliases = kwargs.pop("alias", [])
+        self.local_names = kwargs.pop("local_names", {})
         self.cat_index = kwargs.pop("cat_index", None)
         self.cfg_hash = ""
 

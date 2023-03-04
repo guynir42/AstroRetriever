@@ -758,6 +758,9 @@ class VirtualObservatory:
 
             # add the raw data to the source
             getattr(source, f"raw_{dt}").append(raw_data)
+            self._append_local_name(
+                source
+            )  # if observatory has local name for this source
 
             if reduce:  # reduce the data
                 reduced_datasets = source.get_data(
@@ -878,6 +881,16 @@ class VirtualObservatory:
             A dictionary with information about the time column in the raw dataset.
         """
         return {}, {}
+
+    def _append_local_name(self, source):
+        """
+        Append to the local_names of the source.
+        This allows the source to be indexed based on the name or ID
+        it has in the internal naming convention of each observatory.
+        If the observatory subclass does not override this function,
+        it remains a no-op and no alias is added.
+        """
+        pass
 
     # TODO: this should be replaced by populate raw data?
     def populate_sources(self, files_glob="*.h5", num_files=None, num_sources=None):
