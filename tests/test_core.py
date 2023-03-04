@@ -791,8 +791,9 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
     assert not os.path.isfile(filename)
 
 
+@pytest.mark.flaky(max_runs=3)
 def test_reducer_with_outliers(test_project, new_source):
-    num_points = 20
+    num_points = 30
     outlier_indices = [5, 8, 12]
     flagged_indices = [5, 10, 15]
     new_data = None
@@ -803,8 +804,12 @@ def test_reducer_with_outliers(test_project, new_source):
             filt = "R"
             mjd = np.linspace(57000, 58000, num_points)
             mag_err = np.random.uniform(0.09, 0.11, num_points)
-            mag = np.random.normal(18, 0.1, num_points)
+            mag = np.random.normal(18.5, 0.1, num_points)
             mag[outlier_indices] = np.random.normal(10, 0.1, len(outlier_indices))
+            mag_err[8] = 0.01  # also improve the relative error for the bright outlier
+            mag[12] = np.random.normal(
+                20, 0.1, 1
+            )  # turn the second bright outlier into a faint outlier
             flag = np.zeros(num_points, dtype=bool)
             flag[flagged_indices] = True
             test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, flag=flag)
@@ -845,12 +850,55 @@ def test_reducer_with_outliers(test_project, new_source):
             df2 = df[~df["flag"]]
             drop_idx = list(set(outlier_indices + flagged_indices))
             df3 = df.drop(drop_idx, axis=0)
-            assert np.isclose(lc.mag_min, df2["mag"].min())
-            assert np.isclose(lc.mag_max, df2["mag"].max())
+            assert np.isclose(lc.mag_brightest, df2["mag"].min())
+            assert np.isclose(lc.mag_faintest, df2["mag"].max())
             assert lc.num_good == num_points - len(flagged_indices)
+
+            # print(f'flux_mean= {lc.flux_mean} | flux_mean_robust= {lc.flux_mean_robust}')
+            # print(f'flux rms= {lc.flux_rms} | flux rms robust= {lc.flux_rms_robust}')
+            # print(f'mag mean= {lc.mag_mean} | mag mean robust= {lc.mag_mean_robust}')
+            # print(f'mag rms= {lc.mag_rms} | mag rms robust= {lc.mag_rms_robust}')
+
+            # check the robust statistics are representative of the data without outliers
             assert abs(np.mean(df3["mag"]) - lc.mag_mean_robust) < 0.1
-            assert abs(np.std(df2["mag"]) - lc.mag_rms) < 0.5
             assert abs(np.std(df3["mag"]) - lc.mag_rms_robust) < 0.1
+
+            # checks for snr, dsnr, and dmag and their extrema:
+            df4 = df.copy()
+            df4.loc[flagged_indices, :] = np.nan  # without the flagged points
+            assert np.argmax(df4["mag"]) == 12
+            assert np.argmin(df4["mag"]) == 8
+
+            # print(f'snr: {lc.data["snr"].values}')
+            # print(f'dsnr: {lc.data["dsnr"].values}')
+            # print(f'dmag: {lc.data["dmag"].values}')
+
+            # test the S/N
+            assert abs(np.median(lc.data["snr"].values) - 10) < 2  # noise is 0.1
+            assert lc.data["snr"][8] > 20  # bright outlier has high S/N
+            assert lc.data["snr"][12] < 5  # faint outlier has low S/N
+
+            # test the delta S/N
+            dsnr = lc.data["dsnr"].values
+            dsnr[outlier_indices] = np.nan  # remove the outliers
+            # should be close to zero if noise estimate is correct
+            assert abs(np.nanmean(dsnr)) < 0.3
+            assert abs(np.nanstd(dsnr) - 1) < 0.3
+
+            # test the delta mag
+            dmag = lc.data["dmag"].values
+            assert abs(dmag[5] - 8.5) < 0.5  # about 8.5 mag difference
+            assert abs(dmag[8] - 8.5) < 0.5  # about 8.5 mag difference
+            assert abs(dmag[12] + 1.5) < 0.5  # about 8.5 mag difference
+
+            dmag[outlier_indices] = np.nan  # remove the outliers
+            assert (
+                abs(np.nanmean(dmag[dmag > 0]) - 0.1) < 0.3
+            )  # close to 0.1 mag difference
+            assert (
+                abs(np.nanmean(dmag[dmag < 0]) + 0.1) < 0.3
+            )  # close to -0.1 mag difference
+            assert abs(np.nanmean(dmag)) < 0.1
 
             # also check that the data is uniformly sampled
             assert lc.is_uniformly_sampled

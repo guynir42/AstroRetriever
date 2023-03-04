@@ -35,7 +35,7 @@ lock = threading.Lock()
 import src.database
 
 PHOT_ZP = 23.9
-LOG_BASES = np.log(10) / 2.5
+LOG_BASE = np.log(10) / 2.5
 
 AUTOLOAD = True
 AUTOSAVE = False
@@ -1578,8 +1578,8 @@ class Lightcurve(DatasetMixin, Base):
 
         @property
         def mag_rms(self):
-            if self.flux_mean and self.flux_rms is not None:
-                return self.flux_rms / self.flux_mean / LOG_BASES
+            if self.flux_mean_robust and self.flux_rms is not None:
+                return self.flux_rms / self.flux_mean_robust / LOG_BASE
             else:
                 return None
 
@@ -1607,7 +1607,7 @@ class Lightcurve(DatasetMixin, Base):
         @property
         def mag_rms_robust(self):
             if self.flux_mean_robust and self.flux_rms_robust is not None:
-                return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+                return self.flux_rms_robust / self.flux_mean_robust / LOG_BASE
             else:
                 return None
 
@@ -1619,7 +1619,7 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         @property
-        def mag_min(self):
+        def mag_brightest(self):
             if self.flux_max is None:
                 return None
             return -2.5 * np.log10(self.flux_max) + PHOT_ZP
@@ -1632,7 +1632,7 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         @property
-        def mag_max(self):
+        def mag_faintest(self):
             if self.flux_min is None:
                 return None
             return -2.5 * np.log10(self.flux_min) + PHOT_ZP
@@ -1649,6 +1649,41 @@ class Lightcurve(DatasetMixin, Base):
             nullable=True,
             index=True,
             doc="Minimum S/N of the dataset",
+        )
+
+        snr_median = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Mean S/N of the dataset",
+        )
+
+        dsnr_max = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum delta S/N of the dataset",
+        )
+
+        dsnr_min = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum delta S/N of the dataset",
+        )
+
+        dmag_brightest = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum delta mag (brightest magnitude) of the change of flux",
+        )
+
+        dmag_faintest = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum delta mag (faintest magnitude) of the change of flux",
         )
 
         filter = sa.Column(
@@ -1889,7 +1924,7 @@ class Lightcurve(DatasetMixin, Base):
             # what about the errors?
             if "magerr" in self.colmap:
                 magerr = self.data[self.colmap["magerr"]]
-                self.data["fluxerr"] = fluxes * magerr * LOG_BASES
+                self.data["fluxerr"] = fluxes * magerr * LOG_BASE
                 self.colmap["fluxerr"] = "fluxerr"
 
         # calculate the magnitudes from the fluxes
@@ -1905,7 +1940,7 @@ class Lightcurve(DatasetMixin, Base):
             # what about the errors?
             if "fluxerr" in self.colmap:
                 fluxerr = self.data[self.colmap["fluxerr"]]
-                magerr = fluxerr / fluxes / LOG_BASES
+                magerr = fluxerr / fluxes / LOG_BASE
                 magerr[np.invert(good_points)] = np.nan
                 self.data["magerr"] = magerr
                 self.colmap["magerr"] = "magerr"
@@ -2016,7 +2051,7 @@ class Lightcurve(DatasetMixin, Base):
                 break
 
             num_values_prev = num_values
-            mean_value = np.nanmedian(values)
+            mean_value = np.nanmean(values)
             scatter = np.nanstd(values)
 
         return float(mean_value), float(scatter)
@@ -2029,8 +2064,19 @@ class Lightcurve(DatasetMixin, Base):
         else:
             worst_err = fluxerrs
 
-        self.data["snr"] = (fluxes - self.flux_mean_robust) / worst_err
+        # signal to noise ratio of flux (using the biggest error of the two)
+        self.data["snr"] = fluxes / worst_err
+
+        # signal to noise ratio of the flux residuals after removing the mean
+        # TODO: replace this with the s/n of the "detrend flux"?
+        self.data["dsnr"] = (fluxes - self.flux_mean_robust) / worst_err
+
+        # the amount of magnification of the flux relative to the mean, in units of magnitudes (delta-mag)
+        self.data["dmag"] = 2.5 * np.log10(fluxes / self.flux_mean_robust)
+
         self.colmap["snr"] = "snr"
+        self.colmap["dsnr"] = "dsnr"
+        self.colmap["dmag"] = "dmag"
 
     def calc_best(self):
         """
@@ -2039,18 +2085,29 @@ class Lightcurve(DatasetMixin, Base):
         """
 
         snr = self.data[self.colmap["snr"]]
+        dsnr = self.data[self.colmap["dsnr"]]
+        dmag = self.data[self.colmap["dmag"]]
         flux = self.data[self.colmap["flux"]]
 
         if "flag" in self.colmap:
             flags = self.data[self.colmap["flag"]].values.astype(bool)
-            snr = snr[np.invert(flags)]
             flux = flux[np.invert(flags)]
+            snr = snr[np.invert(flags)]
+            dsnr = dsnr[np.invert(flags)]
+            dmag = dmag[np.invert(flags)]
 
         if len(snr) > 0:
-            self.snr_max = float(np.nanmax(snr))
-            self.snr_min = float(np.nanmin(snr))
             self.flux_max = float(np.nanmax(flux))
             self.flux_min = float(np.nanmin(flux))
+
+            self.snr_max = float(np.nanmax(snr))
+            self.snr_min = float(np.nanmin(snr))
+
+            self.dsnr_max = float(np.nanmax(dsnr))
+            self.dsnr_min = float(np.nanmin(dsnr))
+
+            self.dmag_brightest = float(np.nanmax(dmag))
+            self.dmag_faintest = float(np.nanmin(dmag))
 
     def drop_and_rename_columns(self):
         """

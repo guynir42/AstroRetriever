@@ -839,7 +839,7 @@ class VirtualObservatory:
             "download_from_observatory() must be implemented in subclass"
         )
 
-    def get_colmap_time_info(self, data, altdata):
+    def get_colmap_time_info(self, data=None, altdata=None):
         """
         Update the colmap (column mapping) and time_info dictionaries
         for a RawPhotometry object.
@@ -862,10 +862,10 @@ class VirtualObservatory:
 
         Parameters
         ----------
-        data: pandas.DataFrame
+        data: pandas.DataFrame (optional)
             The raw data to be parsed. Sometimes the raw data
             contains information about the columns or the time format.
-        altdata: dict
+        altdata: dict (optional)
             The altdata dictionary to be updated.
             Sometimes the altdata contains info like the time offset.
 

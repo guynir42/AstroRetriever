@@ -64,6 +64,13 @@ class ParsObsTESS(ParsObservatory):
             "Use simple flux (SAP_FLUX) instead of calibrated flux (PDCSAP_FLUX) for TESS data.",
         )
 
+        self.use_psf_positions = self.add_par(
+            "use_psf_positions",
+            False,
+            bool,
+            "Use PSF positions instead of centroids for TESS data.",
+        )
+
         self.download_pars_list = ["distance_thresh", "magdiff_thresh", "query_radius"]
 
         self._enforce_type_checks = True
@@ -138,24 +145,23 @@ class VirtualTESS(VirtualObservatory):
 
         # split the dataframe into sectors
         dfs = dataset.data.groupby("SECTOR")
-
-        # figure out the exposure time
-        # ref: https://archive.stsci.edu/files/live/sites/mast/files/home/missions-and-data/active-missions/tess/_documents/EXP-TESS-ARC-ICD-TM-0014-Rev-F.pdf page 20
-        num_frames = altdata["CRBLKSZ"]  # this many frames per block
-        # brightest and dimmest frames are removed to avoid cosmic rays
-        if altdata["CRMITEN"] or altdata["CRSPLIT"]:
-            num_frames -= 2
-
-        # native exposure time for each TESS image is 2.0s minus 0.04s dead time
-        exp_time = 0.98 * 2.0 * num_frames
-
+        sectors = [df[0] for df in dfs]
         new_datasets = []
         for df_tuple in dfs:
             sector = df_tuple[0]
             df = df_tuple[1]
             new_altdata = altdata.copy()
             new_altdata["sectors"] = sector
-            new_altdata["exptime"] = exp_time
+            for i in range(len(sectors)):
+                if altdata["file_headers"][i]["SECTOR"] == sectors[i]:
+                    new_altdata["file_headers"] = [altdata["file_headers"][i]]
+                    new_altdata["lightcurve_headers"] = [
+                        altdata["lightcurve_headers"][i]
+                    ]
+                    new_altdata["aperture_arrays"] = [altdata["aperture_arrays"][i]]
+                    new_altdata["aperture_headers"] = [altdata["aperture_headers"][i]]
+                    break
+
             if len(df) > 0:
                 new_datasets.append(
                     Lightcurve(data=df, altdata=new_altdata, **init_kwargs)
@@ -165,7 +171,7 @@ class VirtualTESS(VirtualObservatory):
 
         return new_datasets
 
-    def get_colmap_time_info(self, data, altdata):
+    def get_colmap_time_info(self, data=None, altdata=None):
         """
         Update the column map of the dataset.
         This parses the time and flux columns
@@ -183,10 +189,10 @@ class VirtualTESS(VirtualObservatory):
 
         Returns
         -------
-        colmap: dict
+        colmap: dict (optional)
             A dictionary mapping the column names in the raw dataset
             to the standardized names in the raw dataset.
-        time_info: dict
+        time_info: dict (optional)
             A dictionary with information about the time column in the raw dataset.
         """
         colmap = {}
@@ -208,7 +214,59 @@ class VirtualTESS(VirtualObservatory):
             colmap["flux"] = "SAP_FLUX"
             colmap["fluxerr"] = "SAP_FLUX_ERR"
 
+        colmap["time_corr"] = "TIMECORR"
+        colmap["bg"] = "SAP_BKG"
+        colmap["bg_err"] = "SAP_BKG_ERR"
+
+        colmap["pos1"] = "MOM_CENTR1"
+        colmap["pos1_err"] = "MOM_CENTR1_ERR"
+        colmap["pos2"] = "MOM_CENTR2"
+        colmap["pos2_err"] = "MOM_CENTR2_ERR"
+
+        if self.pars.use_psf_positions:
+            colmap["pos1"] = "PSF_CENTR1"
+            colmap["pos1_err"] = "PSF_CENTR1_ERR"
+            colmap["pos2"] = "PSF_CENTR2"
+            colmap["pos2_err"] = "PSF_CENTR2_ERR"
+
+        colmap["pos_corr1"] = "POS_CORR1"
+        colmap["pos_corr2"] = "POS_CORR2"
+
         return colmap, time_info
+
+    @staticmethod
+    def _get_exposure_time(altdata):
+        """
+        Get the exposure time of the observations
+        from the altdata.
+        ref: page 20 of https://archive.stsci.edu/files/live/sites/mast/files/home/missions-and-data/active-missions/tess/_documents/EXP-TESS-ARC-ICD-TM-0014-Rev-F.pdf
+        Returns
+        -------
+        exp_time: float
+            The exposure time of the observations.
+        """
+
+        if "lightcurve_headers" in altdata and len(altdata["lightcurve_headers"]) > 0:
+            header = altdata["lightcurve_headers"][0]
+            frame_time = header["INT_TIME"]
+        else:
+            frame_time = 0.98 * 2.0
+
+        if "file_headers" in altdata and len(altdata["file_headers"]) > 0:
+            header = altdata["file_headers"][0]
+            num_frames = header["CRBLKSZ"]  # this many frames per block
+            # brightest and dimmest frames are removed to avoid cosmic rays
+            if header["CRMITEN"] or header["CRSPOC"]:
+                num_frames -= 2
+
+            # native exposure time for each TESS image is 2.0s minus 0.04s dead time
+            exp_time = frame_time * num_frames
+        else:
+            exp_time = None
+
+        altdata["EXP_TIME"] = exp_time
+
+        return exp_time
 
     def download_from_observatory(
         self,
@@ -317,36 +375,10 @@ class VirtualTESS(VirtualObservatory):
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
-        file_header_attributes_to_save = [
-            "CCD",
-            "TICVER",
-            "RA_OBJ",
-            "DEC_OBJ",
-            "PMRA",
-            "PMDEC",
-            "TESSMAG",
-            "TEFF",
-            "LOGG",
-            "MH",
-            "RADIUS",
-            "CRMITEN",
-            "CRSPOC",
-            "CRBLKSZ",
-        ]
-        lightcurve_header_attributes_to_save = [
-            "BJDREFF",
-            "BJDREFI",
-            "EXPOSURE",
-            "FRAMETIM",
-            "INT_TIME",
-            "LIVETIME",
-        ]
-
         df_list = []
         altdata = {}
         altdata["TICID"] = ticid
-        altdata["source_mag"] = mag
-        altdata["source_coordinates"] = f"{ra} {dec}"
+
         sectors = set()
         for i in lc_indices:
             uri = data_query["dataURL"][i]
@@ -360,28 +392,27 @@ class VirtualTESS(VirtualObservatory):
 
             sectors.add(file_header["SECTOR"])
             lightcurve_data["SECTOR"] = file_header["SECTOR"]
+            # get the exposure time from the header
+            lightcurve_data["EXPTIME"] = lightcurve_header["EXPOSURE"]
             df_list.append(lightcurve_data)
 
-            # TODO: what if below attributes have diff values
-            #  over all lightcurve files? save all?
-            #  right now we only save values for first file
-            for attribute in file_header_attributes_to_save:
-                if attribute not in altdata:
-                    altdata[attribute] = file_header[attribute]
+            if "file_headers" not in altdata:
+                altdata["file_headers"] = []
+            altdata["file_headers"].append(file_header)
 
-            for attribute in lightcurve_header_attributes_to_save:
-                if attribute not in altdata:
-                    altdata[attribute] = lightcurve_header[attribute]
+            if "lightcurve_headers" not in altdata:
+                altdata["lightcurve_headers"] = []
+            altdata["lightcurve_headers"].append(lightcurve_header)
 
-            if "file_header" not in altdata:
-                altdata["file_header"] = file_header
-            if "lightcurve_header" not in altdata:
-                altdata["lightcurve_header"] = lightcurve_header
-            if "aperture_matrix" not in altdata:
-                # convert the aperture matrix into a nested list
-                altdata["aperture_matrix"] = aperture_array.tolist()
-            if "aperture_header" not in altdata:
-                altdata["aperture_header"] = aperture_header
+            if "aperture_arrays" not in altdata:
+                altdata["aperture_arrays"] = []
+            # convert the aperture matrix into a nested list
+            altdata["aperture_arrays"].append(aperture_array.tolist())
+            if "aperture_headers" not in altdata:
+                altdata["aperture_headers"] = []
+            altdata["aperture_headers"].append(aperture_header)
+
+        self._get_exposure_time(altdata)
 
         data = pd.concat(df_list, ignore_index=True)
         altdata["sectors"] = list(sectors)
@@ -482,7 +513,7 @@ if __name__ == "__main__":
             continue
 
         print(f"index={i}, cat_row: {cat_row}")
-        tess.fetch_source(cat_row, reduce=True, save=False)
+        tess.fetch_source(cat_row, reduce=True, save=1)
 
         # result = tess.download_from_observatory(cat_row, verbose=1)
         # if not result[1]:  # failed fetch returns empty dict
