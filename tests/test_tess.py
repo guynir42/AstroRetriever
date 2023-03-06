@@ -111,9 +111,8 @@ def test_tess_reduction(tess_project, new_source):
     raw_data.load()
     new_source.raw_photometry.append(raw_data)
 
-    new_lcs = tess.reduce(
-        source=new_source, data_type="photometry"
-    )  # TODO: add more advanced reduction like detrend
+    # TODO: add more advanced reduction like detrend
+    new_lcs = tess.reduce(source=new_source, data_type="photometry")
     new_lc_epochs = np.sum([lc.number for lc in new_lcs])
 
     assert raw_data.number == new_lc_epochs
@@ -136,3 +135,46 @@ def test_tess_reduction(tess_project, new_source):
         assert np.array_equal(mjds, np.sort(mjds))
 
     # TODO: more tests for this specific observatory reduction?
+
+
+def test_tess_analysis(tess_project, new_source):
+    # make sure the project has tess observatory:
+    assert len(tess_project.observatories) == 1
+    assert "tess" in tess_project.observatories
+    tess = tess_project.observatories["tess"]
+    assert isinstance(tess, VirtualTESS)
+
+    tess.pars.save_reduced = False
+
+    # load the data into a RawData object
+    new_source.project = "test_TESS"
+    colmap, time_info = tess.get_colmap_time_info()
+    raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
+    raw_data.filename = "TESS_photometry.h5"
+    raw_data.folder = "DATA"
+    raw_data.load()
+    new_source.raw_photometry.append(raw_data)
+
+    reduced_lcs = tess.reduce(source=new_source, data_type="photometry")
+
+    tess_project.analysis.pars.save_anything = False
+    tess_project.analysis.analyze_sources(new_source)
+    proc_lcs = new_source.processed_photometry
+
+    assert len(reduced_lcs) == len(proc_lcs)
+
+    # check the number of qflat frames in the first light curve
+    num_qflags = np.sum(proc_lcs[0].data["qflag"] > 0)
+
+    # add a fake position offset to the first reduced light curve:
+    first_good_bin = np.where(proc_lcs[0].data["flag"] == 0)[0][0]
+    mean_pos1 = np.nanmedian(proc_lcs[0].data["pos1"])
+    reduced_lcs[0].data.loc[first_good_bin, "pos1"] = mean_pos1 + 3
+    new_source.reset_analysis()
+    tess_project.analysis.analyze_sources(new_source)
+    proc_lcs = new_source.processed_photometry
+
+    new_num_qflags = np.sum(proc_lcs[0].data["qflag"] > 0)
+    assert num_qflags + 1 == new_num_qflags
+
+    # TODO: test for other things, like adding a flare
