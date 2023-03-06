@@ -286,7 +286,7 @@ class Project:
         analysis_kwargs = kwargs.pop("analysis_kwargs", {})
 
         # this loads parameters from file, then from kwargs:
-        self.pars = ParsProject(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
 
         # add some default keys like "project" and "verbose" to kwargs
         self.pars.add_defaults_to_dict(obs_kwargs)
@@ -335,6 +335,18 @@ class Project:
 
         self.sources = None  # list to be filled by analysis
         self.num_sources_scanned = None
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsAnalysis object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsProject(**kwargs)
 
     @staticmethod
     def _get_observatory_classes(name):

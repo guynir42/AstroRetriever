@@ -95,8 +95,20 @@ class VirtualTESS(VirtualObservatory):
         The only difference is that the obs_name is set to "tess".
         """
 
-        self.pars = ParsObsTESS(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         super().__init__(name="tess")
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsObsTESS object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsObsTESS(**kwargs)
 
     def reduce_photometry(
         self,
@@ -152,6 +164,7 @@ class VirtualTESS(VirtualObservatory):
             df = df_tuple[1]
             new_altdata = altdata.copy()
             new_altdata["sectors"] = sector
+            new_altdata["filter"] = "TESS"
             for i in range(len(sectors)):
                 if altdata["file_headers"][i]["SECTOR"] == sectors[i]:
                     new_altdata["file_headers"] = [altdata["file_headers"][i]]
@@ -431,6 +444,7 @@ class VirtualTESS(VirtualObservatory):
             altdata["aperture_headers"].append(aperture_header)
 
         self._get_exposure_time(altdata)
+        altdata["filter"] = "TESS"
 
         data = pd.concat(df_list, ignore_index=True)
         altdata["sectors"] = list(sectors)

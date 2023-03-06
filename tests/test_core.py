@@ -724,7 +724,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
             # make sure the average flux is correct
             flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
-            assert np.isclose(lc.flux_mean, np.mean(flux))
+            assert np.isclose(lc.flux_mean, np.nanmean(flux))
 
             # make sure flux min/max are correct
             assert np.isclose(lc.flux_min, np.min(flux))
@@ -860,8 +860,8 @@ def test_reducer_with_outliers(test_project, new_source):
             # print(f'mag rms= {lc.mag_rms} | mag rms robust= {lc.mag_rms_robust}')
 
             # check the robust statistics are representative of the data without outliers
-            assert abs(np.mean(df3["mag"]) - lc.mag_mean_robust) < 0.1
-            assert abs(np.std(df3["mag"]) - lc.mag_rms_robust) < 0.1
+            assert abs(np.nanmean(df3["mag"]) - lc.mag_mean_robust) < 0.1
+            assert abs(np.nanstd(df3["mag"]) - lc.mag_rms_robust) < 0.1
 
             # checks for snr, dsnr, and dmag and their extrema:
             df4 = df.copy()
@@ -874,7 +874,7 @@ def test_reducer_with_outliers(test_project, new_source):
             # print(f'dmag: {lc.data["dmag"].values}')
 
             # test the S/N
-            assert abs(np.median(lc.data["snr"].values) - 10) < 2  # noise is 0.1
+            assert abs(np.nanmedian(lc.data["snr"].values) - 10) < 2  # noise is 0.1
             assert lc.data["snr"][8] > 20  # bright outlier has high S/N
             assert lc.data["snr"][12] < 5  # faint outlier has low S/N
 
@@ -1553,7 +1553,7 @@ def test_quality_checks(analysis, new_source, raw_phot):
     lc.data.loc[8, "flag"] = False
     lc.data.dec = 0.0
     mean_ra = lc.data.ra.mean()
-    std_ra = np.std(np.abs(lc.data.ra - mean_ra))
+    std_ra = np.nanstd(np.abs(lc.data.ra - mean_ra))
     lc.data.loc[8, "ra"] = mean_ra + 10 * std_ra
     new_source.reset_analysis()
     analysis.analyze_sources(new_source)

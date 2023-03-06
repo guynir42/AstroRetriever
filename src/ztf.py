@@ -96,8 +96,20 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        self.pars = ParsObsZTF(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         super().__init__(name="ztf")
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsObsZTF object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsObsZTF(**kwargs)
 
     def download_from_observatory(self, cat_row, verbose=False):
         """

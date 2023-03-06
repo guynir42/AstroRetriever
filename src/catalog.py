@@ -224,7 +224,7 @@ class Catalog:
     """
 
     def __init__(self, **kwargs):
-        self.pars = ParsCatalog(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
 
         # if loaded test default catalog,
         # make sure it exists, and generate
@@ -247,6 +247,18 @@ class Catalog:
 
     def __len__(self):
         return len(self.data)
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsCatalog object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsCatalog(**kwargs)
 
     def _guess_file_type(self):
         """

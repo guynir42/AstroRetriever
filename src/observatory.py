@@ -231,6 +231,9 @@ class VirtualObservatory:
         Create a new VirtualObservatory object,
         which is a base class for other observatories,
         not to be initialized directly.
+        This initialization code called by subclasses,
+        only after some initialization steps are taken,
+        such as setting up a Parameters object.
 
         Parameters
         ----------
@@ -1291,9 +1294,21 @@ class VirtualDemoObs(VirtualObservatory):
         # TODO: separate reducer into its own object
         # reducer_kwargs = kwargs.pop("reducer_kwargs", {})
 
-        self.pars = ParsDemoObs(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         # call this only after a pars object is set up
         super().__init__(name="demo")
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsAnalysis object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsDemoObs(**kwargs)
 
     def download_from_observatory(
         self,

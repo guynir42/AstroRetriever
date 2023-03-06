@@ -88,8 +88,20 @@ class Finder:
     """
 
     def __init__(self, **kwargs):
-        self.pars = ParsFinder(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         self.checker = None
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsFinder object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsFinder(**kwargs)
 
     def process(self, lightcurves, source, sim=None):
         """

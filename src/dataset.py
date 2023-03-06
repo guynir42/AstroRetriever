@@ -1952,7 +1952,7 @@ class Lightcurve(DatasetMixin, Base):
         Find the exposure time and frame rate of the data.
         """
         if "exptime" in self.colmap:
-            self.exp_time = float(np.median(self.data[self.colmap["exptime"]]))
+            self.exp_time = float(np.nanmedian(self.data[self.colmap["exptime"]]))
         elif self.altdata:
 
             keys = ["exp_time", "exptime", "exposure_time", "exposuretime"]
