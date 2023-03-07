@@ -146,14 +146,11 @@ class VirtualTESS(VirtualObservatory):
             The reduced datasets will have uniform filter,
             each dataset will be sorted by time,
             and some initial processing will be done,
-            using the "reducer" parameter (or function inputs).
+            using the "reduce_kwargs" parameter (or function inputs).
         """
         self._check_dataset(
             dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
         )
-
-        # mjd_conversion = dataset.time_info["to mjd"]
-        # c = dataset.colmap
 
         # get the altdata from the init_kwargs (if it is there)
         altdata = init_kwargs.pop("altdata", dataset.altdata)
@@ -214,14 +211,13 @@ class VirtualTESS(VirtualObservatory):
         colmap = {}
         time_info = {}
 
-        time_info["offset"] = 2457000.0  # TODO: get this from the altdata
+        time_info["offset"] = 2457000.0
+        # get this from the altdata
+        if altdata is not None and len(altdata.get("lightcurve_headers", [])) > 0:
+            integer_offset = altdata["lightcurve_headers"][0]["BJDREFI"]
+            fractional_offset = altdata["lightcurve_headers"][0]["BJDREFF"]
+            time_info["offset"] = integer_offset + fractional_offset
         time_info["format"] = "jd"
-        # time_info["to datetime"] = lambda t: Time(
-        #     t - offset, format="jd", scale="utc"
-        # ).datetime
-        # time_info["to mjd"] = lambda t: Time(
-        #     t - offset, format="jd", scale="utc"
-        # ).mjd
         colmap["time"] = "TIME"
 
         colmap["flux"] = "PDCSAP_FLUX"
@@ -364,7 +360,6 @@ class VirtualTESS(VirtualObservatory):
             filter_args = []
 
         source = None
-        # first, check if the source is already in the database
         ticid = str(ticid)
 
         if session is None:
@@ -372,6 +367,7 @@ class VirtualTESS(VirtualObservatory):
             # make sure this session gets closed at end of function
             _ = CloseSession(session)
 
+        # first, check if the source is already in the database
         sources = session.scalars(
             sa.select(Source).where(
                 Source.local_names["TESS"].astext == ticid,
@@ -430,6 +426,7 @@ class VirtualTESS(VirtualObservatory):
                 raw_data = None
                 altdata = None
 
+            # couldn't find a source or raw data, download it
             if raw_data is None and download:
                 data, altdata = self._download_lightcurves_from_mast_by_ticid(ticid)
 

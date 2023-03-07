@@ -966,39 +966,18 @@ class DatasetMixin:
             if simplify(c) in ("jd", "juliandate"):
                 self.time_info["format"] = "jd"
                 self.time_info["offset"] = get_time_offset(c)  # e.g., JD-12345000
-                # self.time_info["to datetime"] = lambda t: Time(
-                #     t - offset, format="jd", scale="utc"
-                # ).datetime
-                # self.time_info["to mjd"] = lambda t: Time(
-                #     t - offset, format="jd", scale="utc"
-                # ).mjd
-                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("mjd",):
                 self.time_info["format"] = "mjd"
                 self.time_info["offset"] = get_time_offset(c)  # e.g., MJD-12345000
-                # self.time_info["to datetime"] = lambda t: Time(
-                #     t - offset, format="mjd", scale="utc"
-                # ).datetime
-                # self.time_info["to mjd"] = lambda t: t + offset
-                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("bjd",):
                 self.time_info["format"] = "jd"
-                self.time_info["offset"] = get_time_offset(
-                    c
-                )  # e.g., BJD-12345000 for TESS
+                self.time_info["offset"] = get_time_offset(c)  # e.g., BJD-12345000
                 # TODO: must add some conversion between JD and BJD
                 #  e.g., https://mail.python.org/pipermail/astropy/2014-April/002844.html
-                # self.time_info["to datetime"] = lambda t: Time(
-                #     t - offset, format="jd", scale="utc"
-                # ).datetime
-                # self.time_info["to mjd"] = lambda t: Time(
-                #     t - offset, format="jd", scale="utc"
-                # ).mjd
-                # self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "datetime") and isinstance(
@@ -1006,32 +985,14 @@ class DatasetMixin:
             ):
                 if "T" in example:
                     self.time_info["format"] = "isot"
-                    # self.time_info["to datetime"] = lambda t: Time(
-                    #     t, format="isot", scale="utc"
-                    # ).datetime
-                    # self.time_info["to mjd"] = lambda t: Time(
-                    #     t, format="isot", scale="utc"
-                    # ).mjd
                 else:
                     self.time_info["format"] = "iso"
-                    # self.time_info["to datetime"] = lambda t: Time(
-                    #     t, format="iso", scale="utc"
-                    # ).datetime
-                    # self.time_info["to mjd"] = lambda t: Time(
-                    #     t, format="iso", scale="utc"
-                    # ).mjd
                 self.time_info["offset"] = 0
                 self.colmap["time"] = c
                 break
             elif simplify(c) == ("time", "unix", "timestamp"):
                 self.time_info["format"] = "unix"
                 offset = get_time_offset(c)  # e.g., Unix-12345000
-                # self.time_info["to datetime"] = lambda t: Time(
-                #     t - offset, format="unix", scale="utc"
-                # ).datetime
-                # self.time_info["to mjd"] = lambda t: Time(
-                #     t - offset, format="unix", scale="utc"
-                # ).mjd
                 self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break

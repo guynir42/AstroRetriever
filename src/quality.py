@@ -113,7 +113,9 @@ class QualityChecker:
 
             if "pos1" in lc.colmap and "pos2" in lc.colmap:
                 x = lc.data[lc.colmap["pos1"]].values
+                x -= np.nanmedian(x)
                 y = lc.data[lc.colmap["pos2"]].values
+                y -= np.nanmedian(y)
 
             if x is not None and y is not None:
                 offset = np.sqrt(x**2 + y**2)

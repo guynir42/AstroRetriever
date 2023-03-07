@@ -121,16 +121,12 @@ def test_project_user_inputs():
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"]._credentials, dict)
-    assert proj.observatories["ztf"]._credentials["username"] == "guy"
-    assert proj.observatories["ztf"]._credentials["password"] == "12345"
+    assert proj.ztf._credentials["username"] == "guy"
+    assert proj.ztf._credentials["password"] == "12345"
 
     # check the reducer was overriden in the demo observatory
-    assert (
-        proj.observatories["ztf"].pars.reduce_kwargs["reducer_key"] == "reducer_value"
-    )
-    assert (
-        proj.observatories["demo"].pars.reduce_kwargs["reducer_key"] == "reducer_value2"
-    )
+    assert proj.ztf.pars.reduce_kwargs["reducer_key"] == "reducer_value"
+    assert proj.demo.pars.reduce_kwargs["reducer_key"] == "reducer_value2"
 
 
 def test_project_config_file(data_dir):
@@ -200,21 +196,16 @@ def test_project_config_file(data_dir):
         assert "demo" in proj.observatories
         assert isinstance(proj.observatories["demo"], VirtualDemoObs)
         # existing parameters should be overridden by the config file
-        assert proj.observatories["demo"].pars.demo_boolean is False
+        assert proj.demo.pars.demo_boolean is False
         # new parameter is successfully added
-        assert proj.observatories["demo"].pars.demo_string == "test-string"
+        assert proj.demo.pars.demo_string == "test-string"
         # general project-wide reducer is used by demo observatory:
-        assert (
-            proj.observatories["demo"].pars.reduce_kwargs["reducer_key"]
-            == "project_reduction"
-        )
+        assert proj.demo.pars.reduce_kwargs["reducer_key"] == "project_reduction"
 
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        assert proj.observatories["ztf"].pars.reduce_kwargs == {
-            "reducer_key": "ztf_reduction"
-        }
+        assert proj.ztf.pars.reduce_kwargs == {"reducer_key": "ztf_reduction"}
 
         # check the user inputs override the config file
         proj = Project(
@@ -227,7 +218,7 @@ def test_project_config_file(data_dir):
             },
         )
         assert proj.pars.description == project_str2
-        assert proj.observatories["demo"].pars.demo_string == "new-test-string"
+        assert proj.demo.pars.demo_string == "new-test-string"
 
     finally:
         os.remove(filename)
@@ -842,10 +833,10 @@ def test_reducer_with_outliers(test_project, new_source):
             mag_err = np.random.uniform(0.09, 0.11, num_points)
             mag = np.random.normal(18.5, 0.1, num_points)
             mag[outlier_indices] = np.random.normal(10, 0.1, len(outlier_indices))
-            mag_err[8] = 0.01  # also improve the relative error for the bright outlier
-            mag[12] = np.random.normal(
-                20, 0.1, 1
-            )  # turn the second bright outlier into a faint outlier
+            # also improve the relative error for the bright outlier:
+            mag_err[8] = 0.01
+            # turn the second bright outlier into a faint outlier:
+            mag[12] = np.random.normal(20, 0.1, 1)
             flag = np.zeros(num_points, dtype=bool)
             flag[flagged_indices] = True
             test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, flag=flag)

@@ -339,7 +339,7 @@ class Project:
     @staticmethod
     def _make_pars_object(kwargs):
         """
-        Make the ParsAnalysis object.
+        Make the ParsProject object.
         When writing a subclass of this class
         that has its own subclassed Parameters,
         this function will allow the constructor

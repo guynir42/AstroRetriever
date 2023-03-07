@@ -761,9 +761,8 @@ class VirtualObservatory:
 
             # add the raw data to the source
             getattr(source, f"raw_{dt}").append(raw_data)
-            self._append_local_name(
-                source
-            )  # if observatory has local name for this source
+            # if observatory has local name for this source
+            self._append_local_name(source)
 
             if reduce:  # reduce the data
                 reduced_datasets = source.get_data(
@@ -847,7 +846,7 @@ class VirtualObservatory:
 
     def get_colmap_time_info(self, data=None, altdata=None):
         """
-        Update the colmap (column mapping) and time_info dictionaries
+        Get the colmap (column mapping) and time_info dictionaries
         for a RawPhotometry object.
         In some cases the native dataset.DatasetMixin class
         can find all the columns and figure out what they are.
@@ -1301,7 +1300,7 @@ class VirtualDemoObs(VirtualObservatory):
     @staticmethod
     def _make_pars_object(kwargs):
         """
-        Make the ParsAnalysis object.
+        Make the ParsDemoObs object.
         When writing a subclass of this class
         that has its own subclassed Parameters,
         this function will allow the constructor
