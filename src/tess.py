@@ -16,9 +16,12 @@ from astropy.time import Time
 import astropy.io.fits as fits
 
 # from src.source import angle_diff
+from src.database import Session, CloseSession
 from src.observatory import VirtualObservatory, ParsObservatory
 from src.dataset import RawPhotometry, Lightcurve
 from src.catalog import Catalog
+from src.source import Source
+
 
 # from src.dataset import DatasetMixin, RawPhotometry, Lightcurve
 
@@ -299,10 +302,214 @@ class VirtualTESS(VirtualObservatory):
 
         return exp_time
 
+    def fetch_by_ticid(
+        self,
+        ticid,
+        download=True,
+        use_catalog=True,
+        session=None,
+        filter_args=None,
+        download_args={},
+        dataset_args={},
+    ):
+        """
+        Get a source given a TIC number.
+        The observatory will first search the database for
+        sources where the local_names have 'TESS': <tic_number>.
+        Will try to look for sources inside this same project name
+        and with the same cfg_hash. If none are found to have raw photometry,
+        sources from other projects are searched as well.
+        If not found, will download the data and create a new source
+        and a new raw photometry entry.
+
+        Parameters
+        ----------
+        ticid: str or int
+            TIC number of the object to download data for.
+        download: bool
+            If True, will download the data if it is not found.
+            When downloading data, a new RawPhotometry object is
+            created if it doesn't exist, and a new Source object
+            is created unless it already existed, with the same
+            project name and cfg_hash. Default is True.
+        use_catalog: bool
+            If True, and only if a catalog object is given to
+            the observatory, if a new source is created,
+            an attempt will be made to match the source to
+            a catalog entry, using the radius and magnitude
+            to match any existing sources. Default is True.
+        session: sqlalchemy session
+            If given, will use this session to query the database.
+            If not given, will create a new session.
+        filter_args: list
+            List of additional constraints on the database search
+            for sources, e.g., Source.test_hash.is_(None).
+        download_args: dict
+            Dictionary of arguments to pass to the download function.
+        dataset_args: dict
+            Additional keyword arguments to pass to the
+            constructor of raw data objects.
+
+        Returns
+        -------
+        source: Source
+            The source object that was downloaded
+            or found from the database. If no source
+            was found, returns None.
+        """
+        if self.project is None:
+            raise ValueError("No project given to observatory.")
+
+        if filter_args is None:
+            filter_args = []
+
+        source = None
+        # first, check if the source is already in the database
+        ticid = str(ticid)
+
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        sources = session.scalars(
+            sa.select(Source).where(
+                Source.local_names["TESS"].astext == ticid,
+                *filter_args,
+            )
+        ).all()
+        sources.sort(
+            key=lambda x: x.created_at if x.created_at else datetime.min, reverse=True
+        )
+
+        # only sources inside this project
+        project_sources = [s for s in sources if s.project == self.project]
+
+        # only sources inside this project (and with same version control)
+        project_vc_sources = [s for s in project_sources if s.cfg_hash == self.cfg_hash]
+
+        if len(project_vc_sources) > 0:
+            source = Source.find_source_with_raw_data(
+                project_vc_sources,
+                obs=self.name,
+                session=session,
+                check_data=self.pars.check_data_exists,
+            )
+
+        if source is None and len(project_sources) > 0:
+            source = Source.find_source_with_raw_data(
+                project_sources,
+                obs=self.name,
+                session=session,
+                check_data=self.pars.check_data_exists,
+            )
+
+        if source is None and len(sources) > 0:
+            source = Source.find_source_with_raw_data(
+                project_sources,
+                obs=self.name,
+                session=session,
+                check_data=self.pars.check_data_exists,
+            )
+
+        if source is None:
+            # try to find a RawPhotometry object without a source:
+            raw_data = session.scalars(
+                sa.select(RawPhotometry).where(
+                    RawPhotometry.altdata["TICID"].astext == ticid,
+                )
+            ).all()
+            if len(raw_data) > 0:
+                raw_data.sort(
+                    key=lambda x: x.created_at if x.created_at else datetime.min,
+                    reverse=True,
+                )
+                raw_data = raw_data[0]
+                altdata = raw_data.altdata
+            else:
+                raw_data = None
+                altdata = None
+
+            if raw_data is None and download:
+                data, altdata = self._download_lightcurves_from_mast_by_ticid(ticid)
+
+            if "file_headers" not in altdata or len(altdata["file_headers"]) == 0:
+                raise ValueError("Cannot find file_headers in altdata! ")
+
+            # this happens if download=False and no raw photometry was found
+            if altdata is None:
+                return None
+
+            mag = altdata["file_headers"][0]["TESSMAG"]
+            ra = altdata["file_headers"][0]["RA_OBJ"]
+            dec = altdata["file_headers"][0]["DEC_OBJ"]
+            pm_ra = altdata["file_headers"][0]["PMRA"]
+            pm_dec = altdata["file_headers"][0]["PMDEC"]
+
+            source_name = ticid  # try to find a better name below
+
+            # match the found source to the correct name in the catalog
+            if use_catalog and self.catalog is not None:
+                cat_row = self.catalog.get_nearest_row(
+                    ra, dec, radius=self.pars.query_radius, output="dict"
+                )
+                # TODO: I can't think of a better thing to do in this case... maybe just use the TIC name?
+                if cat_row is None:
+                    raise ValueError(
+                        f"No catalog entry found within radius {self.pars.query_radius} arcsec!"
+                    )
+                source_name = cat_row["name"]  # update with catalog name!
+            else:
+                cat_row = dict(
+                    mag=mag, name=source_name, ra=ra, dec=dec, pmra=pm_ra, pmdec=pm_dec
+                )
+
+            source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
+            source.cat_row = cat_row  # save the raw catalog row as well
+
+            if raw_data is None:
+                raw_data = source.get_data(
+                    obs=self.name,
+                    data_type="photometry",
+                    level="raw",
+                    session=session,
+                    check_data=self.pars.check_data_exists,
+                )
+                raw_data = raw_data[0] if len(raw_data) > 0 else None
+
+            if raw_data is None:
+                altdata["cat_row"] = cat_row
+
+                # save the parameters involved with the download
+                download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
+                download_pars.update(
+                    {
+                        k: download_args[k]
+                        for k in self.pars.download_pars_list
+                        if k in download_args
+                    }
+                )
+                altdata["download_pars"] = download_pars
+                colmap, time_info = self.get_colmap_time_info(data, altdata)
+
+                dataset_args["colmap"] = colmap
+                dataset_args["time_info"] = time_info
+                raw_data = RawPhotometry(
+                    data=data,
+                    altdata=altdata,
+                    observatory=self.name,
+                    source_name=source_name,
+                    **dataset_args,
+                )
+
+            source.raw_photometry.append(raw_data)
+
+        return source
+
     def download_from_observatory(
         self,
         cat_row,
-        verbose=0,
+        **_,
     ):
         """
         Fetch data from TESS for a given source.
@@ -336,7 +543,7 @@ class VirtualTESS(VirtualObservatory):
 
         if mag > 16:
             # TESS can't see stars fainter than 16 mag
-            self._print(f"Magnitude of {mag} is too faint for TESS.", verbose)
+            self._print(f"Magnitude of {mag} is too faint for TESS.", self.pars.verbose)
             return pd.DataFrame(), {}
 
         cat_params = {
@@ -344,9 +551,13 @@ class VirtualTESS(VirtualObservatory):
             "catalog": "TIC",
             "radius": self.pars.query_radius / 3600,
         }
-        catalog_data = self._try_query(Catalogs.query_region, cat_params, verbose)
+        catalog_data = self._try_query(
+            Catalogs.query_region, cat_params, self.pars.verbose
+        )
         if len(catalog_data) == 0:
-            self._print("No TESS object found for given catalog row.", verbose)
+            self._print(
+                "No TESS object found for given catalog row.", self.pars.verbose
+            )
             return pd.DataFrame(), {}
 
         candidate_idx = None
@@ -367,12 +578,34 @@ class VirtualTESS(VirtualObservatory):
 
         if candidate_idx is None:
             self._print(
-                "No objects found within mag difference " "threshold for TIC query.",
-                verbose,
+                "No objects found within mag difference threshold for TIC query.",
+                self.pars.verbose,
             )
             return pd.DataFrame(), {}
 
         ticid = catalog_data["ID"][candidate_idx]
+        data, altdata = self._download_lightcurves_from_mast_by_ticid(ticid)
+
+        return data, altdata
+
+    def _download_lightcurves_from_mast_by_ticid(self, ticid):
+        """
+        Download the data from MAST database using the given TIC ID.
+
+        Parameters
+        ----------
+        ticid: str or int
+            The TIC ID of the object to download data for.
+
+        Returns
+        -------
+        data: pandas.DataFrame
+            The lightcurve data.
+        altdata: dict
+            Additional data to be stored in the RawPhotometry object.
+        """
+        ticid = str(ticid)
+
         tess_name = "TIC " + ticid
         obs_params = {
             "objectname": tess_name,
@@ -380,13 +613,17 @@ class VirtualTESS(VirtualObservatory):
             "obs_collection": "TESS",
             "dataproduct_type": "timeseries",
         }
-        data_query = self._try_query(Observations.query_criteria, obs_params, verbose)
+        data_query = self._try_query(
+            Observations.query_criteria, obs_params, self.pars.verbose
+        )
 
         if len(data_query) == 0:
-            self._print(f"No data found for object {tess_name}.", verbose)
+            self._print(f"No data found for object {tess_name}.", self.pars.verbose)
             return pd.DataFrame(), {}
         if ticid not in data_query["target_name"]:
-            self._print(f"No timeseries data found for object {tess_name}.", verbose)
+            self._print(
+                f"No timeseries data found for object {tess_name}.", self.pars.verbose
+            )
             return pd.DataFrame(), {}
 
         lc_indices = []
@@ -397,11 +634,14 @@ class VirtualTESS(VirtualObservatory):
                 lc_indices.append(i)
 
         if not lc_indices:
-            self._print(f"No lightcurve data found for object {tess_name}.", verbose)
+            self._print(
+                f"No lightcurve data found for object {tess_name}.", self.pars.verbose
+            )
             return pd.DataFrame(), {}
 
         self._print(
-            f"Found {len(lc_indices)} light curve(s) " "for this source.", verbose
+            f"Found {len(lc_indices)} light curve(s) for this source.",
+            self.pars.verbose,
         )
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
@@ -450,9 +690,6 @@ class VirtualTESS(VirtualObservatory):
         altdata["sectors"] = list(sectors)
 
         return data, altdata
-
-    def download_by_tic(self, tic_number, verbose=0):
-        pass  # TODO: finish this
 
     def _try_query(self, query_fn, params, verbose):
         """

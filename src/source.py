@@ -444,16 +444,17 @@ class Source(Base, conesearch_alchemy.Point):
 
         Returns
         -------
-        data: a RawPhotometry or similar object
-            The object containing the data that matches
+        data: a list of RawPhotometry or similar objects
+            The objects containing the data that matches
             this source and the required observatory
             and data type.
-            The object does not necessarily have data
-            loaded and does not necessarily have that
+            The objects do not necessarily have data
+            loaded and do not necessarily have that
             data saved on disk (these should be tested
             separately).
-            If no matching data is found, returns None.
+            If no matching data is found, returns [].
         """
+
         if data_type is not None:  # data type is given explicitly
             data_type = convert_data_type(data_type)
         else:
@@ -553,6 +554,75 @@ class Source(Base, conesearch_alchemy.Point):
             getattr(self, f"{level}_{data_type}").extend(found_data)
 
         return found_data
+
+    @staticmethod
+    def find_source_with_raw_data(
+        source_list,
+        obs,
+        data_type="photometry",
+        session=None,
+        check_data=True,
+        search_orphans=True,
+        delete_missing=False,
+    ):
+        """
+        Go over a list of sources, and for each source
+        check if raw photometry exists that matches the
+        observatory name given by obs.
+
+        For each source will call get_data() with the associated
+        parameters check_data, search_orphans and delete_missing
+        (note that delete_missing is set to False by default).
+
+        If no session is given, will open one and close it.
+
+        Parameters
+        ----------
+        source_list: list of Source objects
+            The list of sources to check.
+            The list should be sorted and filtered before calling this function.
+        obs: str
+            The name of the observatory to search data from.
+        data_type: str
+            The type of data to search for. Default is 'photometry'.
+        session: sqlalchemy session
+            The session to use to query the DB.
+            If None, will open a new session and close it.
+        check_data: bool
+            If True, will check if the data is actually there.
+            Default is True.
+        search_orphans:
+            If True, will search the data directory for files
+            that match the source name and the observatory name,
+            and get them from file if they exist.
+            Default is True.
+        delete_missing: bool
+            If True, will delete any DB objects that don't have
+            corresponding data. Default is False.
+
+        Returns
+        -------
+        source: Source object
+            The first source in the list that has raw data.
+            If no source is found, returns None.
+        """
+        if session is None:
+            session = Session()
+            # make sure this session gets closed at end of function
+            _ = CloseSession(session)
+
+        for s in source_list:
+            data = s.get_data(
+                obs=obs,
+                data_type=data_type,
+                level="raw",
+                session=session,
+                check_data=check_data,
+                search_orphans=search_orphans,
+                delete_missing=delete_missing,
+            )
+            if len(data) > 0:
+                return s
 
     # TODO: why is this even needed? should we expand to cover reduced/processed data too?
     def remove_raw_data(self, obs, data_type=None, session=None):

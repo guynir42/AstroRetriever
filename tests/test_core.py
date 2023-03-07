@@ -339,6 +339,42 @@ def test_catalog_wds():
     assert abs(cat.data[cat.pars.mag_column].mean() - 20) < 0.1
 
 
+def test_catalog_nearest_search():
+    c = Catalog(default="test")
+    c.load()
+
+    idx = 2
+    ra = c.data["ra"][idx]
+    dec = c.data["dec"][idx]
+
+    # search for the nearest object
+    nearest = c.get_nearest_row(ra, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == ra
+    assert nearest["dec"] == dec
+
+    # try to nudge the coordinates a little bit
+    nearest = c.get_nearest_row(
+        ra + 0.3 / 3600, dec - 0.3 / 3600, radius=2.0, output="dict"
+    )
+    assert nearest["ra"] == ra
+    assert nearest["dec"] == dec
+
+    # make sure search works even if object is at RA=0
+    c.data.loc[idx, "ra"] = 0
+
+    nearest = c.get_nearest_row(0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
+
+    nearest = c.get_nearest_row(-0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
+
+    nearest = c.get_nearest_row(360 - 0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
+
+
 def test_observatory_filename_conventions(test_project):
     obs = test_project.observatories["demo"]
 

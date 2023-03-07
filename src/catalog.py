@@ -461,6 +461,60 @@ class Catalog:
 
         return sources
 
+    def get_nearest_row(self, ra, dec, radius=2.0, output="raw", obstime=None):
+        """
+        Get the row in the catalog that is closest
+        to the given RA and Dec.
+        The coordinates are given in degrees.
+        The maximum radius to search is given in arcseconds.
+        If radius is set to None, no maximum radius is used.
+
+        Parameters
+        ----------
+        ra: float
+            RA in degrees.
+        dec: float
+            Dec in degrees.
+        radius: float (optional)
+            Maximum radius to search in arcseconds.
+            If None, no maximum radius is used.
+            Default is 2.0 arcseconds.
+        output: str
+            The type of catalog row to output.
+            Can be "raw" or "dict".
+        obstime: astropy.time.Time
+            The time of observation. If given, will apply
+            proper motion to the source based on the time
+            the catalog was observed relative to the given time.
+            Only works when output="dict".
+
+        Returns
+        -------
+        The catalog row that is closest to the given RA and Dec.
+        If output="raw", the row is returned as a numpy array.
+        If output="dict", the row is returned as a dictionary.
+        If no matches are found within the given radius,
+        None is returned.
+        """
+
+        # TODO: can we come up with a faster indexing of the raw catalog data?
+
+        cat_ra = self.data[self.pars.ra_column]
+        cat_dec = self.data[self.pars.dec_column]
+
+        delta_ra = 180 - abs(abs(cat_ra - ra) - 180)
+        delta_ra *= np.cos(dec * np.pi / 180)
+        delta_dec = np.abs(cat_dec - dec)
+
+        dist = np.sqrt(delta_ra**2 + delta_dec**2)
+        idx = np.argmin(dist)
+        if dist[idx] <= radius / 3600.0:
+            return self.get_row(
+                idx, index_type="number", output=output, obstime=obstime
+            )
+        else:
+            return None
+
     @staticmethod
     def check_sanitizer(input_str):
         return SANITIZE_RE.sub("", input_str)

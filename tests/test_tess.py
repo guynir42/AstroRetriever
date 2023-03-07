@@ -4,11 +4,15 @@ import numpy as np
 import pandas as pd
 from astropy.time import Time
 
+import sqlalchemy as sa
+
 from src.utils import OnClose
 from src.database import Session
 
 import src.dataset
+from src.catalog import Catalog
 from src.dataset import RawPhotometry
+from src.source import Source
 from src.tess import VirtualTESS
 
 basepath = os.path.abspath(os.path.dirname(__file__))
@@ -178,3 +182,83 @@ def test_tess_analysis(tess_project, new_source):
     assert num_qflags + 1 == new_num_qflags
 
     # TODO: test for other things, like adding a flare
+
+
+def test_tess_download_by_ticid(tess_project):
+    tess = tess_project.tess
+    assert isinstance(tess, VirtualTESS)
+
+    cat = Catalog(default="wd")
+    cat.load()
+    tess.catalog = cat
+
+    # identify a white dwarf in TESS
+    cat_idx = np.where(cat.data["phot_g_mean_mag"] < 12)[0][0]
+    cat_row = cat.get_row(cat_idx, index_type="number", output="dict")
+
+    # first download this source from the catalog:
+    try:
+        source = tess.fetch_source(cat_row, reduce=False, save=True)
+        source_name = source.name
+        assert source.loaded_status == "new"
+        assert source.raw_photometry[0].observatory == "tess"
+        assert source.raw_photometry[0].loaded_status == "new"
+
+        ticid = str(source.local_names["TESS"])
+
+        # fetch by TICID should get the same object
+        source2 = tess.fetch_by_ticid(ticid, download=True, use_catalog=True)
+        assert source2.loaded_status == "database"
+        assert source2.name == source_name
+        assert source2.raw_photometry[0].observatory == "tess"
+        assert source2.raw_photometry[0].loaded_status == "database"
+
+        # delete the source and the re-fetch it using the TICID
+        with Session() as session:
+            session.delete(source)
+            session.commit()
+
+        # should have the same source name from Gaia
+        source3 = tess.fetch_by_ticid(ticid, download=True, use_catalog=True)
+        assert source3.loaded_status == "new"
+        assert source3.name == source_name
+        assert source3.raw_photometry[0].observatory == "tess"
+        assert source3.raw_photometry[0].loaded_status == "database"
+
+        # re-fetch using the TICID, without a catalog (name should be TICID)
+        source4 = tess.fetch_by_ticid(ticid, download=True, use_catalog=False)
+        assert source4.loaded_status == "new"
+        assert source4.name != source_name
+        assert source4.name == ticid
+        assert source4.raw_photometry[0].observatory == "tess"
+        assert source4.raw_photometry[0].loaded_status == "database"
+
+    finally:
+        with Session() as session:
+            source = session.scalars(
+                sa.select(Source).where(
+                    Source.name == source_name, Source.project == tess_project.name
+                )
+            ).first()
+
+            if source is not None:
+                session.delete(source)
+
+            raw_phot = session.scalars(
+                sa.select(RawPhotometry).where(RawPhotometry.source_name == source_name)
+            ).all()
+            for rp in raw_phot:
+                session.delete(rp)
+            session.commit()
+
+    with Session() as session:
+        source = session.scalars(
+            sa.select(Source).where(
+                Source.name == source_name, Source.project == tess_project.name
+            )
+        ).first()
+        assert source is None
+        raw_phot = session.scalars(
+            sa.select(RawPhotometry).where(RawPhotometry.source_name == source_name)
+        ).first()
+        assert raw_phot is None

@@ -230,7 +230,8 @@ class DatasetMixin:
 
         altdata = sa.Column(
             JSONB,
-            nullable=True,
+            nullable=False,
+            default={},
             doc="Additional meta-data associated with this dataset",
         )
 
@@ -2230,11 +2231,11 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         # add annotations for points with S/N above 5 sigma
-        det_idx = np.where(abs(self.data["snr"]) > 5.0)[0]
+        det_idx = np.where(abs(self.data["dsnr"]) > 5.0)[0]
         for i in det_idx:
             if self.data[self.colmap["flag"]][i] == 0:
                 ax.annotate(
-                    text=f' {self.data["snr"][i]:.2f}',
+                    text=f' {self.data["dsnr"][i]:.2f}',
                     xy=(t[i], m[i]),
                 )
 
