@@ -286,7 +286,7 @@ class Project:
         analysis_kwargs = kwargs.pop("analysis_kwargs", {})
 
         # this loads parameters from file, then from kwargs:
-        self.pars = ParsProject(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
 
         # add some default keys like "project" and "verbose" to kwargs
         self.pars.add_defaults_to_dict(obs_kwargs)
@@ -335,6 +335,18 @@ class Project:
 
         self.sources = None  # list to be filled by analysis
         self.num_sources_scanned = None
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsProject object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsProject(**kwargs)
 
     @staticmethod
     def _get_observatory_classes(name):
@@ -416,9 +428,9 @@ class Project:
         # TODO: separate reducer and use pars.get_class_instance to load it
         # parse parameters for reduction methods for this observatory
         # reducer_dict = {}
-        # reducer_dict.update(self.pars.reducer)  # project pars
-        # reducer_dict.update(new_obs.pars.reducer)  # observatory specific pars
-        # new_obs.pars.reducer = reducer_dict
+        # reducer_dict.update(self.pars.reduce_kwargsr)  # project pars
+        # reducer_dict.update(new_obs.pars.reduce_kwargsr)  # observatory specific pars
+        # new_obs.pars.reduce_kwargsr = reducer_dict
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog

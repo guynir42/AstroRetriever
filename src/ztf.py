@@ -5,6 +5,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from astropy.time import Time
+
 from ztfquery import lightcurve
 
 from src.source import angle_diff
@@ -94,8 +96,20 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        self.pars = ParsObsZTF(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         super().__init__(name="ztf")
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsObsZTF object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsObsZTF(**kwargs)
 
     def download_from_observatory(self, cat_row, verbose=False):
         """
@@ -221,22 +235,21 @@ class VirtualZTF(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_dataclasses = pd.DataFrame
-
-        if not isinstance(dataset, RawPhotometry):
-            raise ValueError(
-                f"Expected RawPhotometry object, got {type(dataset)} instead."
-            )
-        if not isinstance(dataset.data, allowed_dataclasses):
-            raise ValueError(
-                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                f"but data was given as a {type(dataset.data)} object."
-            )
+        self._check_dataset(
+            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
+        )
 
         data = dataset.data
 
         time_col = dataset.colmap["time"]
-        mjd_conversion = dataset.time_info["to mjd"]
+
+        def mjd_conversion(t):
+            return Time(
+                t + dataset.time_info["offset"],
+                format=dataset.time_info["format"],
+                scale="utc",
+            ).mjd
+
         exp_col = dataset.colmap["exptime"]
         filt_col = dataset.colmap["filter"]
         flag_col = dataset.colmap["flag"] if "flag" in dataset.colmap else None

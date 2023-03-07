@@ -24,8 +24,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
 from sqlalchemy.orm.session import make_transient
 
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
-if DATA_ROOT is None:
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+if DATA_ROOT is None:  # TODO: should also check if folder exists?
+    DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
 url = "postgresql://postgres:postgres@localhost:5432/astroretriever"
 

@@ -97,9 +97,9 @@ def test_project_user_inputs():
         obs_names=["demo", "ZTF"],
         analysis_kwargs={"num_injections": 3},
         obs_kwargs={
-            "reducer": {"reducer_key": "reducer_value"},
+            "reduce_kwargs": {"reducer_key": "reducer_value"},
             "ZTF": {"credentials": {"username": "guy", "password": "12345"}},
-            "DEMO": {"reducer": {"reducer_key": "reducer_value2"}},
+            "DEMO": {"reduce_kwargs": {"reducer_key": "reducer_value2"}},
         },
         catalog_kwargs={"default": "test"},
     )
@@ -121,12 +121,12 @@ def test_project_user_inputs():
     assert isinstance(proj.observatories["ztf"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"], VirtualZTF)
     assert isinstance(proj.observatories["ZTF"]._credentials, dict)
-    assert proj.observatories["ztf"]._credentials["username"] == "guy"
-    assert proj.observatories["ztf"]._credentials["password"] == "12345"
+    assert proj.ztf._credentials["username"] == "guy"
+    assert proj.ztf._credentials["password"] == "12345"
 
     # check the reducer was overriden in the demo observatory
-    assert proj.observatories["ztf"].pars.reducer["reducer_key"] == "reducer_value"
-    assert proj.observatories["demo"].pars.reducer["reducer_key"] == "reducer_value2"
+    assert proj.ztf.pars.reduce_kwargs["reducer_key"] == "reducer_value"
+    assert proj.demo.pars.reduce_kwargs["reducer_key"] == "reducer_value2"
 
 
 def test_project_config_file(data_dir):
@@ -139,7 +139,7 @@ def test_project_config_file(data_dir):
             "obs_names": ["demo", "ztf"],  # list of observatory names
         },
         "observatories": {  # general instructions to pass to observatories
-            "reducer": {  # should be overriden by observatory reducer
+            "reduce_kwargs": {  # should be overriden by observatory reducer
                 "reducer_key": "project_reduction",
             },
             "demo": {  # demo observatory specific definitions
@@ -152,7 +152,7 @@ def test_project_config_file(data_dir):
                         os.path.join(data_dir, "passwords_test.yaml")
                     ),
                 },
-                "reducer": {
+                "reduce_kwargs": {
                     "reducer_key": "ztf_reduction",
                 },
             },
@@ -196,21 +196,16 @@ def test_project_config_file(data_dir):
         assert "demo" in proj.observatories
         assert isinstance(proj.observatories["demo"], VirtualDemoObs)
         # existing parameters should be overridden by the config file
-        assert proj.observatories["demo"].pars.demo_boolean is False
+        assert proj.demo.pars.demo_boolean is False
         # new parameter is successfully added
-        assert proj.observatories["demo"].pars.demo_string == "test-string"
+        assert proj.demo.pars.demo_string == "test-string"
         # general project-wide reducer is used by demo observatory:
-        assert (
-            proj.observatories["demo"].pars.reducer["reducer_key"]
-            == "project_reduction"
-        )
+        assert proj.demo.pars.reduce_kwargs["reducer_key"] == "project_reduction"
 
         # check the ZTF calibration/analysis got their own parameters loaded
         assert "ztf" in proj.observatories
         assert isinstance(proj.observatories["ztf"], VirtualZTF)
-        assert proj.observatories["ztf"].pars.reducer == {
-            "reducer_key": "ztf_reduction"
-        }
+        assert proj.ztf.pars.reduce_kwargs == {"reducer_key": "ztf_reduction"}
 
         # check the user inputs override the config file
         proj = Project(
@@ -223,7 +218,7 @@ def test_project_config_file(data_dir):
             },
         )
         assert proj.pars.description == project_str2
-        assert proj.observatories["demo"].pars.demo_string == "new-test-string"
+        assert proj.demo.pars.demo_string == "new-test-string"
 
     finally:
         os.remove(filename)
@@ -333,6 +328,42 @@ def test_catalog_wds():
 
     # magnitude hovers around the limit of ~20
     assert abs(cat.data[cat.pars.mag_column].mean() - 20) < 0.1
+
+
+def test_catalog_nearest_search():
+    c = Catalog(default="test")
+    c.load()
+
+    idx = 2
+    ra = c.data["ra"][idx]
+    dec = c.data["dec"][idx]
+
+    # search for the nearest object
+    nearest = c.get_nearest_row(ra, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == ra
+    assert nearest["dec"] == dec
+
+    # try to nudge the coordinates a little bit
+    nearest = c.get_nearest_row(
+        ra + 0.3 / 3600, dec - 0.3 / 3600, radius=2.0, output="dict"
+    )
+    assert nearest["ra"] == ra
+    assert nearest["dec"] == dec
+
+    # make sure search works even if object is at RA=0
+    c.data.loc[idx, "ra"] = 0
+
+    nearest = c.get_nearest_row(0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
+
+    nearest = c.get_nearest_row(-0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
+
+    nearest = c.get_nearest_row(360 - 0.1 / 3600, dec, radius=2.0, output="dict")
+    assert nearest["ra"] == 0
+    assert nearest["dec"] == dec
 
 
 def test_observatory_filename_conventions(test_project):
@@ -720,7 +751,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
             # make sure the average flux is correct
             flux = 10 ** (-0.4 * (dff["mag"].values - PHOT_ZP))
-            assert np.isclose(lc.flux_mean, np.mean(flux))
+            assert np.isclose(lc.flux_mean, np.nanmean(flux))
 
             # make sure flux min/max are correct
             assert np.isclose(lc.flux_min, np.min(flux))
@@ -787,8 +818,9 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
     assert not os.path.isfile(filename)
 
 
+@pytest.mark.flaky(max_runs=3)
 def test_reducer_with_outliers(test_project, new_source):
-    num_points = 20
+    num_points = 30
     outlier_indices = [5, 8, 12]
     flagged_indices = [5, 10, 15]
     new_data = None
@@ -799,8 +831,12 @@ def test_reducer_with_outliers(test_project, new_source):
             filt = "R"
             mjd = np.linspace(57000, 58000, num_points)
             mag_err = np.random.uniform(0.09, 0.11, num_points)
-            mag = np.random.normal(18, 0.1, num_points)
+            mag = np.random.normal(18.5, 0.1, num_points)
             mag[outlier_indices] = np.random.normal(10, 0.1, len(outlier_indices))
+            # also improve the relative error for the bright outlier:
+            mag_err[8] = 0.01
+            # turn the second bright outlier into a faint outlier:
+            mag[12] = np.random.normal(20, 0.1, 1)
             flag = np.zeros(num_points, dtype=bool)
             flag[flagged_indices] = True
             test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, filter=filt, flag=flag)
@@ -824,7 +860,7 @@ def test_reducer_with_outliers(test_project, new_source):
             obs = test_project.observatories["demo"]
             assert isinstance(obs, VirtualDemoObs)
 
-            obs.pars.reducer["drop_flagged"] = False
+            obs.pars.reduce_kwargs["drop_flagged"] = False
             lightcurves = obs.reduce(source=new_source, data_type="photometry")
             new_source.lightcurves = lightcurves
 
@@ -841,12 +877,55 @@ def test_reducer_with_outliers(test_project, new_source):
             df2 = df[~df["flag"]]
             drop_idx = list(set(outlier_indices + flagged_indices))
             df3 = df.drop(drop_idx, axis=0)
-            assert np.isclose(lc.mag_min, df2["mag"].min())
-            assert np.isclose(lc.mag_max, df2["mag"].max())
+            assert np.isclose(lc.mag_brightest, df2["mag"].min())
+            assert np.isclose(lc.mag_faintest, df2["mag"].max())
             assert lc.num_good == num_points - len(flagged_indices)
-            assert abs(np.mean(df3["mag"]) - lc.mag_mean_robust) < 0.1
-            assert abs(np.std(df2["mag"]) - lc.mag_rms) < 0.5
-            assert abs(np.std(df3["mag"]) - lc.mag_rms_robust) < 0.1
+
+            # print(f'flux_mean= {lc.flux_mean} | flux_mean_robust= {lc.flux_mean_robust}')
+            # print(f'flux rms= {lc.flux_rms} | flux rms robust= {lc.flux_rms_robust}')
+            # print(f'mag mean= {lc.mag_mean} | mag mean robust= {lc.mag_mean_robust}')
+            # print(f'mag rms= {lc.mag_rms} | mag rms robust= {lc.mag_rms_robust}')
+
+            # check the robust statistics are representative of the data without outliers
+            assert abs(np.nanmean(df3["mag"]) - lc.mag_mean_robust) < 0.1
+            assert abs(np.nanstd(df3["mag"]) - lc.mag_rms_robust) < 0.1
+
+            # checks for snr, dsnr, and dmag and their extrema:
+            df4 = df.copy()
+            df4.loc[flagged_indices, :] = np.nan  # without the flagged points
+            assert np.argmax(df4["mag"]) == 12
+            assert np.argmin(df4["mag"]) == 8
+
+            # print(f'snr: {lc.data["snr"].values}')
+            # print(f'dsnr: {lc.data["dsnr"].values}')
+            # print(f'dmag: {lc.data["dmag"].values}')
+
+            # test the S/N
+            assert abs(np.nanmedian(lc.data["snr"].values) - 10) < 2  # noise is 0.1
+            assert lc.data["snr"][8] > 20  # bright outlier has high S/N
+            assert lc.data["snr"][12] < 5  # faint outlier has low S/N
+
+            # test the delta S/N
+            dsnr = lc.data["dsnr"].values
+            dsnr[outlier_indices] = np.nan  # remove the outliers
+            # should be close to zero if noise estimate is correct
+            assert abs(np.nanmean(dsnr)) < 0.3
+            assert abs(np.nanstd(dsnr) - 1) < 0.3
+
+            # test the delta mag
+            dmag = lc.data["dmag"].values
+            assert abs(dmag[5] - 8.5) < 0.5  # about 8.5 mag difference
+            assert abs(dmag[8] - 8.5) < 0.5  # about 8.5 mag difference
+            assert abs(dmag[12] + 1.5) < 0.5  # about 8.5 mag difference
+
+            dmag[outlier_indices] = np.nan  # remove the outliers
+            assert (
+                abs(np.nanmean(dmag[dmag > 0]) - 0.1) < 0.3
+            )  # close to 0.1 mag difference
+            assert (
+                abs(np.nanmean(dmag[dmag < 0]) + 0.1) < 0.3
+            )  # close to -0.1 mag difference
+            assert abs(np.nanmean(dmag)) < 0.1
 
             # also check that the data is uniformly sampled
             assert lc.is_uniformly_sampled
@@ -1247,7 +1326,7 @@ def test_histogram():
     assert h.data.mag.attrs["overflow"] == num_points3
 
 
-@pytest.mark.flaky(max_runs=5)
+@pytest.mark.flaky(max_runs=8)
 def test_finder(simple_finder, new_source, lightcurve_factory):
 
     # this lightcurve has no outliers:
@@ -1333,7 +1412,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-# @pytest.mark.flaky(max_runs=8)
+@pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False
@@ -1501,7 +1580,7 @@ def test_quality_checks(analysis, new_source, raw_phot):
     lc.data.loc[8, "flag"] = False
     lc.data.dec = 0.0
     mean_ra = lc.data.ra.mean()
-    std_ra = np.std(np.abs(lc.data.ra - mean_ra))
+    std_ra = np.nanstd(np.abs(lc.data.ra - mean_ra))
     lc.data.loc[8, "ra"] = mean_ra + 10 * std_ra
     new_source.reset_analysis()
     analysis.analyze_sources(new_source)

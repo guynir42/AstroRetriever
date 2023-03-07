@@ -35,7 +35,7 @@ lock = threading.Lock()
 import src.database
 
 PHOT_ZP = 23.9
-LOG_BASES = np.log(10) / 2.5
+LOG_BASE = np.log(10) / 2.5
 
 AUTOLOAD = True
 AUTOSAVE = False
@@ -47,7 +47,7 @@ UNIFORMITY_THRESHOLD = 0.01
 
 def simplify(key):
     """
-    Cleans up (and bumps to lower case)
+    Cleans up (AND bumps to lower case)
     a string to compare it to a list of expected
     keywords such as "jd" or "timestamps".
 
@@ -213,9 +213,25 @@ class DatasetMixin:
             doc="Instructions dictionary for loading the data from disk",
         )
 
+        colmap = sa.Column(
+            JSONB,
+            nullable=False,
+            default={},
+            doc="Dictionary mapping column names to column indices",
+        )
+
+        time_info = sa.Column(
+            JSONB,
+            nullable=False,
+            default={},
+            doc="Dictionary containing information about the time column "
+            "(e.g., how to parse the time, with format and offset info).",
+        )
+
         altdata = sa.Column(
             JSONB,
-            nullable=True,
+            nullable=False,
+            default={},
             doc="Additional meta-data associated with this dataset",
         )
 
@@ -278,12 +294,16 @@ class DatasetMixin:
         )
 
     def __init__(self, **kwargs):
+        # this is commented out because sometimes you want
+        # to create an empty raw data and give it a filename
+        # and have it loaded into this object from there
+        # if "data" not in kwargs:
+        #     raise ValueError("Must provide data to initialize a Dataset object")
+
         self._data = None
-        self.colmap = {}
         self._times = None
         self._mjds = None
         self.source = None
-        self.time_info = {}
 
         # these are only set when generating a new
         # object, not when loading from database
@@ -291,10 +311,18 @@ class DatasetMixin:
         self.autosave = AUTOSAVE
         self.overwrite = OVERWRITE
 
+        # if given any info on the column mapping or time parsing:
+        self.colmap = kwargs.pop("colmap", {}).copy()
+        self.time_info = kwargs.pop("time_info", {}).copy()
+
         # first input data to allow
         # the object to calculate some attributes
         if "data" in kwargs:
-            self.data = kwargs.pop("data")
+            data = kwargs.pop("data")
+
+            # first figure out the data columns and time conversions
+            self.update_colmap(data)
+            self.data = data  # also calculate times and other stats
 
         # override any existing attributes
         for k, v in list(kwargs.items()):
@@ -351,10 +379,8 @@ class DatasetMixin:
         ref: https://docs.sqlalchemy.org/en/14/orm/constructors.html
         """
         self._data = None
-        self.colmap = {}
         self._times = None
         self._mjds = None
-        self.time_info = {}
         self.source = None
         self.loaded_status = "database"
 
@@ -443,7 +469,7 @@ class DatasetMixin:
         """
         Get the full path to the data file.
         """
-        if self.filename:
+        if self.get_path() is not None and self.filename is not None:
             return os.path.join(self.get_path(), self.filename)
         else:
             return None
@@ -511,17 +537,21 @@ class DatasetMixin:
             self.format = self.guess_format()
 
         if self.format == "hdf5":
-            self.load_hdf5()
+            data, altdata = self.load_hdf5()
         elif self.format == "fits":
-            self.load_fits()
+            data, altdata = self.load_fits()
         elif self.format == "csv":
-            self.load_csv()
+            data, altdata = self.load_csv()
         elif self.format == "json":
-            self.load_json()
+            data, altdata = self.load_json()
         elif self.format == "netcdf":
-            self.load_netcdf()
+            data, altdata = self.load_netcdf()
         else:
             raise ValueError(f"Unknown format {self.format}")
+
+        self.update_colmap(data)
+        self.data = data
+        self.altdata = altdata
 
     def load_hdf5(self):
         """
@@ -536,18 +566,23 @@ class DatasetMixin:
                     raise ValueError("No key specified and multiple keys found in file")
 
             # load the data
-            self.data = store.get(key)
-            if self.data is None:
+            data = store.get(key)
+            if data is None:
                 raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
+
             # load metadata
             if store.get_storer(key).attrs and "altdata" in store.get_storer(key).attrs:
-                self.altdata = store.get_storer(key).attrs["altdata"]
+                altdata = store.get_storer(key).attrs["altdata"]
+
+            return data, altdata
 
     def load_fits(self):
         pass
 
     def load_csv(self):
-        self.data = pd.read_csv(self.get_fullname())
+        data = pd.read_csv(self.get_fullname())
+
+        return data, {}
 
     def load_json(self):
         pass
@@ -910,7 +945,7 @@ class DatasetMixin:
                     if len(os.listdir(path)) == 0:
                         os.rmdir(path)
 
-    def find_colmap(self):
+    def update_colmap(self, data):
         """
         Calculate the column map for the data.
         Locates column names in the data that
@@ -921,79 +956,43 @@ class DatasetMixin:
         E.g., ZTF uses "filtercode", but it would
         be accessed using colmap['filter'].
         """
-        if isinstance(self._data, pd.DataFrame):
-            columns = self._data.columns
+        if isinstance(data, pd.DataFrame):
+            columns = data.columns
         # other datatypes will call this differently...
         # TODO: get the columns for other data types
 
         for c in columns:  # timestamps
+            example = data[c].iloc[0]
             if simplify(c) in ("jd", "juliandate"):
-                self.time_info["format"] = "mjd"
-                offset = get_time_offset(c)  # e.g., JD-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).mjd
-                self.time_info["offset"] = offset
+                self.time_info["format"] = "jd"
+                self.time_info["offset"] = get_time_offset(c)  # e.g., JD-12345000
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("mjd",):
                 self.time_info["format"] = "mjd"
-                offset = get_time_offset(c)  # e.g., MJD-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="mjd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: t + offset
-                self.time_info["offset"] = offset
+                self.time_info["offset"] = get_time_offset(c)  # e.g., MJD-12345000
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("bjd",):
-                self.time_info["format"] = "bjd"
-                offset = get_time_offset(c)  # e.g., BJD-12345000
+                self.time_info["format"] = "jd"
+                self.time_info["offset"] = get_time_offset(c)  # e.g., BJD-12345000
                 # TODO: must add some conversion between JD and BJD
                 #  e.g., https://mail.python.org/pipermail/astropy/2014-April/002844.html
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="jd", scale="utc"
-                ).mjd
-                self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
             elif simplify(c) in ("time", "datetime") and isinstance(
-                self._data[c][0], (str, bytes)
+                example, (str, bytes)
             ):
-                if "T" in self._data[c][0]:
+                if "T" in example:
                     self.time_info["format"] = "isot"
-                    self.time_info["to datetime"] = lambda t: Time(
-                        t, format="isot", scale="utc"
-                    ).datetime
-                    self.time_info["to mjd"] = lambda t: Time(
-                        t, format="isot", scale="utc"
-                    ).mjd
                 else:
                     self.time_info["format"] = "iso"
-                    self.time_info["to datetime"] = lambda t: Time(
-                        t, format="iso", scale="utc"
-                    ).datetime
-                    self.time_info["to mjd"] = lambda t: Time(
-                        t, format="iso", scale="utc"
-                    ).mjd
                 self.time_info["offset"] = 0
                 self.colmap["time"] = c
                 break
             elif simplify(c) == ("time", "unix", "timestamp"):
                 self.time_info["format"] = "unix"
                 offset = get_time_offset(c)  # e.g., Unix-12345000
-                self.time_info["to datetime"] = lambda t: Time(
-                    t - offset, format="unix", scale="utc"
-                ).datetime
-                self.time_info["to mjd"] = lambda t: Time(
-                    t - offset, format="unix", scale="utc"
-                ).mjd
                 self.time_info["offset"] = offset
                 self.colmap["time"] = c
                 break
@@ -1043,6 +1042,10 @@ class DatasetMixin:
                 self.colmap["flag"] = c
                 break
 
+            if simplify(c) == simplify("QUALITY"):  # Kepler/TESS
+                self.colmap["flag"] = c
+                break
+
     def calc_times(self):
         """
         Calculate datetimes and MJDs for each epoch,
@@ -1053,11 +1056,24 @@ class DatasetMixin:
         """
         if len(self._data) == 0:
             return
-        self.times = self.time_info["to datetime"](self._data[self.colmap["time"]])
+        if len(self.time_info) == 0:
+            raise ValueError(
+                "No time_info was found. Make sure to run update_colmap() first..."
+            )
+
+        def time_parser(t):
+            return Time(
+                t + self.time_info["offset"],
+                format=self.time_info["format"],
+                scale="utc",
+            )
+
+        t = time_parser(self._data[self.colmap["time"]])
+        self.times = t.datetime
         self.time_start = min(self.times)
         self.time_end = max(self.times)
 
-        self.mjds = self.time_info["to mjd"](self._data[self.colmap["time"]])
+        self.mjds = t.mjd
 
     def plot(self, ax=None, **kwargs):
         """
@@ -1185,7 +1201,6 @@ class DatasetMixin:
             )
 
         self._data = data
-        self.find_colmap()
 
         # remove rows with nan timestamps
         if len(self._data.index) > 0 and "time" in self.colmap:
@@ -1242,6 +1257,8 @@ class DatasetMixin:
         "observatory",
         "cfg_hash",
         "folder",
+        "colmap",
+        "time_info",
     ]
 
     # automatically update the dictionaries
@@ -1300,8 +1317,8 @@ class RawPhotometry(DatasetMixin, Base):
     def type(self):
         return "photometry"
 
+    @staticmethod
     def make_random_photometry(
-        self,
         number=100,
         mag_min=15,
         mag_max=20,
@@ -1390,7 +1407,7 @@ class RawPhotometry(DatasetMixin, Base):
         if exptime:
             df["exptime"] = exptime
 
-        self.data = df
+        return df
 
 
 class Lightcurve(DatasetMixin, Base):
@@ -1523,8 +1540,8 @@ class Lightcurve(DatasetMixin, Base):
 
         @property
         def mag_rms(self):
-            if self.flux_mean and self.flux_rms is not None:
-                return self.flux_rms / self.flux_mean / LOG_BASES
+            if self.flux_mean_robust and self.flux_rms is not None:
+                return self.flux_rms / self.flux_mean_robust / LOG_BASE
             else:
                 return None
 
@@ -1552,7 +1569,7 @@ class Lightcurve(DatasetMixin, Base):
         @property
         def mag_rms_robust(self):
             if self.flux_mean_robust and self.flux_rms_robust is not None:
-                return self.flux_rms_robust / self.flux_mean_robust / LOG_BASES
+                return self.flux_rms_robust / self.flux_mean_robust / LOG_BASE
             else:
                 return None
 
@@ -1564,7 +1581,7 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         @property
-        def mag_min(self):
+        def mag_brightest(self):
             if self.flux_max is None:
                 return None
             return -2.5 * np.log10(self.flux_max) + PHOT_ZP
@@ -1577,7 +1594,7 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         @property
-        def mag_max(self):
+        def mag_faintest(self):
             if self.flux_min is None:
                 return None
             return -2.5 * np.log10(self.flux_min) + PHOT_ZP
@@ -1594,6 +1611,41 @@ class Lightcurve(DatasetMixin, Base):
             nullable=True,
             index=True,
             doc="Minimum S/N of the dataset",
+        )
+
+        snr_median = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Mean S/N of the dataset",
+        )
+
+        dsnr_max = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum delta S/N of the dataset",
+        )
+
+        dsnr_min = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum delta S/N of the dataset",
+        )
+
+        dmag_brightest = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Maximum delta mag (brightest magnitude) of the change of flux",
+        )
+
+        dmag_faintest = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Minimum delta mag (faintest magnitude) of the change of flux",
         )
 
         filter = sa.Column(
@@ -1683,11 +1735,20 @@ class Lightcurve(DatasetMixin, Base):
             raise ValueError("Lightcurve must be initialized with data")
 
         self.filtmap = None  # get this as possible argument
+
         DatasetMixin.__init__(self, **kwargs)
 
-        try:
-            fcol = self.colmap["filter"]  # shorthand
+        # if given a colmap, make sure to remove columns
+        # that are not in the data anymore
+        for k, v in self.colmap.copy().items():
+            if v not in data.columns:
+                self.colmap.pop(k)
 
+        fcol = self.colmap.get("filter")  # shorthand
+
+        if fcol is None:  # no filter, use observatory name instead
+            self.filter = self.observatory.upper()
+        else:  # use the filtmap to convert to a standard filter name
             # replace the filter name with a more specific one
             if "filtmap" in kwargs and kwargs["filtmap"] is not None:
                 if isinstance(kwargs["filtmap"], dict):
@@ -1707,43 +1768,36 @@ class Lightcurve(DatasetMixin, Base):
 
                 self.data.loc[:, fcol] = self.data.loc[:, fcol].map(filter_mapping)
 
-            filters = self.data[fcol].values
-            if not all([f == filters[0] for f in filters]):
+            filters = self.data[fcol].unique()
+            if len(filters) > 1:
                 raise ValueError("All filters must be the same for a Lightcurve")
             self.filter = filters[0]
 
-            # sort the data by time it was recorded
-            if isinstance(self.data, pd.DataFrame):
-                self.data = self.data.sort_values([self.colmap["time"]], inplace=False)
-                self.data.reset_index(drop=True, inplace=True)
+        # sort the data by time it was recorded
+        if isinstance(self.data, pd.DataFrame):
+            self.data = self.data.sort_values([self.colmap["time"]], inplace=False)
+            self.data.reset_index(drop=True, inplace=True)
 
-            # get flux from mag or vice-versa
-            self.calc_mag_flux()
+        # get flux from mag or vice-versa
+        self.calc_mag_flux()
 
-            # make sure keys in altdata are standardized
-            self.translate_altdata()
+        # make sure keys in altdata are standardized
+        self.translate_altdata()
 
-            # find exposure time, frame rate, uniformity
-            self.find_cadence()
+        # find exposure time, frame rate, uniformity
+        self.find_cadence()
 
-            # get averages and standard deviations
-            self.calc_stats()
+        # get averages and standard deviations
+        self.calc_stats()
 
-            # get the signal-to-noise ratio
-            self.calc_snr()
+        # get the signal-to-noise ratio
+        self.calc_snr()
 
-            # get the peak flux and S/N
-            self.calc_best()
+        # get the peak flux and S/N
+        self.calc_best()
 
-            # remove columns we don't use
-            self.drop_and_rename_columns()
-
-        except Exception:
-            # if construction fails, don't want to leave
-            # this object attached to the raw data object
-            self.raw_data = None
-            self.raw_data_id = None
-            raise
+        # remove columns we don't use
+        self.drop_and_rename_columns()
 
     def __repr__(self):
         string = []
@@ -1805,8 +1859,8 @@ class Lightcurve(DatasetMixin, Base):
         if self.altdata is None:
             return
 
-        for key, value in self.altdata.items():
-            if simplify(key) in ("exposure_time"):
+        for key, value in self.altdata.copy().items():
+            if simplify(key) == "exposuretime":
                 self.altdata["exptime"] = value
                 del self.altdata[key]
 
@@ -1832,7 +1886,7 @@ class Lightcurve(DatasetMixin, Base):
             # what about the errors?
             if "magerr" in self.colmap:
                 magerr = self.data[self.colmap["magerr"]]
-                self.data["fluxerr"] = fluxes * magerr * LOG_BASES
+                self.data["fluxerr"] = fluxes * magerr * LOG_BASE
                 self.colmap["fluxerr"] = "fluxerr"
 
         # calculate the magnitudes from the fluxes
@@ -1842,29 +1896,31 @@ class Lightcurve(DatasetMixin, Base):
             good_points = np.logical_and(np.invert(np.isnan(fluxes)), fluxes > 0)
             mags = -2.5 * np.log10(fluxes, where=good_points) + PHOT_ZP
             mags[np.invert(good_points)] = np.nan
-            self.data[self.colmap["mag"]] = mags
+            self.data["mag"] = mags
             self.colmap["mag"] = "mag"
 
             # what about the errors?
             if "fluxerr" in self.colmap:
                 fluxerr = self.data[self.colmap["fluxerr"]]
-                magerr = fluxerr / fluxes / LOG_BASES
+                magerr = fluxerr / fluxes / LOG_BASE
                 magerr[np.invert(good_points)] = np.nan
                 self.data["magerr"] = magerr
                 self.colmap["magerr"] = "magerr"
+
+        # TODO: should there be another option for when both are given?
 
     def find_cadence(self):
         """
         Find the exposure time and frame rate of the data.
         """
         if "exptime" in self.colmap:
-            self.exp_time = np.median(self.data[self.colmap["exptime"]])
+            self.exp_time = float(np.nanmedian(self.data[self.colmap["exptime"]]))
         elif self.altdata:
 
             keys = ["exp_time", "exptime", "exposure_time", "exposuretime"]
             for key in keys:
                 if key in self.altdata:
-                    self.exp_time = self.altdata[key]
+                    self.exp_time = float(self.altdata[key])
                     break
 
         if self.exp_time is None:
@@ -1873,10 +1929,9 @@ class Lightcurve(DatasetMixin, Base):
         if len(self.times) > 1:
             dt = np.diff(self.times.astype(np.datetime64))
             dt = dt.astype(np.int64) / 1e6  # convert microseconds to seconds
-            self.frame_rate = 1 / np.nanmedian(dt)
+            self.frame_rate = float(1 / np.nanmedian(dt))
 
-            # check the relative amplitude of the time difference
-            # between measurements.
+            # check the relative amplitude of the time difference between measurements.
             dt_amp = np.quantile(dt, 0.95) - np.quantile(dt, 0.05)
             dt_amp *= self.frame_rate  # divide by median(dt)
             self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
@@ -1891,8 +1946,8 @@ class Lightcurve(DatasetMixin, Base):
             flags = self.data[self.colmap["flag"]].values.astype(bool)
             fluxes = fluxes[np.invert(flags)]
 
-        self.flux_mean = np.nanmean(fluxes) if len(fluxes) else None
-        self.flux_rms = np.nanstd(fluxes) if len(fluxes) else None
+        self.flux_mean = float(np.nanmean(fluxes)) if len(fluxes) else None
+        self.flux_rms = float(np.nanstd(fluxes)) if len(fluxes) else None
 
         # robust statistics
         self.flux_mean_robust, self.flux_rms_robust = self.sigma_clipping(fluxes)
@@ -1958,10 +2013,10 @@ class Lightcurve(DatasetMixin, Base):
                 break
 
             num_values_prev = num_values
-            mean_value = np.nanmedian(values)
+            mean_value = np.nanmean(values)
             scatter = np.nanstd(values)
 
-        return mean_value, scatter
+        return float(mean_value), float(scatter)
 
     def calc_snr(self):
         fluxes = self.data[self.colmap["flux"]]
@@ -1971,8 +2026,19 @@ class Lightcurve(DatasetMixin, Base):
         else:
             worst_err = fluxerrs
 
-        self.data["snr"] = (fluxes - self.flux_mean_robust) / worst_err
+        # signal to noise ratio of flux (using the biggest error of the two)
+        self.data["snr"] = fluxes / worst_err
+
+        # signal to noise ratio of the flux residuals after removing the mean
+        # TODO: replace this with the s/n of the "detrend flux"?
+        self.data["dsnr"] = (fluxes - self.flux_mean_robust) / worst_err
+
+        # the amount of magnification of the flux relative to the mean, in units of magnitudes (delta-mag)
+        self.data["dmag"] = 2.5 * np.log10(fluxes / self.flux_mean_robust)
+
         self.colmap["snr"] = "snr"
+        self.colmap["dsnr"] = "dsnr"
+        self.colmap["dmag"] = "dmag"
 
     def calc_best(self):
         """
@@ -1981,18 +2047,29 @@ class Lightcurve(DatasetMixin, Base):
         """
 
         snr = self.data[self.colmap["snr"]]
+        dsnr = self.data[self.colmap["dsnr"]]
+        dmag = self.data[self.colmap["dmag"]]
         flux = self.data[self.colmap["flux"]]
 
         if "flag" in self.colmap:
             flags = self.data[self.colmap["flag"]].values.astype(bool)
-            snr = snr[np.invert(flags)]
             flux = flux[np.invert(flags)]
+            snr = snr[np.invert(flags)]
+            dsnr = dsnr[np.invert(flags)]
+            dmag = dmag[np.invert(flags)]
 
         if len(snr) > 0:
-            self.snr_max = np.nanmax(snr)
-            self.snr_min = np.nanmin(snr)
-            self.flux_max = np.nanmax(flux)
-            self.flux_min = np.nanmin(flux)
+            self.flux_max = float(np.nanmax(flux))
+            self.flux_min = float(np.nanmin(flux))
+
+            self.snr_max = float(np.nanmax(snr))
+            self.snr_min = float(np.nanmin(snr))
+
+            self.dsnr_max = float(np.nanmax(dsnr))
+            self.dsnr_min = float(np.nanmin(dsnr))
+
+            self.dmag_brightest = float(np.nanmax(dmag))
+            self.dmag_faintest = float(np.nanmin(dmag))
 
     def drop_and_rename_columns(self):
         """
@@ -2008,6 +2085,7 @@ class Lightcurve(DatasetMixin, Base):
 
         It also adds a column named "mjd" for convenience.
         """
+
         inv_colmap = {v: k for k, v in self.colmap.items()}
         new_cols = list(inv_colmap.keys())
         if isinstance(self.data, pd.DataFrame):
@@ -2019,7 +2097,7 @@ class Lightcurve(DatasetMixin, Base):
             self.colmap = {k: k for k in self.colmap.keys()}
 
             # add a column with the MJD
-            self.data["mjd"] = self.time_info["to mjd"](self.data["time"])
+            self.data["mjd"] = self.mjds
             self.colmap["mjd"] = "mjd"
 
         # what about other data types, e.g., xarrays?
@@ -2034,6 +2112,7 @@ class Lightcurve(DatasetMixin, Base):
         for k, v in self.__dict__.items():
             if k != "_sa_instance_state":
                 pass
+        # TODO: we need to finish this!
 
     def get_filter_plot_color(self):
         """
@@ -2113,11 +2192,11 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         # add annotations for points with S/N above 5 sigma
-        det_idx = np.where(abs(self.data["snr"]) > 5.0)[0]
+        det_idx = np.where(abs(self.data["dsnr"]) > 5.0)[0]
         for i in det_idx:
             if self.data[self.colmap["flag"]][i] == 0:
                 ax.annotate(
-                    text=f' {self.data["snr"][i]:.2f}',
+                    text=f' {self.data["dsnr"][i]:.2f}',
                     xy=(t[i], m[i]),
                 )
 

@@ -63,14 +63,16 @@ def new_source2():
 
 @pytest.fixture
 def raw_phot():
+    df = RawPhotometry.make_random_photometry(number=100)
     data = RawPhotometry(
+        data=df,
         folder="data_temp",
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
         test_hash="test",
     )
-    data.make_random_photometry(number=100)
+
     yield data
 
     data.delete_data_from_disk()
@@ -82,14 +84,15 @@ def raw_phot():
 
 @pytest.fixture
 def raw_phot_no_exptime():
+    df = RawPhotometry.make_random_photometry(number=100, exptime=None)
     data = RawPhotometry(
+        data=df,
         folder="data_temp",
         altdata=dict(foo="bar"),
         observatory="demo",
         source_name=str(uuid.uuid4()),
         test_hash="test",
     )
-    data.make_random_photometry(number=100, exptime=None)
     yield data
 
     data.delete_data_from_disk()
@@ -101,7 +104,9 @@ def raw_phot_no_exptime():
 
 @pytest.fixture
 def saved_phot(new_source):
+    df = RawPhotometry.make_random_photometry(number=10)
     data = RawPhotometry(
+        data=df,
         folder="data_temp",
         altdata=dict(foo="bar"),
         observatory="demo",
@@ -109,7 +114,6 @@ def saved_phot(new_source):
         test_hash="test",
     )
     data.source = new_source
-    data.make_random_photometry(number=10)
     data.save()
     yield data
 

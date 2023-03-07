@@ -32,7 +32,19 @@ class Simulator:
     """
 
     def __init__(self, **kwargs):
-        self.pars = ParsSimulator(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsSimulator object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsSimulator(**kwargs)
 
     def help(self=None, owner_pars=None):
         """

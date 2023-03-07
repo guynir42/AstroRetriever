@@ -21,7 +21,7 @@ from src.parameters import (
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
-from src.utils import CircularBufferList
+from src.utils import help_with_class, help_with_object, CircularBufferList
 
 lock = threading.Lock()
 
@@ -57,8 +57,8 @@ class ParsObservatory(Parameters):
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
 
-        self.reducer = self.add_par(
-            "reducer", {}, dict, "Argumnets to pass to reduction method"
+        self.reduce_kwargs = self.add_par(
+            "reduce_kwargs", {}, dict, "Arguments to pass to reduction method"
         )
 
         self.credentials = self.add_par(
@@ -231,6 +231,9 @@ class VirtualObservatory:
         Create a new VirtualObservatory object,
         which is a base class for other observatories,
         not to be initialized directly.
+        This initialization code called by subclasses,
+        only after some initialization steps are taken,
+        such as setting up a Parameters object.
 
         Parameters
         ----------
@@ -723,12 +726,22 @@ class VirtualObservatory:
                 # <-- magic happens here! -- > #
                 data, altdata = self.download_from_observatory(cat_row, **download_args)
 
+                if self.pars.verbose > 9:
+                    print(f"len(data)= {len(data)} | altdata= {altdata}")
+
                 # save the catalog info
                 # TODO: should we get the full catalog row?
                 altdata["cat_row"] = cat_row
 
                 # save the parameters involved with the download
                 altdata["download_pars"] = download_pars
+
+                # specific observatories will have some adjustments to make
+                # to the colmap and time_info parameters
+                colmap, time_info = self.get_colmap_time_info(data, altdata)
+
+                dataset_args["colmap"] = colmap
+                dataset_args["time_info"] = time_info
 
                 # create a raw data for this class (e.g., RawPhotometry)
                 raw_data = DataClass(
@@ -741,11 +754,15 @@ class VirtualObservatory:
                 if raw_data is not None:
                     report_dict[f"raw_{dt}"] = "new"
 
+                raw_data.source = source
+
             if raw_data is None:
                 raise ValueError("Raw data can not be None at this point!")
 
             # add the raw data to the source
             getattr(source, f"raw_{dt}").append(raw_data)
+            # if observatory has local name for this source
+            self._append_local_name(source)
 
             if reduce:  # reduce the data
                 reduced_datasets = source.get_data(
@@ -763,13 +780,16 @@ class VirtualObservatory:
                     reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
                     report_dict[f"reduced_{dt}"] = "new"
 
-                # make sure to append new data unto source
+                # make sure to append new data unto source and vice-versa
                 for d in reduced_datasets:
                     getattr(source, f"reduced_{dt}").append(d)
+                    d.source = source
 
             # if debugging or saving outside this function, set save=False
             if save:
                 try:
+                    if self.pars.verbose > 9:
+                        print(f"Saving source {source.name}")
                     session.add(source)
                     session.commit()
                 except Exception:
@@ -789,7 +809,8 @@ class VirtualObservatory:
                         reduced_datasets, session=session, save_kwargs=save_kwargs
                     )
 
-        self.latest_source = source
+        if source is not None:
+            self.latest_source = source
 
         if report is not None:
             report.update(report_dict)
@@ -822,6 +843,56 @@ class VirtualObservatory:
         raise NotImplementedError(
             "download_from_observatory() must be implemented in subclass"
         )
+
+    def get_colmap_time_info(self, data=None, altdata=None):
+        """
+        Get the colmap (column mapping) and time_info dictionaries
+        for a RawPhotometry object.
+        In some cases the native dataset.DatasetMixin class
+        can find all the columns and figure out what they are.
+        For example, a ZTF dataframe would have a "mjd" column,
+        and the dataset can figure it out.
+        In such a case, this function returns empty dicts.
+        However, in other cases, the dataset might have weird column
+        names or names that don't have useful information to parse them.
+        For example, a TESS dataframe has columns like "TIME", and "PDCSAP_FLUX".
+        The "TIME" column name doesn't tell that it is an BJD with some offset,
+        and "PDCSAP_FLUX" is only one of the types of fluxes that are available.
+        In that case, the VirtualTESS object would implement this function
+        and make the required adjustments to the two dictionaries.
+        These dictionaries should be given to the initialization kwargs
+        of the raw dataset, to allow it to correctly parse the data.
+        The reduced datasets would already be correct, since they are
+        created from the raw dataset.
+
+        Parameters
+        ----------
+        data: pandas.DataFrame (optional)
+            The raw data to be parsed. Sometimes the raw data
+            contains information about the columns or the time format.
+        altdata: dict (optional)
+            The altdata dictionary to be updated.
+            Sometimes the altdata contains info like the time offset.
+
+        Returns
+        -------
+        colmap: dict
+            A dictionary mapping the column names in the raw dataset
+            to the standardized names in the raw dataset.
+        time_info: dict
+            A dictionary with information about the time column in the raw dataset.
+        """
+        return {}, {}
+
+    def _append_local_name(self, source):
+        """
+        Append to the local_names of the source.
+        This allows the source to be indexed based on the name or ID
+        it has in the internal naming convention of each observatory.
+        If the observatory subclass does not override this function,
+        it remains a no-op and no alias is added.
+        """
+        pass
 
     # TODO: this should be replaced by populate raw data?
     def populate_sources(self, files_glob="*.h5", num_files=None, num_sources=None):
@@ -1006,9 +1077,9 @@ class VirtualObservatory:
         # parameters for the reduction
         # are taken from the config first,
         # then from the user inputs
-        if "reducer" in self.pars and isinstance(self.pars.reducer, dict):
+        if "reduce_kwargs" in self.pars and isinstance(self.pars.reduce_kwargs, dict):
             parameters = {}
-            parameters.update(self.pars.reducer)
+            parameters.update(self.pars.reduce_kwargs)
             parameters.update(kwargs)
             kwargs = parameters
 
@@ -1016,7 +1087,7 @@ class VirtualObservatory:
         init_kwargs = self._make_init_kwargs(dataset)
 
         # choose which kind of reduction to do
-        if output_type is None:
+        if output_type is None:  # output is same as input
             output_type = data_type
         else:
             output_type = convert_data_type(output_type)
@@ -1084,14 +1155,13 @@ class VirtualObservatory:
             if hasattr(dataset, att):
                 init_kwargs[att] = getattr(dataset, att)
 
-        # TODO: What if dataset has not been committed yet and has no id?
-        init_kwargs["raw_data_id"] = dataset.id
         init_kwargs["raw_data"] = dataset
 
         # TODO: what if dataset has not been saved yet and has no filename?
         if "raw_data_filename" not in init_kwargs:
             init_kwargs["raw_data_filename"] = dataset.filename
 
+        # pass along other attributes like altdata
         for att in DatasetMixin.default_update_attributes:
             new_dict = {}
             new_value = getattr(dataset, att)
@@ -1103,6 +1173,36 @@ class VirtualObservatory:
         init_kwargs["filtmap"] = self.pars.filtmap
 
         return init_kwargs
+
+    @staticmethod
+    def _check_dataset(dataset, DataClass, allowed_dataclasses=[pd.DataFrame]):
+        """
+        Check that the dataset is of the correct type,
+        and that the underlying data is the correct type
+        (usually this would be a pandas DataFrame).
+        Raises a TypeError if these conditions are false.
+
+        Parameters
+        ----------
+        dataset: a dataset object
+            The dataset to check.
+        DataClass: a subclass of src.dataset.Dataset
+            The type of dataset to check for.
+        allowed_dataclasses: list
+            A list of allowed types of dataset.
+            The default is a list containing only pandas DataFrames.
+
+        """
+        if not isinstance(dataset, DataClass):
+            raise TypeError(
+                f"Dataset must be a {DataClass.__name__} or a subclass! "
+                f"Got {type(dataset)} instead..."
+            )
+        if not isinstance(dataset.data, tuple(allowed_dataclasses)):
+            raise TypeError(
+                f"Dataset data must be a one of: {allowed_dataclasses}! "
+                f"Got {type(dataset.data)} instead..."
+            )
 
     def help(self=None, owner_pars=None):
         """
@@ -1193,9 +1293,21 @@ class VirtualDemoObs(VirtualObservatory):
         # TODO: separate reducer into its own object
         # reducer_kwargs = kwargs.pop("reducer_kwargs", {})
 
-        self.pars = ParsDemoObs(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         # call this only after a pars object is set up
         super().__init__(name="demo")
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsDemoObs object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsDemoObs(**kwargs)
 
     def download_from_observatory(
         self,
@@ -1349,16 +1461,9 @@ class VirtualDemoObs(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        allowed_dataclasses = pd.DataFrame
-        if not isinstance(dataset, RawPhotometry):
-            raise TypeError(
-                f"dataset must be a RawPhotometry object, not {type(dataset)}"
-            )
-        if not isinstance(dataset.data, allowed_dataclasses):
-            raise ValueError(
-                f"Expected RawPhotometry to contain {str(allowed_dataclasses)}, "
-                f"but data was given as a {type(dataset.data)} object."
-            )
+        self._check_dataset(
+            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
+        )
 
         # check the source magnitude is within the range
         if source and source.mag is not None and mag_range:

@@ -181,7 +181,7 @@ class Analysis:
         histogram_kwargs["output_folder"] = self.output_folder
 
         # ingest the rest of the kwargs:
-        self.pars = ParsAnalysis(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
 
         # quality check cuts and the values histograms
         self.checker = self.pars.get_class_instance("quality", **quality_kwargs)
@@ -216,6 +216,18 @@ class Analysis:
                 self.good_scores.output_folder = value
 
         super().__setattr__(key, value)
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsAnalysis object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsAnalysis(**kwargs)
 
     def analyze_sources(self, sources, session=None):
         """
@@ -614,7 +626,7 @@ class Analysis:
 
         for hist in self.get_all_histograms():
             for lc in lightcurves:
-                hist.add_data(source, lc.data)
+                hist.add_data(source, lc.data, lc.altdata)
 
             hist.add_source_name(source.name)
 

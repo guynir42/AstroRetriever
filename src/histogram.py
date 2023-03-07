@@ -196,7 +196,7 @@ class Histogram:
         self.name = kwargs.pop("name", None)
         self.output_folder = kwargs.pop("output_folder", None)
 
-        self.pars = ParsHistogram(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
         self.data = None
         self.source_names = set()
 
@@ -264,6 +264,18 @@ class Histogram:
         # create the output folder
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsHistogram object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsHistogram(**kwargs)
 
     def _create_coordinate(self, name, specs):
         """
@@ -480,7 +492,7 @@ class Histogram:
             Dataframe or other objects containing data.
             The other objects can be, e.g., a Source object
             (that contains info on the magnitude and color)
-            or a catalog row, etc.
+            or a catalog row, altdata, etc.
 
         kwargs:
             Additional arguments to pass to the binning function.
@@ -521,7 +533,9 @@ class Histogram:
                 if hasattr(obj, "__contains__") and axis in obj:
                     values = obj[axis]
                 elif hasattr(obj, axis) and not isinstance(obj, pd.DataFrame):
-                    # only get this attribute if it isn't e.g., "filter"
+                    # only get this attribute if it isn't a DataFrame,
+                    # Since some attributes on the DataFrame (e.g., "filter")
+                    # are methods and not actual column names, in some cases
                     values = getattr(obj, axis)
 
                 if values is not None:

@@ -54,7 +54,19 @@ class QualityChecker:
     """
 
     def __init__(self, **kwargs):
-        self.pars = ParsQuality(**kwargs)
+        self.pars = self._make_pars_object(kwargs)
+
+    @staticmethod
+    def _make_pars_object(kwargs):
+        """
+        Make the ParsQuality object.
+        When writing a subclass of this class
+        that has its own subclassed Parameters,
+        this function will allow the constructor
+        of the superclass to instantiate the correct
+        subclass Parameters object.
+        """
+        return ParsQuality(**kwargs)
 
     def check(self, lightcurves, source, sim=None):
         """
@@ -88,22 +100,31 @@ class QualityChecker:
                 flag = lc.data[lc.colmap["flag"]]
                 lc.data["qflag"] |= flag != 0  # flag bad measurements
 
+            x = y = None
             if "ra" in lc.colmap and "dec" in lc.colmap:
                 ra = lc.data[lc.colmap["ra"]].values
                 dec = lc.data[lc.colmap["dec"]].values
-                ra -= np.median(ra)
+                ra -= np.nanmedian(ra)
                 # correct the RA for high declinations
                 x = ra * np.cos(dec * np.pi / 180)
 
-                dec -= np.median(dec)
+                dec -= np.nanmedian(dec)
                 y = dec
 
+            if "pos1" in lc.colmap and "pos2" in lc.colmap:
+                x = lc.data[lc.colmap["pos1"]].values
+                x -= np.nanmedian(x)
+                y = lc.data[lc.colmap["pos2"]].values
+                y -= np.nanmedian(y)
+
+            if x is not None and y is not None:
                 offset = np.sqrt(x**2 + y**2)
-                scatter = np.median(np.abs(offset - np.median(offset)))
+                scatter = np.nanmedian(np.abs(offset - np.nanmedian(offset)))
+
                 if scatter == 0:
                     offset_norm = np.zeros_like(offset)
                 else:
-                    offset_norm = (offset - np.median(offset)) / scatter
+                    offset_norm = (offset - np.nanmedian(offset)) / scatter
 
                 lc.data["offset"] = offset_norm
                 lc.data["qflag"] |= np.abs(offset_norm) >= self.pars.offset_threshold
