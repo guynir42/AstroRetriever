@@ -2131,9 +2131,27 @@ class Lightcurve(DatasetMixin, Base):
 
         return colors.get(self.filter.lower(), default_color)
 
-    def plot(self, ttype="mjd", ftype="mag", font_size=16, ax=None, **kwargs):
+    def plot(
+        self, ttype="mjd", ftype="mag", threshold=5.0, font_size=16, ax=None, **kwargs
+    ):
         """
         Plot the lightcurve.
+
+        Parameters
+        ----------
+        ttype : str
+            The type of the x-axis. Can be "mjd" or "times".
+        ftype : str
+            The type of the y-axis. Can be "mag" or "flux".
+        threshold : float
+            The threshold for the S/N to mark outliers.
+            Default is 5.0.
+        font_size : int
+            The font size for the plot. Default is 16.
+        ax : matplotlib.axes.Axes
+            The axes to plot on. If None, a new figure is created.
+        kwargs: dict
+            Additional keyword arguments to pass to the matplotlib plot function.
 
         """
 
@@ -2192,7 +2210,7 @@ class Lightcurve(DatasetMixin, Base):
         )
 
         # add annotations for points with S/N above 5 sigma
-        det_idx = np.where(abs(self.data["dsnr"]) > 5.0)[0]
+        det_idx = np.where(abs(self.data["dsnr"]) > threshold)[0]
         for i in det_idx:
             if self.data[self.colmap["flag"]][i] == 0:
                 ax.annotate(

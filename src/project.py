@@ -549,7 +549,15 @@ class Project:
         hash = self.cfg_hash if self.cfg_hash else ""
 
         for source in sources:
-            session.delete(source.properties)
+            prop = session.scalars(
+                sa.select(Properties).where(
+                    Properties.source_name == source.name,
+                    Properties.project == self.name,
+                    Properties.cfg_hash == hash,
+                )
+            ).first()
+            if prop is not None:
+                session.delete(prop)
             if remove_associated_data:  # lightcurves, images, etc.
                 for dt in self.pars.data_types:
                     # the reduced level class is the same for processed/simulated
