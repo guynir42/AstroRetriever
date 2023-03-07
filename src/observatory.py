@@ -760,7 +760,9 @@ class VirtualObservatory:
                 raise ValueError("Raw data can not be None at this point!")
 
             # add the raw data to the source
-            getattr(source, f"raw_{dt}").append(raw_data)
+            data_list = getattr(source, f"raw_{dt}")
+            data_list.append(raw_data)
+
             # if observatory has local name for this source
             self._append_local_name(source)
 
