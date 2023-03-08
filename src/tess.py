@@ -153,7 +153,7 @@ class VirtualTESS(VirtualObservatory):
         )
 
         # get the altdata from the init_kwargs (if it is there)
-        altdata = init_kwargs.pop("altdata", dataset.altdata)
+        altdata_base = init_kwargs.pop("altdata", dataset.altdata)
 
         # split the dataframe into sectors
         dfs = dataset.data.groupby("SECTOR")
@@ -162,19 +162,35 @@ class VirtualTESS(VirtualObservatory):
         for df_tuple in dfs:
             sector = df_tuple[0]
             df = df_tuple[1]
-            new_altdata = altdata.copy()
+            new_altdata = altdata_base.copy()
             new_altdata["sectors"] = sector
             new_altdata["filter"] = "TESS"
-            for i in range(len(sectors)):
-                if altdata["file_headers"][i]["SECTOR"] == sectors[i]:
-                    new_altdata["file_headers"] = [altdata["file_headers"][i]]
-                    new_altdata["lightcurve_headers"] = [
-                        altdata["lightcurve_headers"][i]
-                    ]
-                    new_altdata["aperture_arrays"] = [altdata["aperture_arrays"][i]]
-                    new_altdata["aperture_headers"] = [altdata["aperture_headers"][i]]
-                    break
+            idx = None
 
+            for i in range(len(sectors)):
+                if int(altdata_base["file_headers"][i]["SECTOR"]) == int(sector):
+                    idx = i
+                    break
+            if idx is None:
+                raise ValueError("Could not find sector in altdata.")
+            new_altdata["file_headers"] = [altdata_base["file_headers"][idx]]
+            new_altdata["lightcurve_headers"] = [
+                altdata_base["lightcurve_headers"][idx]
+            ]
+            new_altdata["aperture_arrays"] = [altdata_base["aperture_arrays"][idx]]
+            new_altdata["aperture_headers"] = [altdata_base["aperture_headers"][idx]]
+            new_altdata["ra"] = float(altdata_base["file_headers"][idx]["RA_OBJ"])
+            new_altdata["dec"] = float(altdata_base["file_headers"][idx]["DEC_OBJ"])
+            sector = altdata_base["file_headers"][idx]["SECTOR"]
+            camera = altdata_base["file_headers"][idx]["CAMERA"]
+            ccd = altdata_base["file_headers"][idx]["CCD"]
+            new_altdata["series_name"] = f"TESS_{sector}_{camera}_{ccd}"
+            new_altdata["object_id"] = str(altdata_base["file_headers"][idx]["TICID"])
+            new_altdata["time_stamp_alignment"] = {
+                0.0: "start",
+                0.5: "middle",
+                1.0: "end",
+            }.get(float(altdata_base["lightcurve_headers"][idx]["TIMEPIXR"]), 0.5)
             if len(df) > 0:
                 new_datasets.append(
                     Lightcurve(data=df, altdata=new_altdata, **init_kwargs)

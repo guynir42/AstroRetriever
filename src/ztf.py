@@ -240,6 +240,7 @@ class VirtualZTF(VirtualObservatory):
         )
 
         data = dataset.data
+        altdata_base = init_kwargs.pop("altdata", dataset.altdata)
 
         time_col = dataset.colmap["time"]
 
@@ -339,10 +340,23 @@ class VirtualZTF(VirtualObservatory):
             flag_col,
         ]
         for df in dfs:
-            df = df[keep_columns]
             # df = df.rename(columns={v: k for k, v in dataset.colmap.items()})
+            time = Time(df.mjd[0], format="mjd", scale="utc").datetime
+            filter = df.loc[0, "filtercode"]
+            additional_altdata = dict(
+                ra=float(df[ra_col].median()),
+                dec=float(df[dec_col].median()),
+                series_name=f"{time.year}-{time.month}-{filter}",
+                object_id=str(df.loc[0, "oid"]),
+                time_stamp_alignment="middle",  # TODO: check this
+                exp_time=float(df[exp_col].median()),
+            )
+            altdata = altdata_base.copy()
+            altdata.update(additional_altdata)
+
+            df = df[keep_columns]
             if len(df) > 0:
-                new_datasets.append(Lightcurve(data=df, **init_kwargs))
+                new_datasets.append(Lightcurve(data=df, altdata=altdata, **init_kwargs))
 
         return new_datasets
 

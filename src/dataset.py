@@ -2243,6 +2243,66 @@ class Lightcurve(DatasetMixin, Base):
 
         return ax
 
+    def get_sncosmo_filter(self, filter):
+        if self.observatory == "ztf":
+            d = dict(zg="ztfg", zr="ztfi", zi="ztfz")
+        elif self.observatory == "tess":
+            d = dict(tess="tess::red")
+        else:
+            d = {}
+
+        return d.get(filter, filter)
+
+    def export_to_skyportal(self, filename="lightcurve.h5", overwrite=False):
+        """
+        Create an HDF5 file that can be uploaded to SkyPortal
+        as a photometric series.
+
+        Parameters
+        ----------
+        filename: str
+            The name of the HDF5 file to create. Default is 'lightcurve.h5'.
+            If no extension is given, '.h5' is appended.
+        overwrite: bool
+            If True, overwrite the file if it already exists.
+            Default is False, so if file exists, will raise
+            a FileExistsError.
+        """
+        if len(filename.split(".")) == 1:
+            filename += ".h5"
+
+        if not overwrite and os.path.isfile(filename):
+            raise FileExistsError(
+                f"File {filename} already exists. Set overwrite=True to overwrite."
+            )
+
+        df = self.data.copy()
+        df.rename(columns={"exptime": "exp_time"}, inplace=True)
+        df["mjd"] = self.mjds  # make sure this is not some BJD-offset nonsense
+
+        metadata = dict(
+            exp_time=self.exp_time,
+            filter=self.get_sncosmo_filter(self.filter),
+            ra=self.altdata["ra"],
+            dec=self.altdata["dec"],
+            series_name=self.altdata["series_name"],
+            series_obj_id=self.altdata["object_id"],
+            ra_unc=self.altdata.get("ra_err", None),
+            dec_unc=self.altdata.get("dec_err", None),
+            time_stamp_alignment=self.altdata.get("time_stamp_alignment", None),
+        )
+
+        with pd.HDFStore(filename, mode="w") as store:
+            store.put(
+                "photometry",
+                df,
+                format="table",
+                index=None,
+                track_times=False,
+            )
+            if metadata is not None:
+                store.get_storer("photometry").attrs.metadata = metadata
+
 
 # make sure all the tables exist
 RawPhotometry.metadata.create_all(engine)
