@@ -262,3 +262,47 @@ def test_tess_download_by_ticid(tess_project):
             sa.select(RawPhotometry).where(RawPhotometry.source_name == source_name)
         ).first()
         assert raw_phot is None
+
+
+def test_tess_to_skyportal_conversion(tess_project, new_source):
+    assert isinstance(tess_project.tess, VirtualTESS)
+    colmap, time_info = tess_project.tess.get_colmap_time_info()
+
+    raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
+    raw_data.filename = "TESS_photometry.h5"
+    raw_data.folder = "DATA"
+    raw_data.load()
+    new_source.raw_photometry.append(raw_data)
+
+    lightcurves = tess_project.tess.reduce(source=new_source, data_type="photometry")
+
+    lc = lightcurves[0]
+
+    filename = "test_tess_skyportal_photometry.h5"
+    try:  # make sure to remove file at the end
+        lc.export_to_skyportal(filename)
+
+        with pd.HDFStore(filename) as store:
+            keys = store.keys()
+            assert len(keys) == 1
+            key = keys[0]
+            df = store[key]
+            for name in ["mjd", "flux", "fluxerr"]:
+                assert name in df.columns
+
+            metadata = store.get_storer(key).attrs["metadata"]
+
+            for name in [
+                "series_name",
+                "series_obj_id",
+                "exp_time",
+                "ra",
+                "dec",
+                "filter",
+                "time_stamp_alignment",
+            ]:
+                assert name in metadata
+
+    finally:
+        if os.path.isfile(filename):
+            os.remove(filename)

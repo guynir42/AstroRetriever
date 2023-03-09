@@ -4,6 +4,7 @@ import glob
 import copy
 import re
 import yaml
+import uuid
 import validators
 import numpy as np
 import pandas as pd
@@ -1063,9 +1064,9 @@ class VirtualObservatory:
         # this is called without a session,
         # so raw data must be attached to source
         if isinstance(source, Source):
-            dataset = source.get_data(obs=self.name, data_type=data_type, level="raw")[
-                0
-            ]
+            dataset = source.get_data(obs=self.name, data_type=data_type, level="raw")
+            dataset = dataset[0]
+
             if data_type is None:
                 raise ValueError("Must provide a data_type if supplying a Source!")
             data_type = convert_data_type(data_type)
@@ -1113,6 +1114,10 @@ class VirtualObservatory:
         # TODO: should we allow using source=None?
         new_datasets = reducer(dataset, source, init_kwargs, **kwargs)
         new_datasets = sorted(new_datasets, key=lambda x: x.time_start)
+
+        # check that each dataset has the required altdata keys/values
+        for d in new_datasets:
+            self._check_altdata_keys(d)
 
         # make sure each reduced dataset has a serial number:
         for i, d in enumerate(new_datasets):
@@ -1175,6 +1180,38 @@ class VirtualObservatory:
         init_kwargs["filtmap"] = self.pars.filtmap
 
         return init_kwargs
+
+    def _check_altdata_keys(self, dataset):
+        """
+        Check that the dataset has the required altdata keys/values.
+        Each observatory should produce a different altdata dictionary
+        but they all need to have a minimal set of keys.
+        If any are missing, will raise a KeyError.
+
+        If inheriting from this function, it should also
+        call the super()'s version of this function.
+
+        Parameters
+        ----------
+        dataset: a dataset object
+            The dataset to check.
+        """
+
+        required_keys = [
+            "ra",
+            "dec",
+            "series_name",
+            "object_id",
+            "time_stamp_alignment",
+        ]
+
+        missing_keys = []
+        for key in required_keys:
+            if key not in dataset.altdata:
+                missing_keys.append(key)
+
+        if len(missing_keys) > 0:
+            raise KeyError(f"Dataset is missing required altdata keys: {missing_keys}")
 
     @staticmethod
     def _check_dataset(dataset, DataClass, allowed_dataclasses=[pd.DataFrame]):
@@ -1493,9 +1530,19 @@ class VirtualDemoObs(VirtualObservatory):
                 dfs.append(df_new)
                 # TODO: what happens if filter is in altdata, not in dataframe?
 
+            altdata_base = init_kwargs.pop("altdata", dataset.altdata)
             new_datasets = []
             for df in dfs:
-                new_datasets.append(Lightcurve(data=df, **init_kwargs))
+                additional_altdata = dict(
+                    ra=float(df["ra"].median()) if "ra" in df else None,
+                    dec=float(df["dec"].median()) if "dec" in df else None,
+                    series_name=f"series_{df[filt_col].iloc[0]}",
+                    object_id=uuid.uuid4().hex,
+                    time_stamp_alignment="start",
+                )
+                altdata = altdata_base.copy()
+                altdata.update(additional_altdata)
+                new_datasets.append(Lightcurve(data=df, altdata=altdata, **init_kwargs))
 
         return new_datasets
 
