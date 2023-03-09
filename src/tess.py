@@ -779,6 +779,9 @@ class VirtualTESS(VirtualObservatory):
 
 
 if __name__ == "__main__":
+    import src.database
+
+    src.database.DATA_ROOT = "data"
     tess = VirtualTESS(project="testing VirtualTESS", verbose=0)
     white_dwarfs = Catalog(default="wd")
     white_dwarfs.load()

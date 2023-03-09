@@ -2244,14 +2244,14 @@ class Lightcurve(DatasetMixin, Base):
         return ax
 
     def get_sncosmo_filter(self, filter):
-        if self.observatory == "ztf":
+        if self.observatory.lower() == "ztf":
             d = dict(zg="ztfg", zr="ztfi", zi="ztfz")
-        elif self.observatory == "tess":
+        elif self.observatory.lower() == "tess":
             d = dict(tess="tess::red")
         else:
             d = {}
 
-        return d.get(filter, filter)
+        return d.get(filter.lower(), filter)
 
     def export_to_skyportal(self, filename="lightcurve.h5", overwrite=False):
         """
@@ -2287,10 +2287,18 @@ class Lightcurve(DatasetMixin, Base):
             dec=self.altdata["dec"],
             series_name=self.altdata["series_name"],
             series_obj_id=self.altdata["object_id"],
-            ra_unc=self.altdata.get("ra_err", None),
-            dec_unc=self.altdata.get("dec_err", None),
-            time_stamp_alignment=self.altdata.get("time_stamp_alignment", None),
         )
+
+        if "ra_err" in self.altdata:
+            metadata["ra_unc"] = self.altdata["ra_err"]
+        if "dec_err" in self.altdata:
+            metadata["dec_unc"] = self.altdata["dec_err"]
+        if "time_stamp_alignment" in self.altdata:
+            metadata["time_stamp_alignment"] = self.altdata["time_stamp_alignment"]
+
+        for k, v in metadata.items():
+            if k is None:
+                raise ValueError(f"metadata key {k} is None")
 
         with pd.HDFStore(filename, mode="w") as store:
             store.put(
