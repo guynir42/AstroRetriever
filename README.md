@@ -635,7 +635,6 @@ Each database interaction is started using a `session` object.
 import sqlalchemy as sa
 from src.database import Session
 session = Session()
-session.begin()
 ```
 
 To get full objects (rather than tuples with specific columns)
@@ -687,7 +686,6 @@ it is best to use the `with` statement to ensure that the session is closed.
 
 ```python
 with Session() as session:
-  session.begin()
   source = session.scalars(
     sa.select(Source).where(
       Source.name == 'J123.1-32.13'
@@ -703,7 +701,7 @@ with Session() as session:
 ```
 
 Use the `src.database.SmartSession` inside a context manager
-if you'd like the session to automatically `begin()` and `close()`.
+if you'd like the session to automatically close at the end.
 The SmartSession can also receive another session or `None` as an argument.
 In the first case, it would leave the session open, so it can be closed by
 the external scope. If `None`, it will open and close within the context.
@@ -747,7 +745,6 @@ These will lazy load the `data` attribute from disk.
 
 ```python
 with Session() as session:
-  session.begin()
   data = session.scalars(
     sa.select(RawPhotometry).where(
       RawPhotometry.source_name == "J123.1-32.13"

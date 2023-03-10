@@ -43,9 +43,7 @@ if not database_exists(engine.url):
 
 # print(f"Is database found: {database_exists(engine.url)}")
 
-Session = scoped_session(
-    sessionmaker(bind=engine, expire_on_commit=False, autobegin=False)
-)
+Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 
 class NullQueryResults:
@@ -111,6 +109,10 @@ class NoOpSession:
     def merge(*_, **__):
         return None
 
+    @property
+    def _transaction(self):
+        return None
+
 
 @contextmanager
 def SmartSession(input_session=None):
@@ -133,7 +135,8 @@ def SmartSession(input_session=None):
     # open a new session and close it when outer scope is done
     elif input_session is None:
         with Session() as session:
-            session.begin()
+            # if session._transaction is None:
+            #     session.begin()
             yield session
 
     # explicitly ask for a no-op session

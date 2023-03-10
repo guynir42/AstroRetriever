@@ -23,6 +23,7 @@ from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import engine, Base, SmartSession
+from src.source import Source
 
 
 lock = threading.Lock()

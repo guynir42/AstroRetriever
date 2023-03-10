@@ -667,7 +667,7 @@ class Source(Base, conesearch_alchemy.Point):
             getattr(self, f"raw_{data_type}").remove(raw_data)
             with SmartSession(session) as session:
                 session.delete(raw_data)
-                session.flush()
+                session.commit()  # should this just be a flush?
             return True
         else:
             raise RuntimeError(
@@ -704,11 +704,11 @@ class Source(Base, conesearch_alchemy.Point):
                     session.delete(d)
 
             for dt in allowed_data_types:
-                for d in getattr(self, f"processed_{dt}"):
+                for d in getattr(self, f"processed_{dt}", []):
                     if inspect(d).persistent:
                         session.delete(d)
 
-                for d in getattr(self, f"simulated_{dt}"):
+                for d in getattr(self, f"simulated_{dt}", []):
                     if inspect(d).persistent:
                         session.delete(d)
 
