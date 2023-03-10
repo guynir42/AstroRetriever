@@ -15,7 +15,7 @@ import numpy as np
 import sqlalchemy as sa
 
 import src.database
-from src.database import Session, CloseSession, Base
+from src.database import Base, SmartSession
 from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
@@ -458,26 +458,23 @@ class Project:
         Get all sources associated with this project
         that have a corresponding row in the database.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        hash = self.cfg_hash if self.cfg_hash else ""
-        output = session.execute(
-            sa.select(Source, Properties).where(
-                Source.project == self.name,
-                Source.cfg_hash == hash,
-                Properties.source_name == Source.name,
-            )
-        ).all()
-        sources = []
-        for out in output:
-            source = out[0]
-            source.properties = out[1]
-            sources.append(source)
+            hash = self.cfg_hash if self.cfg_hash else ""
+            output = session.execute(
+                sa.select(Source, Properties).where(
+                    Source.project == self.name,
+                    Source.cfg_hash == hash,
+                    Properties.source_name == Source.name,
+                )
+            ).all()
+            sources = []
+            for out in output:
+                source = out[0]
+                source.properties = out[1]
+                sources.append(source)
 
-        return sources
+            return sources
 
     def select_detections(self):
         stmt = sa.select(Detection).where(
@@ -490,12 +487,8 @@ class Project:
         """
         Get all detections associated with this project.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-
-        return session.scalars(self.select_detections()).all()
+        with SmartSession(session) as session:
+            return session.scalars(self.select_detections()).all()
 
     def delete_all_sources(
         self,
@@ -537,85 +530,82 @@ class Project:
             Session to use for database queries.
             If None, a new session is created and closed at the end of the function.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        sources = self.get_all_sources(session=session)
+            sources = self.get_all_sources(session=session)
 
-        raw_folders = set()
-        obs_names = [obs.name for obs in self.observatories]
-        hash = self.cfg_hash if self.cfg_hash else ""
+            raw_folders = set()
+            obs_names = [obs.name for obs in self.observatories]
+            hash = self.cfg_hash if self.cfg_hash else ""
 
-        for source in sources:
-            prop = session.scalars(
-                sa.select(Properties).where(
-                    Properties.source_name == source.name,
-                    Properties.project == self.name,
-                    Properties.cfg_hash == hash,
-                )
-            ).first()
-            if prop is not None:
-                session.delete(prop)
-            if remove_associated_data:  # lightcurves, images, etc.
-                for dt in self.pars.data_types:
-                    # the reduced level class is the same for processed/simulated
-                    DataClass = get_class_from_data_type(dt, level="reduced")
-                    data = session.scalars(
-                        sa.select(DataClass).where(
-                            DataClass.source_name == source.name,
-                            DataClass.project == self.name,
-                            DataClass.cfg_hash == hash,
-                            DataClass.observatory.in_(obs_names),
-                        )
-                    ).all()
-                    for d in data:
-                        d.delete_data_from_disk()
-                        session.delete(d)
-
-                    # remove folder if empty
-                    if remove_folder:
-                        if not os.listdir(self.output_folder):
-                            os.rmdir(self.output_folder)
-
-                    # check if we also need to remove raw data
-                    if remove_raw_data:
-                        DataClass = get_class_from_data_type(dt, level="raw")
+            for source in sources:
+                prop = session.scalars(
+                    sa.select(Properties).where(
+                        Properties.source_name == source.name,
+                        Properties.project == self.name,
+                        Properties.cfg_hash == hash,
+                    )
+                ).first()
+                if prop is not None:
+                    session.delete(prop)
+                if remove_associated_data:  # lightcurves, images, etc.
+                    for dt in self.pars.data_types:
+                        # the reduced level class is the same for processed/simulated
+                        DataClass = get_class_from_data_type(dt, level="reduced")
                         data = session.scalars(
                             sa.select(DataClass).where(
                                 DataClass.source_name == source.name,
+                                DataClass.project == self.name,
+                                DataClass.cfg_hash == hash,
                                 DataClass.observatory.in_(obs_names),
                             )
-                        )
+                        ).all()
                         for d in data:
-                            raw_folders.add(d.get_path())
                             d.delete_data_from_disk()
                             session.delete(d)
 
-            if remove_detections:
-                session.execute(
-                    sa.delete(Detection).where(
-                        Detection.source_name == source.name,
-                        Detection.project == self.name,
-                        Detection.cfg_hash == hash,
+                        # remove folder if empty
+                        if remove_folder:
+                            if not os.listdir(self.output_folder):
+                                os.rmdir(self.output_folder)
+
+                        # check if we also need to remove raw data
+                        if remove_raw_data:
+                            DataClass = get_class_from_data_type(dt, level="raw")
+                            data = session.scalars(
+                                sa.select(DataClass).where(
+                                    DataClass.source_name == source.name,
+                                    DataClass.observatory.in_(obs_names),
+                                )
+                            )
+                            for d in data:
+                                raw_folders.add(d.get_path())
+                                d.delete_data_from_disk()
+                                session.delete(d)
+
+                if remove_detections:
+                    session.execute(
+                        sa.delete(Detection).where(
+                            Detection.source_name == source.name,
+                            Detection.project == self.name,
+                            Detection.cfg_hash == hash,
+                        )
                     )
-                )
 
-            session.delete(source)
+                session.delete(source)
 
-        session.commit()
+            session.commit()
 
-        self.sources = []
-        for obs in self.observatories:
-            obs.sources = []
-            obs.raw_data = []
+            self.sources = []
+            for obs in self.observatories:
+                obs.sources = []
+                obs.raw_data = []
 
-        if remove_associated_data and remove_raw_data and remove_folder:
-            # remove any empty raw-data folders
-            for folder in list(raw_folders):
-                if not os.listdir(folder):
-                    os.rmdir(folder)
+            if remove_associated_data and remove_raw_data and remove_folder:
+                # remove any empty raw-data folders
+                for folder in list(raw_folders):
+                    if not os.listdir(folder):
+                        os.rmdir(folder)
 
     def delete_project_files(self, remove_folder=True):
         """
@@ -669,28 +659,26 @@ class Project:
             If None, a new session is created and closed at the end of the function.
 
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        self.delete_all_sources(
-            remove_associated_data=True,
-            remove_raw_data=remove_raw_data,
-            remove_folder=remove_folder,
-            remove_detections=True,
-            session=session,
-        )
-
-        session.execute(
-            sa.delete(Lightcurve).where(
-                Lightcurve.project == self.name, Lightcurve.cfg_hash == self.cfg_hash
+            self.delete_all_sources(
+                remove_associated_data=True,
+                remove_raw_data=remove_raw_data,
+                remove_folder=remove_folder,
+                remove_detections=True,
+                session=session,
             )
-        )
-        # TODO: add additional data types here
 
-        # remove histogram files and config file
-        self.delete_project_files(remove_folder=remove_folder)
+            session.execute(
+                sa.delete(Lightcurve).where(
+                    Lightcurve.project == self.name,
+                    Lightcurve.cfg_hash == self.cfg_hash,
+                )
+            )
+            # TODO: add additional data types here
+
+            # remove histogram files and config file
+            self.delete_project_files(remove_folder=remove_folder)
 
     def reset(self):
         self.sources = CircularBufferList(self.pars.source_buffer_size)
@@ -747,7 +735,7 @@ class Project:
         for obs in self.observatories:
             obs.reset()
 
-        with Session() as session:
+        with SmartSession() as session:
             # TODO: add batching of sources
             for name in source_names:
                 hash = self.cfg_hash if self.cfg_hash else ""

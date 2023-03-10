@@ -10,14 +10,14 @@ import pandas as pd
 from astropy.time import Time
 
 import sqlalchemy as sa
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 
 from src.utils import OnClose, UniqueList
 from src.parameters import Parameters
 from src.project import Project
 from src.ztf import VirtualZTF
 
-from src.database import Session
+from src.database import Session, SmartSession, NoOpSession, NullQueryResults
 from src.source import Source, DEFAULT_PROJECT
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP, simplify, get_time_offset
 from src.observatory import VirtualDemoObs
@@ -418,7 +418,7 @@ def test_add_source_and_data(data_dir):
     fullname = ""
     try:  # at end, delete the temp file
 
-        with Session() as session:
+        with SmartSession() as session:
             # create a random source
             source_name = str(uuid.uuid4())
 
@@ -518,7 +518,7 @@ def test_add_source_and_data(data_dir):
                 assert altdata["foo"] == "bar"
 
         # check that the data is in the database
-        with Session() as session:
+        with SmartSession() as session:
             source = session.scalars(
                 sa.select(Source).where(Source.name == source_name)
             ).first()
@@ -546,7 +546,7 @@ def test_add_source_and_data(data_dir):
             pass
 
     # make sure loading this data does not work without file
-    with Session() as session:
+    with SmartSession() as session:
         source = session.scalars(
             sa.select(Source).where(Source.name == source_name)
         ).first()
@@ -567,14 +567,14 @@ def test_add_source_and_data(data_dir):
             source.raw_photometry[0].data.equals(df)
 
     # cleanup
-    with Session() as session:
+    with SmartSession() as session:
         session.execute(sa.delete(Source).where(Source.name == source_name))
         session.commit()
 
 
 def test_source_unique_constraint():
 
-    with Session() as session:
+    with SmartSession() as session:
         name1 = str(uuid.uuid4())
         source1 = Source(name=name1, ra=0, dec=0)
         assert source1.cfg_hash == ""  # the default has is an empty string
@@ -614,7 +614,7 @@ def test_source_unique_constraint():
 
 def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
 
-    with Session() as session:
+    with SmartSession() as session:
         name = str(uuid.uuid4())
         raw_phot.source_name = name
         raw_phot.filename = "unique_test1.h5"
@@ -685,7 +685,7 @@ def test_data_file_paths(raw_phot, data_dir):
 
 def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
 
-    with Session() as session:
+    with SmartSession() as session:
 
         # add the data to a database mapped object
         new_source.project = test_project.name
@@ -826,7 +826,7 @@ def test_reducer_with_outliers(test_project, new_source):
     new_data = None
     lightcurves = None
 
-    with Session() as session:
+    with SmartSession() as session:
         try:  # at end, delete the temp file
             filt = "R"
             mjd = np.linspace(57000, 58000, num_points)
@@ -1006,7 +1006,7 @@ def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     lc1.source = saved_phot.source
     lc1.raw_data = saved_phot
 
-    with Session() as session:
+    with SmartSession() as session:
         lc1.save()
         session.add(lc1)
         session.add(lc1.source)
@@ -1015,7 +1015,7 @@ def test_lightcurve_file_is_auto_deleted(saved_phot, lightcurve_factory):
     # with session closed, check file is there
     assert os.path.isfile(lc1.get_fullname())
 
-    with Session() as session:
+    with SmartSession() as session:
         session.delete(lc1)
         session.commit()
 
@@ -1054,7 +1054,7 @@ def test_lightcurve_copy_constructor(saved_phot, lightcurve_factory):
     assert lc1.was_processed == lc2.was_processed
 
     # make sure DB related attributes are not copied
-    with Session() as session:
+    with SmartSession() as session:
         try:  # cleanup at the end
             lc1.save()
             session.add(lc1)
@@ -1115,7 +1115,7 @@ def test_demo_observatory_save_downloaded(test_project):
 
         assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
-        with Session() as session:
+        with SmartSession() as session:
             for d in obs.raw_data:
                 session.delete(d)
             session.commit()
@@ -1158,7 +1158,7 @@ def test_download_pars(test_project):
         if len(obs.raw_data) > 0:
             assert not os.path.isfile(obs.raw_data[0].get_fullname())
 
-        with Session() as session:
+        with SmartSession() as session:
             for d in obs.raw_data:
                 session.delete(d)
             session.commit()
@@ -1446,7 +1446,7 @@ def test_analysis(analysis, new_source, raw_phot):
     assert new_source.properties is not None
 
     # check that nothing was saved
-    with Session() as session:
+    with SmartSession() as session:
         lcs = session.scalars(
             sa.select(Lightcurve).where(Lightcurve.source_name == lc.source_name)
         ).all()
@@ -1462,7 +1462,7 @@ def test_analysis(analysis, new_source, raw_phot):
 
     try:  # now save everything
 
-        with Session() as session:
+        with SmartSession() as session:
             analysis.pars.save_anything = True
             analysis.reset_histograms()
             new_source.reset_analysis()
@@ -1508,7 +1508,7 @@ def test_analysis(analysis, new_source, raw_phot):
             session.commit()
             # now close the session and start a new one
 
-        # with Session() as session:
+        # with SmartSession() as session:
         #     detections = session.scalars(
         #         sa.select(Detection).where(Detection.source_name == new_source.name)
         #     ).all()
@@ -1530,7 +1530,7 @@ def test_analysis(analysis, new_source, raw_phot):
         analysis.remove_all_histogram_files(remove_backup=True)
 
         try:
-            with Session() as session:
+            with SmartSession() as session:
                 session.merge(new_source)
                 session.commit()
                 for lc in new_source.reduced_lightcurves:
@@ -1806,3 +1806,108 @@ def test_circular_buffer_list():
     cbl.extend([5, 6])
     assert cbl == [4, 5, 6]
     assert cbl.total == 6
+
+
+def test_smart_session(new_source):
+
+    # note that with regular sessions you'd need to call .begin()
+    with Session() as session:
+        session.begin()
+        session.add(new_source)
+        session.commit()
+
+    assert new_source.id is not None
+
+    # this session has been closed, so this should fail
+    with pytest.raises(InvalidRequestError):
+        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+    # try using a SmartSession, which should also begin the session:
+    with SmartSession() as session:
+        # this should work
+        sources = session.scalars(
+            sa.select(Source).where(Source.id == new_source.id)
+        ).all()
+        assert any([s.id == new_source.id for s in sources])
+
+    # this session has been closed, so this should fail
+    with pytest.raises(InvalidRequestError):
+        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+    # try using a SmartSession without a context manager inside a function
+    def try_smart_session(session=None):
+        with SmartSession(session) as session:
+            sources = session.scalars(
+                sa.select(Source).where(Source.id == new_source.id)
+            ).all()
+            assert len(sources) > 0
+
+    try_smart_session()  # the function is like a context manager
+    # this session has been closed, so this should fail
+    with pytest.raises(InvalidRequestError):
+        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+    # try calling the function again, but surrounded by a context manager
+    with SmartSession() as session:
+        try_smart_session(session)
+
+        # session should still work even though function has finished
+        sources = session.scalars(
+            sa.select(Source).where(Source.id == new_source.id)
+        ).all()
+        assert len(sources) > 0
+
+    # this session has been closed, so this should fail
+    with pytest.raises(InvalidRequestError):
+        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+    # with an explicit False this should be a no-op session
+    with SmartSession(False) as session:
+        assert isinstance(session, NoOpSession)
+
+        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
+        assert isinstance(query, NullQueryResults)
+        sources = query.all()
+        assert sources == []
+
+        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
+        assert isinstance(query, NullQueryResults)
+        source = query.first()
+        assert source is None
+
+    # try opening a session inside an open session:
+    with SmartSession() as session:
+
+        with SmartSession(session) as session2:
+            assert session2 is session
+            sources = session2.scalars(
+                sa.select(Source).where(Source.id == new_source.id)
+            ).all()
+            assert len(sources) > 0
+
+        # this still works because internal session doesn't auto-close
+        sources = session2.scalars(
+            sa.select(Source).where(Source.id == new_source.id)
+        ).all()
+        assert len(sources) > 0
+
+    # this should fail because the external session is closed
+    with pytest.raises(InvalidRequestError):
+        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+    # now change the global scope
+    import src.database
+
+    src.database.NO_DB_SESSION = True
+
+    with SmartSession() as session:
+        assert isinstance(session, NoOpSession)
+        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
+        assert isinstance(query, NullQueryResults)
+        sources = query.all()
+        assert sources == []
+
+        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
+        assert isinstance(query, NullQueryResults)
+        source = query.first()
+        assert source is None

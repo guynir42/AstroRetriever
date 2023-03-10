@@ -7,7 +7,7 @@ import pytest
 
 import sqlalchemy as sa
 
-from src.database import Session
+from src.database import SmartSession
 from src.catalog import Catalog
 from src.source import Source
 from src.project import Project
@@ -40,7 +40,7 @@ def new_source():
         mag=np.random.uniform(15, 20),
     )
     yield source
-    # with Session() as session:
+    # with SmartSession() as session:
     #     if source.id:
     #         session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == source.id))
     #     session.commit()
@@ -55,7 +55,7 @@ def new_source2():
         test_hash="test",
     )
     yield source
-    # with Session() as session:
+    # with SmartSession() as session:
     #     if source.id:
     #         session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == source.id))
     #     session.commit()
@@ -76,7 +76,7 @@ def raw_phot():
     yield data
 
     data.delete_data_from_disk()
-    with Session() as session:
+    with SmartSession() as session:
         if data.id:
             session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
         session.commit()
@@ -96,7 +96,7 @@ def raw_phot_no_exptime():
     yield data
 
     data.delete_data_from_disk()
-    with Session() as session:
+    with SmartSession() as session:
         if data.id:
             session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
         session.commit()
@@ -118,7 +118,7 @@ def saved_phot(new_source):
     yield data
 
     data.delete_data_from_disk()
-    with Session() as session:
+    with SmartSession() as session:
         if data.id:
             session.execute(sa.delete(RawPhotometry).where(RawPhotometry.id == data.id))
         session.commit()

@@ -7,7 +7,7 @@ from astropy.time import Time
 import sqlalchemy as sa
 
 from src.utils import OnClose
-from src.database import Session
+from src.database import SmartSession
 
 import src.dataset
 from src.catalog import Catalog
@@ -32,7 +32,7 @@ def test_tess_download(tess_project, wd_cat):
     idx = np.where(idx)[0][:3]
     c = wd_cat.make_smaller_catalog(idx)
 
-    with Session() as session:
+    with SmartSession() as session:
         sources = c.get_all_sources(session)
         for s in sources:
             session.delete(s)
@@ -46,7 +46,7 @@ def test_tess_download(tess_project, wd_cat):
     )  # TODO: when finished adding reducer, remove this
 
     def cleanup():  # to be called at the end
-        with Session() as session:
+        with SmartSession() as session:
             for s in tess.sources:
                 for p in s.raw_photometry:
                     p.delete_data_from_disk()
@@ -214,7 +214,7 @@ def test_tess_download_by_ticid(tess_project):
         assert source2.raw_photometry[0].loaded_status == "database"
 
         # delete the source and the re-fetch it using the TICID
-        with Session() as session:
+        with SmartSession() as session:
             session.delete(source)
             session.commit()
 
@@ -234,7 +234,7 @@ def test_tess_download_by_ticid(tess_project):
         assert source4.raw_photometry[0].loaded_status == "database"
 
     finally:
-        with Session() as session:
+        with SmartSession() as session:
             source = session.scalars(
                 sa.select(Source).where(
                     Source.name == source_name, Source.project == tess_project.name
@@ -251,7 +251,7 @@ def test_tess_download_by_ticid(tess_project):
                 session.delete(rp)
             session.commit()
 
-    with Session() as session:
+    with SmartSession() as session:
         source = session.scalars(
             sa.select(Source).where(
                 Source.name == source_name, Source.project == tess_project.name

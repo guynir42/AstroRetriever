@@ -12,7 +12,7 @@ import threading
 import concurrent.futures
 
 import sqlalchemy as sa
-from src.database import Session, CloseSession
+from src.database import SmartSession
 from src.parameters import (
     Parameters,
     convert_data_type,
@@ -625,192 +625,195 @@ class VirtualObservatory:
             }
         )
 
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        if source is None:
-            # check if source already exists
-            hash = self.cfg_hash if self.cfg_hash is not None else ""
-            source = session.scalars(
-                sa.select(Source).where(
-                    Source.name == cat_row["name"],
-                    Source.cfg_hash == hash,
-                )
-            ).first()
-            if self.pars.verbose > 9:
-                print(f"Is source found in database: {source is not None}")
-            if source is not None:
-                report_dict["source"] = "database"
-
-        # if not, create one now
-        if source is None:
-            if self.pars.verbose > 9:
-                print(f'Creating new source: {cat_row["name"]}')
-            source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
-            source.cat_row = cat_row  # save the raw catalog row as well
-            report_dict["source"] = "new"
-
-        for dt in self.pars.data_types:
-            # class of raw data (e.g., RawPhotometry)
-            DataClass = get_class_from_data_type(dt)
-
-            # if source existed in DB it should have raw data objects
-            # if it doesn't that means the data needs to be downloaded
-            raw_data = source.get_data(
-                obs=self.name,
-                data_type=dt,
-                level="raw",
-                session=session,
-                check_data=self.pars.check_data_exists,
-            )
-            raw_data = raw_data[0] if len(raw_data) > 0 else None
-            if self.pars.verbose > 9:
-                print(f"Is raw {dt} found in database: {raw_data is not None}")
-
-            if raw_data is not None:
-                report_dict[f"raw_{dt}"] = "database"
-            # if raw_data is not None and not raw_data.check_file_exists():
-            #     # TODO: should this be customizable behavior??
-            #     # session.delete(raw_data)
-            #     # raw_data = None
-            #     raise RuntimeError(
-            #         f"{DataClass} object for source {source.name} "
-            #         "exists in DB but file does not exist."
-            #     )
-            #
-            # # file exists, try to load it:
-            # if raw_data is not None:
-            #     lock.acquire()
-            #     try:
-            #         raw_data.load()
-            #     except KeyError as e:
-            #         if "No object named" in str(e):
-            #             # This does not exist in the file
-            #
-            #             # TODO: is delete the right thing to do?
-            #             source.remove_raw_data(
-            #                 obs=self.name, data_type=dt, session=session
-            #             )
-            #             session.flush()
-            #             raw_data = None
-            #         else:
-            #             raise e
-            #     finally:
-            #         lock.release()
-
-            if raw_data is not None and self.pars.check_download_pars:
-                # check if the download parameters used to save
-                # the data are consistent with those used now
-                if "download_pars" not in raw_data.altdata:
-                    # TODO: is delete the right thing to do?
-                    source.remove_raw_data(obs=self.name, data_type=dt, session=session)
-                    raw_data = None
-                else:
-                    for key in self.pars.download_pars_list:
-                        if (
-                            key not in raw_data.altdata["download_pars"]
-                            or raw_data.altdata["download_pars"][key]
-                            != download_pars[key]
-                        ):
-                            # TODO: is delete the right thing to do?
-                            # print("removing data")
-                            source.remove_raw_data(
-                                obs=self.name, data_type=dt, session=session
-                            )
-                            raw_data = None
-                            break
-
-            # no data on DB/file, must re-download from observatory website:
-            if raw_data is None:
-                # <-- magic happens here! -- > #
-                data, altdata = self.download_from_observatory(cat_row, **download_args)
-
+            if source is None:
+                # check if source already exists
+                hash = self.cfg_hash if self.cfg_hash is not None else ""
+                source = session.scalars(
+                    sa.select(Source).where(
+                        Source.name == cat_row["name"],
+                        Source.cfg_hash == hash,
+                    )
+                ).first()
                 if self.pars.verbose > 9:
-                    print(f"len(data)= {len(data)} | altdata= {altdata}")
+                    print(f"Is source found in database: {source is not None}")
+                if source is not None:
+                    report_dict["source"] = "database"
 
-                # save the catalog info
-                # TODO: should we get the full catalog row?
-                altdata["cat_row"] = cat_row
+            # if not, create one now
+            if source is None:
+                if self.pars.verbose > 9:
+                    print(f'Creating new source: {cat_row["name"]}')
+                source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
+                source.cat_row = cat_row  # save the raw catalog row as well
+                report_dict["source"] = "new"
 
-                # save the parameters involved with the download
-                altdata["download_pars"] = download_pars
+            for dt in self.pars.data_types:
+                # class of raw data (e.g., RawPhotometry)
+                DataClass = get_class_from_data_type(dt)
 
-                # specific observatories will have some adjustments to make
-                # to the colmap and time_info parameters
-                colmap, time_info = self.get_colmap_time_info(data, altdata)
-
-                dataset_args["colmap"] = colmap
-                dataset_args["time_info"] = time_info
-
-                # create a raw data for this class (e.g., RawPhotometry)
-                raw_data = DataClass(
-                    data=data,
-                    altdata=altdata,
-                    observatory=self.name,
-                    source_name=cat_row["name"],
-                    **dataset_args,
-                )  # Raw data doesn't have cfg_hash!
-                if raw_data is not None:
-                    report_dict[f"raw_{dt}"] = "new"
-
-                raw_data.source = source
-
-            if raw_data is None:
-                raise ValueError("Raw data can not be None at this point!")
-
-            # add the raw data to the source
-            data_list = getattr(source, f"raw_{dt}")
-            data_list.append(raw_data)
-
-            # if observatory has local name for this source
-            self._append_local_name(source)
-
-            if reduce:  # reduce the data
-                reduced_datasets = source.get_data(
+                # if source existed in DB it should have raw data objects
+                # if it doesn't that means the data needs to be downloaded
+                raw_data = source.get_data(
                     obs=self.name,
                     data_type=dt,
-                    level="reduced",
+                    level="raw",
                     session=session,
                     check_data=self.pars.check_data_exists,
                 )
-                if reduced_datasets is not None and len(reduced_datasets) > 0:
-                    report_dict[f"reduced_{dt}"] = "database"
+                raw_data = raw_data[0] if len(raw_data) > 0 else None
+                if self.pars.verbose > 9:
+                    print(f"Is raw {dt} found in database: {raw_data is not None}")
 
-                # could not find reduced data, so reduce it now
-                if len(reduced_datasets) == 0:
-                    reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
-                    report_dict[f"reduced_{dt}"] = "new"
+                if raw_data is not None:
+                    report_dict[f"raw_{dt}"] = "database"
+                # if raw_data is not None and not raw_data.check_file_exists():
+                #     # TODO: should this be customizable behavior??
+                #     # session.delete(raw_data)
+                #     # raw_data = None
+                #     raise RuntimeError(
+                #         f"{DataClass} object for source {source.name} "
+                #         "exists in DB but file does not exist."
+                #     )
+                #
+                # # file exists, try to load it:
+                # if raw_data is not None:
+                #     lock.acquire()
+                #     try:
+                #         raw_data.load()
+                #     except KeyError as e:
+                #         if "No object named" in str(e):
+                #             # This does not exist in the file
+                #
+                #             # TODO: is delete the right thing to do?
+                #             source.remove_raw_data(
+                #                 obs=self.name, data_type=dt, session=session
+                #             )
+                #             session.flush()
+                #             raw_data = None
+                #         else:
+                #             raise e
+                #     finally:
+                #         lock.release()
 
-                # make sure to append new data unto source and vice-versa
-                for d in reduced_datasets:
-                    getattr(source, f"reduced_{dt}").append(d)
-                    d.source = source
+                if raw_data is not None and self.pars.check_download_pars:
+                    # check if the download parameters used to save
+                    # the data are consistent with those used now
+                    if "download_pars" not in raw_data.altdata:
+                        # TODO: is delete the right thing to do?
+                        source.remove_raw_data(
+                            obs=self.name, data_type=dt, session=session
+                        )
+                        raw_data = None
+                    else:
+                        for key in self.pars.download_pars_list:
+                            if (
+                                key not in raw_data.altdata["download_pars"]
+                                or raw_data.altdata["download_pars"][key]
+                                != download_pars[key]
+                            ):
+                                # TODO: is delete the right thing to do?
+                                # print("removing data")
+                                source.remove_raw_data(
+                                    obs=self.name, data_type=dt, session=session
+                                )
+                                raw_data = None
+                                break
 
-            # if debugging or saving outside this function, set save=False
-            if save:
-                try:
-                    if self.pars.verbose > 9:
-                        print(f"Saving source {source.name}")
-                    session.add(source)
-                    session.commit()
-                except Exception:
-                    session.rollback()
-                    raise
-
-                # try to save the raw data
-                save_kwargs = dict(
-                    overwrite=self.pars.overwrite_files,
-                    key_prefix=self.pars.filekey_prefix,
-                    key_suffix=self.pars.filekey_suffix,
-                )
-                commit_and_save(raw_data, session=session, save_kwargs=save_kwargs)
-
-                if reduce and self.pars.save_reduced:
-                    commit_and_save(
-                        reduced_datasets, session=session, save_kwargs=save_kwargs
+                # no data on DB/file, must re-download from observatory website:
+                if raw_data is None:
+                    # <-- magic happens here! -- > #
+                    data, altdata = self.download_from_observatory(
+                        cat_row, **download_args
                     )
+
+                    if self.pars.verbose > 9:
+                        print(f"len(data)= {len(data)} | altdata= {altdata}")
+
+                    # save the catalog info
+                    # TODO: should we get the full catalog row?
+                    altdata["cat_row"] = cat_row
+
+                    # save the parameters involved with the download
+                    altdata["download_pars"] = download_pars
+
+                    # specific observatories will have some adjustments to make
+                    # to the colmap and time_info parameters
+                    colmap, time_info = self.get_colmap_time_info(data, altdata)
+
+                    dataset_args["colmap"] = colmap
+                    dataset_args["time_info"] = time_info
+
+                    # create a raw data for this class (e.g., RawPhotometry)
+                    raw_data = DataClass(
+                        data=data,
+                        altdata=altdata,
+                        observatory=self.name,
+                        source_name=cat_row["name"],
+                        **dataset_args,
+                    )  # Raw data doesn't have cfg_hash!
+                    if raw_data is not None:
+                        report_dict[f"raw_{dt}"] = "new"
+
+                    raw_data.source = source
+
+                if raw_data is None:
+                    raise ValueError("Raw data can not be None at this point!")
+
+                # add the raw data to the source
+                data_list = getattr(source, f"raw_{dt}")
+                data_list.append(raw_data)
+
+                # if observatory has local name for this source
+                self._append_local_name(source)
+
+                if reduce:  # reduce the data
+                    reduced_datasets = source.get_data(
+                        obs=self.name,
+                        data_type=dt,
+                        level="reduced",
+                        session=session,
+                        check_data=self.pars.check_data_exists,
+                    )
+                    if reduced_datasets is not None and len(reduced_datasets) > 0:
+                        report_dict[f"reduced_{dt}"] = "database"
+
+                    # could not find reduced data, so reduce it now
+                    if len(reduced_datasets) == 0:
+                        reduced_datasets = self.reduce(
+                            source, data_type=dt, **reducer_args
+                        )
+                        report_dict[f"reduced_{dt}"] = "new"
+
+                    # make sure to append new data unto source and vice-versa
+                    for d in reduced_datasets:
+                        getattr(source, f"reduced_{dt}").append(d)
+                        d.source = source
+
+                # if debugging or saving outside this function, set save=False
+                if save:
+                    try:
+                        if self.pars.verbose > 9:
+                            print(f"Saving source {source.name}")
+                        session.add(source)
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                        raise
+
+                    # try to save the raw data
+                    save_kwargs = dict(
+                        overwrite=self.pars.overwrite_files,
+                        key_prefix=self.pars.filekey_prefix,
+                        key_suffix=self.pars.filekey_suffix,
+                    )
+                    commit_and_save(raw_data, session=session, save_kwargs=save_kwargs)
+
+                    if reduce and self.pars.save_reduced:
+                        commit_and_save(
+                            reduced_datasets, session=session, save_kwargs=save_kwargs
+                        )
 
         if source is not None:
             self.latest_source = source
@@ -935,7 +938,7 @@ class VirtualObservatory:
         if self.pars.verbose:
             print(f"Reading from data folder: {dir}")
 
-        with Session() as session:
+        with SmartSession() as session:
             for i, filename in enumerate(glob.glob(os.path.join(dir, files_glob))):
                 if num_files and i >= num_files:
                     break

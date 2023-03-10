@@ -13,7 +13,7 @@ import conesearch_alchemy
 import healpix_alchemy as ha
 from astropy import units as u
 
-from src.database import Base, Session, CloseSession, engine
+from src.database import engine, Base, SmartSession
 
 from src.parameters import (
     allowed_data_types,
@@ -56,7 +56,7 @@ def get_source_identifiers(project_name, cfg_hash=None, column="id"):
     """
 
     hash = cfg_hash if cfg_hash is not None else ""
-    with Session() as session:
+    with SmartSession() as session:
         stmt = sa.select([getattr(Source, column)])
         stmt = stmt.where(Source.project == project_name, Source.cfg_hash == hash)
         source_ids = session.execute(stmt).all()
@@ -301,19 +301,16 @@ class Source(Base, conesearch_alchemy.Point):
         """
         Save the reduced photometry to the database.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        try:
-            for lc in self.reduced_photometry:
-                lc.save()
-                session.add(lc)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            raise e
+            try:
+                for lc in self.reduced_photometry:
+                    lc.save()
+                    session.add(lc)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise e
 
     processed_lightcurves = add_alias("processed_photometry")
 
@@ -321,19 +318,15 @@ class Source(Base, conesearch_alchemy.Point):
         """
         Save the processed photometry to the database.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-
-        try:
-            for lc in self.processed_photometry:
-                lc.save(overwrite=True)
-                session.add(lc)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            raise e
+        with SmartSession(session) as session:
+            try:
+                for lc in self.processed_photometry:
+                    lc.save(overwrite=True)
+                    session.add(lc)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise e
 
     simulated_lightcurves = add_alias("simulated_photometry")
 
@@ -341,45 +334,33 @@ class Source(Base, conesearch_alchemy.Point):
         """
         Save the simulated photometry to the database.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-
-        try:
-            for lc in self.simulated_photometry:
-                lc.save(overwrite=True)
-                session.add(lc)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            raise e
+        with SmartSession(session) as session:
+            try:
+                for lc in self.simulated_photometry:
+                    lc.save(overwrite=True)
+                    session.add(lc)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise e
 
     def save_detections(self, session=None):
         """
         Save the detections to the database.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
+            for det in self.detections:
+                session.add(det)
 
-        for det in self.detections:
-            session.add(det)
-
-        session.commit()
+            session.commit()
 
     def save(self, session=None):
         """Save the source to the database"""
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
+            session.add(self)
+            session.add(self.properties)
 
-        session.add(self)
-        session.add(self.properties)
-
-        session.commit()
+            session.commit()
 
     def get_data(
         self,
@@ -417,9 +398,11 @@ class Source(Base, conesearch_alchemy.Point):
             Processing level of the data: "raw", "reduced",
             "processed" or "simulated". Default is "raw".
         session: sqlalchemy session object (optional)
-            If given, will also search the DB for matching
-            raw data objects, if none are found attached
-            to the source.
+            Will open a new session if not given (or None),
+            and close it at the end of the function.
+            If given as a session object, will leave the session
+            open for use in the external scope.
+            To disable database interaction, provide session=False.
         check_data: bool
             If True, will check that the files exist on disk
             and that they contain the correct key (e.g., for HDF5 files).
@@ -485,73 +468,72 @@ class Source(Base, conesearch_alchemy.Point):
                 f"Source {self.name} has more than one "
                 f"{DataClass.__name__} object from this observatory."
             )
+        with SmartSession(session) as session:
+            # try to recover the data from the DB directly
+            if len(found_data) == 0 and session is not None:
+                if level == "raw":
+                    found_data = session.scalars(
+                        sa.select(DataClass).where(
+                            DataClass.source_name == self.name,
+                            DataClass.observatory == obs,
+                        )
+                    ).all()
+                else:
+                    # search for data with the correct level,
+                    # the same project name and cfg_hash,
+                    # and only look for un-processed data
+                    found_data = session.scalars(
+                        sa.select(DataClass).where(
+                            DataClass.source_name == self.name,
+                            DataClass.observatory == obs,
+                            DataClass.project == self.project,
+                            DataClass.cfg_hash == self.cfg_hash,
+                            DataClass.was_processed == False,
+                        )
+                    ).all()
 
-        # try to recover the data from the DB directly
-        if len(found_data) == 0 and session is not None:
-            if level == "raw":
-                found_data = session.scalars(
-                    sa.select(DataClass).where(
-                        DataClass.source_name == self.name,
-                        DataClass.observatory == obs,
-                    )
-                ).all()
-            else:
-                # search for data with the correct level,
-                # the same project name and cfg_hash,
-                # and only look for un-processed data
-                found_data = session.scalars(
-                    sa.select(DataClass).where(
-                        DataClass.source_name == self.name,
-                        DataClass.observatory == obs,
-                        DataClass.project == self.project,
-                        DataClass.cfg_hash == self.cfg_hash,
-                        DataClass.was_processed == False,
-                    )
-                ).all()
-
-        # check if the loaded objects have
-        # corresponding files with data in them
-        if check_data:
-            for data in found_data:
-                # data must exist either in memory (in .data) or on disk
-                if not data.is_data_loaded:
-                    if not data.check_file_exists():
-                        if delete_missing:
-                            if session is not None:
-                                try:
-                                    session.delete(data)
-                                    session.commit()
-                                except Exception:
-                                    session.rollback()
-                            found_data.remove(data)
-                    else:
-                        try:  # verify the data is really there
-                            data.load()
-                        except KeyError as e:
-                            if "No object named" in str(e):
-                                # This does not exist in the file
-                                if delete_missing:
-                                    if session is not None:
+            # check if the loaded objects have
+            # corresponding files with data in them
+            if check_data:
+                for data in found_data:
+                    # data must exist either in memory (in .data) or on disk
+                    if not data.is_data_loaded:
+                        if not data.check_file_exists():
+                            if delete_missing:
+                                if session is not None:
+                                    try:
+                                        session.delete(data)
+                                        session.commit()
+                                    except Exception:
+                                        session.rollback()
+                                found_data.remove(data)
+                        else:
+                            try:  # verify the data is really there
+                                data.load()
+                            except KeyError as e:
+                                if "No object named" in str(e):
+                                    # This does not exist in the file
+                                    if delete_missing:
                                         try:
                                             session.delete(data)
                                             session.commit()
                                         except Exception:
                                             session.rollback()
-                                    found_data.remove(data)
+                                        found_data.remove(data)
 
-                        except Exception as e:
-                            raise e
+                            except Exception as e:
+                                raise e
 
-        # if no data was found, try to search for orphans
-        if len(found_data) == 0 and search_orphans:
-            pass  # TODO: need to figure out how to search for files
-            #      that are not associated with DB objects
+            # if no data was found, try to search for orphans
+            if len(found_data) == 0 and search_orphans:
+                pass  # TODO: need to figure out how to search for files
+                #      that are not associated with DB objects
 
-        for d in found_data:
-            d.source = self
+            for d in found_data:
+                d.source = self
 
-        if append:  # append this data on the source (should check for repeats)
-            getattr(self, f"{level}_{data_type}").extend(found_data)
+            if append:  # append this data on the source (should check for repeats)
+                getattr(self, f"{level}_{data_type}").extend(found_data)
 
         return found_data
 
@@ -606,23 +588,20 @@ class Source(Base, conesearch_alchemy.Point):
             The first source in the list that has raw data.
             If no source is found, returns None.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
+        with SmartSession(session) as session:
 
-        for s in source_list:
-            data = s.get_data(
-                obs=obs,
-                data_type=data_type,
-                level="raw",
-                session=session,
-                check_data=check_data,
-                search_orphans=search_orphans,
-                delete_missing=delete_missing,
-            )
-            if len(data) > 0:
-                return s
+            for s in source_list:
+                data = s.get_data(
+                    obs=obs,
+                    data_type=data_type,
+                    level="raw",
+                    session=session,
+                    check_data=check_data,
+                    search_orphans=search_orphans,
+                    delete_missing=delete_missing,
+                )
+                if len(data) > 0:
+                    return s
 
     # TODO: why is this even needed? should we expand to cover reduced/processed data too?
     def remove_raw_data(self, obs, data_type=None, session=None):
@@ -649,8 +628,11 @@ class Source(Base, conesearch_alchemy.Point):
             If there is more than one type of data,
             will raise an error.
         session: sqlalchemy session object (optional)
-            If given, will also search the DB for a matching
-            raw data object, and delete it if found.
+            If not given (or None), will open a session
+            and close it at the end of the function.
+            If given a session, will use it to delete
+            the data from the database and leave it open.
+            To avoid database interactions, pass session=False.
 
         Returns
         -------
@@ -683,7 +665,7 @@ class Source(Base, conesearch_alchemy.Point):
         elif len(raw_data) == 1:
             raw_data = raw_data[0]
             getattr(self, f"raw_{data_type}").remove(raw_data)
-            if session is not None:
+            with SmartSession(session) as session:
                 session.delete(raw_data)
                 session.flush()
             return True
@@ -693,7 +675,7 @@ class Source(Base, conesearch_alchemy.Point):
                 f"{data_class.__name__} object from this observatory."
             )
 
-    def reset_analysis(self, session=None):
+    def reset_analysis(self, session=False):
         """
         Remove all analysis results from this object,
         including detections, properties, and processed
@@ -704,12 +686,14 @@ class Source(Base, conesearch_alchemy.Point):
         Parameters
         ----------
         session: sqlalchemy session object (optional)
-            If given, will also remove the analysis results
-            from the database.
+            If False (default), will not affect the database.
+            If given a session, will use it to remove analysis results
+            from the database as well. The session will remain open.
+            If given None, will open a session and close it at the end of the function.
         """
 
         # TODO: need to check if we actually need this session stuff
-        if session is not None:
+        with SmartSession(session) as session:
             session.merge(self)
 
             if inspect(self.properties).persistent:
@@ -789,34 +773,30 @@ class Source(Base, conesearch_alchemy.Point):
         """
         if project is None:
             project = DEFAULT_PROJECT
+        with SmartSession(session) as session:
+            stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
+            stmt = stmt.where(
+                Source.project == project, Source.cfg_hash == self.cfg_hash
+            )
+            sources = session.scalars(stmt).first()
 
-        stmt = cone_search(ra=self.ra, dec=self.dec, sep=sep)
-        stmt = stmt.where(Source.project == project, Source.cfg_hash == self.cfg_hash)
-
-        if session is None:
-            session = Session()
-
-        sources = session.scalars(stmt).first()
-        return sources is not None
+            return sources is not None
 
     def remove_from_database_and_disk(self, session=None, remove_raw_data=False):
         """
         Remove this source from the database and from disk.
         """
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-        if remove_raw_data:
-            for rp in self.raw_photometry:
-                # maybe add an autodelete for RawPhotometry?
-                rp.remove_from_disk()
-                session.delete(rp)
-        for lc in self.lightcurves:
-            lc.remove_from_disk()
-            session.delete(lc)
-        session.delete(self)
-        session.commit()
+        with SmartSession(session) as session:
+            if remove_raw_data:
+                for rp in self.raw_photometry:
+                    # maybe add an autodelete for RawPhotometry?
+                    rp.remove_from_disk()
+                    session.delete(rp)
+            for lc in self.lightcurves:
+                lc.remove_from_disk()
+                session.delete(lc)
+            session.delete(self)
+            session.commit()
 
 
 # make sure the table exists
@@ -824,11 +804,13 @@ Source.metadata.create_all(engine)
 
 
 if __name__ == "__main__":
-    import src.dataset
+    import src.database
 
-    src.dataset.DATA_ROOT = "/home/guyn/data"
+    src.database.DATA_ROOT = "/home/guyn/data"
 
-    session = Session()
+    session = src.database.Session()
+    session.begin()
+
     sources = session.scalars(sa.select(Source).where(Source.project == "WD")).all()
 
     sources[0].plot_photometry()

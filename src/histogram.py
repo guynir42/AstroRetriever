@@ -985,14 +985,14 @@ if __name__ == "__main__":
     import pandas as pd
     import sqlalchemy as sa
 
-    from src.database import Session
+    from src.database import SmartSession
     from src.source import Source
     from src.dataset import Lightcurve
 
     h = Histogram()
     h.initialize()
 
-    # with Session() as session:
+    # with SmartSession() as session:
     #     source = session.scalars(sa.select(Source).where(Source.project=='WD')).first()
     #     lc = source.lightcurves[0]
     #     df = lc.data

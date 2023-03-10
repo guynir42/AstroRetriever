@@ -5,7 +5,7 @@ import pandas as pd
 from astropy.time import Time
 
 from src.utils import OnClose
-from src.database import Session
+from src.database import SmartSession
 
 import src.dataset
 from src.dataset import RawPhotometry
@@ -34,7 +34,7 @@ def test_ztf_download(ztf_project, wd_cat):
     ztf.fetch_all_sources()
 
     def cleanup():  # to be called at the end
-        with Session() as session:
+        with SmartSession() as session:
             for s in ztf.sources:
                 for p in s.raw_photometry:
                     p.delete_data_from_disk()
