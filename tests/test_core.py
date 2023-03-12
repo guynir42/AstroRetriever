@@ -781,6 +781,14 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         assert len(data) == 0
         assert not any([os.path.isfile(f) for f in filenames])
 
+        # check some of the shorthands and indexing methods
+        assert new_source.raw_photometry["demo"] == raw_phot_no_exptime
+        assert new_source.raw_photometry[0] == new_source.rp["demo"]
+
+        assert new_source.rl == new_source.reduced_lightcurves
+        assert new_source.rl["demo"] == lightcurves
+        assert new_source.rl["demo", 0] == lightcurves[0]
+
 
 def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
@@ -1778,6 +1786,10 @@ def test_unique_list():
     assert ul[0] == obj2
     assert ul[1] == obj3
 
+    # check string indexing
+    assert ul["object one"] == obj3
+    assert ul["object two"] == obj2
+
     # now try with a different attribute
     ul = UniqueList(comparison_attributes=["foo", "bar"])
     ul.append(obj1)
@@ -1786,11 +1798,33 @@ def test_unique_list():
     assert ul[0] == obj1
     assert ul[1] == obj2
 
+    # string indexing in this case returns a list
+    assert ul["foo1"] == [obj1]
+    assert ul["foo2"] == [obj2]
+
+    # try indexing with a list or tuple
+    assert ul[["foo1", "common bar"]] == obj1
+    assert ul[["foo2", "common bar"]] == obj2
+
+    # should work without brackets
+    assert ul["foo1", "common bar"] == obj1
+    assert ul["foo2", "common bar"] == obj2
+
     # appending obj3 will remove obj1
     ul.append(obj3)
     assert len(ul) == 2
     assert ul[0] == obj2
     assert ul[1] == obj3
+
+    # try a list with three comparison_attributes
+    ul = UniqueList(comparison_attributes=["name", "foo", "bar"])
+    ul.append(obj1)
+    ul.append(obj2)
+    assert len(ul) == 2
+
+    # check that array indexing works with two out of three attributes
+    assert ul[["object one", "foo1"]] == [obj1]
+    assert ul[["object two", "foo2"]] == [obj2]
 
 
 def test_circular_buffer_list():

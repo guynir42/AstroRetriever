@@ -3,6 +3,7 @@ Various utility functions and classes
 that were not relevant to any specific module.
 """
 import sys
+import numpy as np
 from datetime import datetime, timezone
 import dateutil.parser
 
@@ -373,6 +374,43 @@ class UniqueList(list):
                         f"Cannot assign to index {key}, with duplicate in index {i}."
                     )
         super().__setitem__(key, value)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return super().__getitem__(key)
+        elif isinstance(key, (list, tuple, np.ndarray)):
+            shortlist = [item for item in self]
+            for i, attr in enumerate(self.comparison_attributes):
+                if i >= len(key):
+                    break  # no more keys to check
+                shortlist = [
+                    item for item in shortlist if getattr(item, attr) == key[i]
+                ]
+
+            if i == len(key) - 1:
+                return shortlist[0]
+            else:
+                new_list = UniqueList(self.comparison_attributes[i:])
+                new_list.extend(shortlist)
+                return new_list
+
+        elif isinstance(key, str):
+            shortlist = [
+                item
+                for item in self
+                if getattr(item, self.comparison_attributes[0]) == key
+            ]
+            if len(shortlist) == 0:
+                raise KeyError(f"Key {key} not found in list.")
+            if len(self.comparison_attributes) == 1:
+                return shortlist[0]
+            else:
+                new_list = UniqueList(self.comparison_attributes[1:])
+                new_list.extend(shortlist)
+                return new_list
+
+        else:
+            raise TypeError(f"index must be a string or integer, not {type(key)}")
 
     def append(self, value):
         self._check_and_remove(value)

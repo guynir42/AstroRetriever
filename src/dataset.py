@@ -865,9 +865,7 @@ class DatasetMixin:
             warnings.simplefilter("ignore", NaturalNameWarning)
             if isinstance(self._data, xr.Dataset):
                 # TODO: check if key already exists!
-                self.data.to_hdf(
-                    self.get_fullname(), key=self.filekey
-                )  # this actually works??
+                self.data.to_hdf(self.get_fullname(), key=self.filekey)
             elif isinstance(self._data, pd.DataFrame):
                 with pd.HDFStore(self.get_fullname()) as store:
                     if self.filekey in store:
@@ -1833,8 +1831,8 @@ class Lightcurve(DatasetMixin, Base):
     def invent_filekey(self, source_name=None, prefix=None, suffix=None):
         DatasetMixin.invent_filekey(self, source_name, prefix, suffix)
 
-        number = self.series_number if self.series_number else 1
-        total = self.series_total if self.series_total else 1
+        number = self.series_number if self.series_number else 0
+        total = self.series_total if self.series_total else 0
 
         if not self.was_processed:  # reduced (unprocessed) data
             self.filekey += f"_reduction_{number:02d}_of_{total:02d}"
