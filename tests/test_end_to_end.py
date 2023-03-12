@@ -214,3 +214,7 @@ def test_project_with_simulated_events():
     for f in filenames:
         assert not os.path.exists(f)
         assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
+
+
+def test_project_with_no_db_interaction():
+    pass  # TODO: finish this!

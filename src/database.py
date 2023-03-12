@@ -17,6 +17,9 @@
 # This will only work if no connections are active.
 
 import os
+
+from contextlib import contextmanager
+
 import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
@@ -26,6 +29,9 @@ from sqlalchemy.orm.session import make_transient
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:  # TODO: should also check if folder exists?
     DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+
+# set this to True if you want to disable all database interactions
+NO_DB_SESSION = False
 
 url = "postgresql://postgres:postgres@localhost:5432/astroretriever"
 
@@ -38,6 +44,116 @@ if not database_exists(engine.url):
 # print(f"Is database found: {database_exists(engine.url)}")
 
 Session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
+
+
+class NullQueryResults:
+    @staticmethod
+    def all():
+        return []
+
+    @staticmethod
+    def first():
+        return None
+
+    @staticmethod
+    def last():
+        return None
+
+    @staticmethod
+    def one():
+        return None
+
+    @staticmethod
+    def one_or_none():
+        return None
+
+
+class NoOpSession:
+    @staticmethod
+    def delete(*_, **__):
+        pass
+
+    @staticmethod
+    def add(*_, **__):
+        pass
+
+    @staticmethod
+    def add_all(*_, **__):
+        pass
+
+    @staticmethod
+    def commit(*_, **__):
+        pass
+
+    @staticmethod
+    def rollback(*_, **__):
+        pass
+
+    @staticmethod
+    def close():
+        pass
+
+    @staticmethod
+    def execute(*_, **__):
+        return NullQueryResults()
+
+    @staticmethod
+    def scalars(*_, **__):
+        return NullQueryResults()
+
+    @staticmethod
+    def get(*_, **__):
+        return None
+
+    @staticmethod
+    def merge(*_, **__):
+        return None
+
+    @property
+    def _transaction(self):
+        return None
+
+
+@contextmanager
+def SmartSession(input_session=None):
+    """
+    Retrun a Session() instance that may or may not
+    be inside a context manager.
+
+    If the input is already a session, just return that.
+    If the input is None, create a session that would
+    close at the end of the life of the calling scope.
+    If the input is False, create a no-op session.
+    If the global switch NO_DB_SESSION is set to True,
+    will always return a no-op session.
+
+    """
+    # this session will never do anything
+    if NO_DB_SESSION:
+        yield NoOpSession()
+
+    # open a new session and close it when outer scope is done
+    elif input_session is None:
+        with Session() as session:
+            # if session._transaction is None:
+            #     session.begin()
+            yield session
+
+    # explicitly ask for a no-op session
+    elif input_session is False:
+        yield NoOpSession()
+
+    # return the input session with the same scope as given
+    elif isinstance(input_session, NoOpSession) or isinstance(
+        input_session, sa.orm.session.Session
+    ):
+        yield input_session
+
+    # wrong input type
+    else:
+        raise TypeError(
+            "input_session must be a sqlalchemy session or a NoOpSession or None"
+        )
 
 
 class CloseSession:

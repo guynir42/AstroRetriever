@@ -16,7 +16,7 @@ from astropy.time import Time
 import astropy.io.fits as fits
 
 # from src.source import angle_diff
-from src.database import Session, CloseSession
+from src.database import SmartSession
 from src.observatory import VirtualObservatory, ParsObservatory
 from src.dataset import RawPhotometry, Lightcurve
 from src.catalog import Catalog
@@ -352,7 +352,9 @@ class VirtualTESS(VirtualObservatory):
             to match any existing sources. Default is True.
         session: sqlalchemy session
             If given, will use this session to query the database.
-            If not given, will create a new session.
+            If not given, will create a new session and close it
+            at the end of the function.
+            To avoid any database interactions, set session=False.
         filter_args: list
             List of additional constraints on the database search
             for sources, e.g., Source.test_hash.is_(None).
@@ -378,146 +380,152 @@ class VirtualTESS(VirtualObservatory):
         source = None
         ticid = str(ticid)
 
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
-
-        # first, check if the source is already in the database
-        sources = session.scalars(
-            sa.select(Source).where(
-                Source.local_names["TESS"].astext == ticid,
-                *filter_args,
-            )
-        ).all()
-        sources.sort(
-            key=lambda x: x.created_at if x.created_at else datetime.min, reverse=True
-        )
-
-        # only sources inside this project
-        project_sources = [s for s in sources if s.project == self.project]
-
-        # only sources inside this project (and with same version control)
-        project_vc_sources = [s for s in project_sources if s.cfg_hash == self.cfg_hash]
-
-        if len(project_vc_sources) > 0:
-            source = Source.find_source_with_raw_data(
-                project_vc_sources,
-                obs=self.name,
-                session=session,
-                check_data=self.pars.check_data_exists,
-            )
-
-        if source is None and len(project_sources) > 0:
-            source = Source.find_source_with_raw_data(
-                project_sources,
-                obs=self.name,
-                session=session,
-                check_data=self.pars.check_data_exists,
-            )
-
-        if source is None and len(sources) > 0:
-            source = Source.find_source_with_raw_data(
-                project_sources,
-                obs=self.name,
-                session=session,
-                check_data=self.pars.check_data_exists,
-            )
-
-        if source is None:
-            # try to find a RawPhotometry object without a source:
-            raw_data = session.scalars(
-                sa.select(RawPhotometry).where(
-                    RawPhotometry.altdata["TICID"].astext == ticid,
+        with SmartSession(session) as session:
+            # first, check if the source is already in the database
+            sources = session.scalars(
+                sa.select(Source).where(
+                    Source.local_names["TESS"].astext == ticid,
+                    *filter_args,
                 )
             ).all()
-            if len(raw_data) > 0:
-                raw_data.sort(
-                    key=lambda x: x.created_at if x.created_at else datetime.min,
-                    reverse=True,
-                )
-                raw_data = raw_data[0]
-                altdata = raw_data.altdata
-            else:
-                raw_data = None
-                altdata = None
+            sources.sort(
+                key=lambda x: x.created_at if x.created_at else datetime.min,
+                reverse=True,
+            )
 
-            # couldn't find a source or raw data, download it
-            if raw_data is None and download:
-                data, altdata = self._download_lightcurves_from_mast_by_ticid(ticid)
+            # only sources inside this project
+            project_sources = [s for s in sources if s.project == self.project]
 
-            if "file_headers" not in altdata or len(altdata["file_headers"]) == 0:
-                raise ValueError("Cannot find file_headers in altdata! ")
+            # only sources inside this project (and with same version control)
+            project_vc_sources = [
+                s for s in project_sources if s.cfg_hash == self.cfg_hash
+            ]
 
-            # this happens if download=False and no raw photometry was found
-            if altdata is None:
-                return None
-
-            mag = altdata["file_headers"][0]["TESSMAG"]
-            ra = altdata["file_headers"][0]["RA_OBJ"]
-            dec = altdata["file_headers"][0]["DEC_OBJ"]
-            pm_ra = altdata["file_headers"][0]["PMRA"]
-            pm_dec = altdata["file_headers"][0]["PMDEC"]
-
-            source_name = ticid  # try to find a better name below
-
-            # match the found source to the correct name in the catalog
-            if use_catalog and self.catalog is not None:
-                cat_row = self.catalog.get_nearest_row(
-                    ra, dec, radius=self.pars.query_radius, output="dict"
-                )
-                # TODO: I can't think of a better thing to do in this case... maybe just use the TIC name?
-                if cat_row is None:
-                    raise ValueError(
-                        f"No catalog entry found within radius {self.pars.query_radius} arcsec!"
-                    )
-                source_name = cat_row["name"]  # update with catalog name!
-            else:
-                cat_row = dict(
-                    mag=mag, name=source_name, ra=ra, dec=dec, pmra=pm_ra, pmdec=pm_dec
-                )
-
-            source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
-            source.cat_row = cat_row  # save the raw catalog row as well
-
-            if raw_data is None:
-                raw_data = source.get_data(
+            if len(project_vc_sources) > 0:
+                source = Source.find_source_with_raw_data(
+                    project_vc_sources,
                     obs=self.name,
-                    data_type="photometry",
-                    level="raw",
                     session=session,
                     check_data=self.pars.check_data_exists,
                 )
-                raw_data = raw_data[0] if len(raw_data) > 0 else None
 
-            if raw_data is None:
-                altdata["cat_row"] = cat_row
+            if source is None and len(project_sources) > 0:
+                source = Source.find_source_with_raw_data(
+                    project_sources,
+                    obs=self.name,
+                    session=session,
+                    check_data=self.pars.check_data_exists,
+                )
 
-                # save the parameters involved with the download
-                download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
-                download_pars.update(
-                    {
-                        k: download_args[k]
-                        for k in self.pars.download_pars_list
-                        if k in download_args
+            if source is None and len(sources) > 0:
+                source = Source.find_source_with_raw_data(
+                    project_sources,
+                    obs=self.name,
+                    session=session,
+                    check_data=self.pars.check_data_exists,
+                )
+
+            if source is None:
+                # try to find a RawPhotometry object without a source:
+                raw_data = session.scalars(
+                    sa.select(RawPhotometry).where(
+                        RawPhotometry.altdata["TICID"].astext == ticid,
+                    )
+                ).all()
+                if len(raw_data) > 0:
+                    raw_data.sort(
+                        key=lambda x: x.created_at if x.created_at else datetime.min,
+                        reverse=True,
+                    )
+                    raw_data = raw_data[0]
+                    altdata = raw_data.altdata
+                else:
+                    raw_data = None
+                    altdata = None
+
+                # couldn't find a source or raw data, download it
+                if raw_data is None and download:
+                    data, altdata = self._download_lightcurves_from_mast_by_ticid(ticid)
+
+                if "file_headers" not in altdata or len(altdata["file_headers"]) == 0:
+                    raise ValueError("Cannot find file_headers in altdata! ")
+
+                # this happens if download=False and no raw photometry was found
+                if altdata is None:
+                    return None
+
+                mag = altdata["file_headers"][0]["TESSMAG"]
+                ra = altdata["file_headers"][0]["RA_OBJ"]
+                dec = altdata["file_headers"][0]["DEC_OBJ"]
+                pm_ra = altdata["file_headers"][0]["PMRA"]
+                pm_dec = altdata["file_headers"][0]["PMDEC"]
+
+                source_name = ticid  # try to find a better name below
+
+                # match the found source to the correct name in the catalog
+                if use_catalog and self.catalog is not None:
+                    cat_row = self.catalog.get_nearest_row(
+                        ra, dec, radius=self.pars.query_radius, output="dict"
+                    )
+                    # TODO: I can't think of a better thing to do in this case... maybe just use the TIC name?
+                    if cat_row is None:
+                        raise ValueError(
+                            f"No catalog entry found within radius {self.pars.query_radius} arcsec!"
+                        )
+                    source_name = cat_row["name"]  # update with catalog name!
+                else:
+                    cat_row = dict(
+                        mag=mag,
+                        name=source_name,
+                        ra=ra,
+                        dec=dec,
+                        pmra=pm_ra,
+                        pmdec=pm_dec,
+                    )
+
+                source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
+                source.cat_row = cat_row  # save the raw catalog row as well
+
+                if raw_data is None:
+                    raw_data = source.get_data(
+                        obs=self.name,
+                        data_type="photometry",
+                        level="raw",
+                        session=session,
+                        check_data=self.pars.check_data_exists,
+                    )
+                    raw_data = raw_data[0] if len(raw_data) > 0 else None
+
+                if raw_data is None:
+                    altdata["cat_row"] = cat_row
+
+                    # save the parameters involved with the download
+                    download_pars = {
+                        k: self.pars[k] for k in self.pars.download_pars_list
                     }
-                )
-                altdata["download_pars"] = download_pars
-                colmap, time_info = self.get_colmap_time_info(data, altdata)
+                    download_pars.update(
+                        {
+                            k: download_args[k]
+                            for k in self.pars.download_pars_list
+                            if k in download_args
+                        }
+                    )
+                    altdata["download_pars"] = download_pars
+                    colmap, time_info = self.get_colmap_time_info(data, altdata)
 
-                dataset_args["colmap"] = colmap
-                dataset_args["time_info"] = time_info
-                raw_data = RawPhotometry(
-                    data=data,
-                    altdata=altdata,
-                    observatory=self.name,
-                    source_name=source_name,
-                    **dataset_args,
-                )
+                    dataset_args["colmap"] = colmap
+                    dataset_args["time_info"] = time_info
+                    raw_data = RawPhotometry(
+                        data=data,
+                        altdata=altdata,
+                        observatory=self.name,
+                        source_name=source_name,
+                        **dataset_args,
+                    )
 
-            source.raw_photometry.append(raw_data)
+                source.raw_photometry.append(raw_data)
 
-        return source
+            return source
 
     def download_from_observatory(
         self,

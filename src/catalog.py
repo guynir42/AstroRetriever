@@ -21,7 +21,7 @@ from astropy.io import fits
 
 from src.parameters import Parameters
 from src.source import Source
-from src.database import Session, CloseSession
+from src.database import SmartSession
 from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
 
 
@@ -446,18 +446,18 @@ class Catalog:
         if project is None:
             project = self.pars.project
         hash = self.cfg_hash if self.cfg_hash is not None else ""
-        if session is None:
-            session = Session()
-            # make sure this session gets closed at end of function
-            _ = CloseSession(session)
 
-        names = [str(name) for name in self.data[self.pars.name_column]]
+        with SmartSession(session) as session:
 
-        stmt = sa.select(Source).where(
-            Source.name.in_(names), Source.project == project, Source.cfg_hash == hash
-        )
+            names = [str(name) for name in self.data[self.pars.name_column]]
 
-        sources = session.scalars(stmt).all()
+            stmt = sa.select(Source).where(
+                Source.name.in_(names),
+                Source.project == project,
+                Source.cfg_hash == hash,
+            )
+
+            sources = session.scalars(stmt).all()
 
         return sources
 

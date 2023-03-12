@@ -19,11 +19,10 @@ import h5py
 import sqlalchemy as sa
 from sqlalchemy import orm, event
 from sqlalchemy.schema import UniqueConstraint
-from sqlalchemy.ext.associationproxy import association_proxy
 
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import Base, Session, engine, CloseSession
+from src.database import engine, Base, SmartSession
 from src.source import Source
 
 
@@ -89,32 +88,29 @@ def commit_and_save(datasets, session=None, save_kwargs={}):
     If anything fails, will rollback the session
     and delete the data from disk.
     """
-    if session is None:
-        session = Session()
-        # make sure this session gets closed at end of function
-        _ = CloseSession(session)
+    with SmartSession(session) as session:
 
-    if not isinstance(datasets, list):
-        datasets = [datasets]
+        if not isinstance(datasets, list):
+            datasets = [datasets]
 
-    if any([not isinstance(d, DatasetMixin) for d in datasets]):
-        raise ValueError("All datasets must be of type DatasetMixin")
+        if any([not isinstance(d, DatasetMixin) for d in datasets]):
+            raise ValueError("All datasets must be of type DatasetMixin")
 
-    for dataset in datasets:
-        try:
-            session.add(dataset)
-            if not dataset.check_file_exists():
-                lock.acquire()  # thread blocks at this line until it can obtain lock
-                try:
-                    dataset.save(**save_kwargs)
-                finally:
-                    lock.release()
+        for dataset in datasets:
+            try:
+                session.add(dataset)
+                if not dataset.check_file_exists():
+                    lock.acquire()  # thread blocks at this line until it can obtain lock
+                    try:
+                        dataset.save(**save_kwargs)
+                    finally:
+                        lock.release()
 
-            session.commit()
-        except Exception:
-            session.rollback()
-            dataset.delete_data_from_disk()
-            raise
+                session.commit()
+            except Exception:
+                session.rollback()
+                dataset.delete_data_from_disk()
+                raise
 
 
 class DatasetMixin:
@@ -2481,7 +2477,7 @@ if __name__ == "__main__":
     from src.source import Source
 
     matplotlib.use("qt5agg")
-    with Session() as session:
+    with SmartSession() as session:
 
         sources = session.scalars(sa.select(Source).where(Source.project == "WD")).all()
         if len(sources):

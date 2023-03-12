@@ -5,7 +5,7 @@ import numpy as np
 from src.parameters import Parameters
 from src.histogram import Histogram
 from src.dataset import Lightcurve
-from src.database import Session, CloseSession
+from src.database import SmartSession
 from src.source import Source
 from src.properties import Properties
 from src.utils import help_with_class, help_with_object
@@ -290,63 +290,60 @@ class Analysis:
         # save the detections to the database
         if self.pars.save_anything:
 
-            if session is None:
-                session = Session()
-                # make sure this session gets closed at end of function
-                _ = CloseSession(session)
+            with SmartSession(session) as session:
 
-            try:  # if anything fails, must rollback all
-                if self.pars.save_histograms:
-                    self._save_histograms(temp=True)
+                try:  # if anything fails, must rollback all
+                    if self.pars.save_histograms:
+                        self._save_histograms(temp=True)
 
-                for source in sources:
-                    source.save(session=session)
-                    source.save_detections(session=session)
+                    for source in sources:
+                        source.save(session=session)
+                        source.save_detections(session=session)
 
-                    for dt in self.pars.data_types:
-                        # for data in getattr(source, f"raw_{dt}"):
-                        #     if data.filename is None:
-                        #         raise ValueError(
-                        #             f"raw_{dt} (from {data.observatory}) "
-                        #             f"on Source {source.id} has no filename. "
-                        #             "Did you forget to save it?"
-                        #         )
+                        for dt in self.pars.data_types:
+                            # for data in getattr(source, f"raw_{dt}"):
+                            #     if data.filename is None:
+                            #         raise ValueError(
+                            #             f"raw_{dt} (from {data.observatory}) "
+                            #             f"on Source {source.id} has no filename. "
+                            #             "Did you forget to save it?"
+                            #         )
 
-                        # [data.save() for data in getattr(source, f"reduced_{dt}")] # saved earlier?
-                        # for i, data in enumerate(getattr(source, f"reduced_{dt}")):
-                        #     if data.filename is None:
-                        #         raise ValueError(
-                        #             f"reduced_{dt} (number {i}) on Source {source.id} "
-                        #             "has no filename. Did you forget to save it?"
-                        #         )
+                            # [data.save() for data in getattr(source, f"reduced_{dt}")] # saved earlier?
+                            # for i, data in enumerate(getattr(source, f"reduced_{dt}")):
+                            #     if data.filename is None:
+                            #         raise ValueError(
+                            #             f"reduced_{dt} (number {i}) on Source {source.id} "
+                            #             "has no filename. Did you forget to save it?"
+                            #         )
 
-                        if self.pars.save_processed:
-                            getattr(source, f"save_processed_{dt}")(session=session)
-                            # for data in getattr(source, f"processed_{dt}"):
-                            #     data.save()  # TODO: replace with autosave?
-                            #     session.add(data)
-                        if self.pars.save_simulated:
-                            getattr(source, f"save_simulated_{dt}")(session=session)
-                            # for data in getattr(source, f"simulated_{dt}"):
-                            #     data.save()  # TODO: replace with autosave?
-                            #     session.add(data)
+                            if self.pars.save_processed:
+                                getattr(source, f"save_processed_{dt}")(session=session)
+                                # for data in getattr(source, f"processed_{dt}"):
+                                #     data.save()  # TODO: replace with autosave?
+                                #     session.add(data)
+                            if self.pars.save_simulated:
+                                getattr(source, f"save_simulated_{dt}")(session=session)
+                                # for data in getattr(source, f"simulated_{dt}"):
+                                #     data.save()  # TODO: replace with autosave?
+                                #     session.add(data)
 
-                session.commit()
+                    session.commit()
 
-                # if all the file saving and DB interactions work,
-                # then we can commit the histograms (rename temp files)
-                self._commit_histograms()
-            except Exception:
-                self._rollback_histograms()
-                session.rollback()
-                for source in sources:
-                    for dt in self.pars.data_types:
-                        for lc in getattr(source, f"processed_{dt}"):
-                            lc.delete_data_from_disk()
-                        for lc in getattr(source, f"simulated_{dt}"):
-                            lc.delete_data_from_disk()
+                    # if all the file saving and DB interactions work,
+                    # then we can commit the histograms (rename temp files)
+                    self._commit_histograms()
+                except Exception:
+                    self._rollback_histograms()
+                    session.rollback()
+                    for source in sources:
+                        for dt in self.pars.data_types:
+                            for lc in getattr(source, f"processed_{dt}"):
+                                lc.delete_data_from_disk()
+                            for lc in getattr(source, f"simulated_{dt}"):
+                                lc.delete_data_from_disk()
 
-                raise  # finally re-raise the exception
+                    raise  # finally re-raise the exception
 
     def _analyze_photometry(self, source):
         """

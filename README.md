@@ -700,6 +700,15 @@ with Session() as session:
   session.commit()
 ```
 
+Use the `src.database.SmartSession` inside a context manager
+if you'd like the session to automatically close at the end.
+The SmartSession can also receive another session or `None` as an argument.
+In the first case, it would leave the session open, so it can be closed by
+the external scope. If `None`, it will open and close within the context.
+Also, pass `False` to return a no-op session that is not connected to the database.
+To disable all instances of database access that pass through the `SmartSession`,
+set the global `src.database.NO_DB_SESSION` to `True`.
+
 ### loading data from disk
 
 Raw data and reduced data should always be associated
