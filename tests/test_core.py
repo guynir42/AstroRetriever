@@ -1810,112 +1810,74 @@ def test_circular_buffer_list():
 
 def test_smart_session(new_source):
 
-    # note that with regular sessions you'd need to call .begin()
-    with Session() as session:
-        # set this just to test when the sessions are closed:
-        session.autobegin = False
-        # now we need to add this at start of each session:
-        session.begin()
+    try:  # make sure to re-state autobegin=True at the end
+        # note that with regular sessions you'd need to call .begin()
+        with Session() as session:
+            # set this just to test when the sessions are closed:
+            session.autobegin = False
+            # now we need to add this at start of each session:
+            session.begin()
 
-        session.add(new_source)
-        session.commit()
+            session.add(new_source)
+            session.commit()
 
-    assert new_source.id is not None
+        assert new_source.id is not None
 
-    assert session._transaction is None
-    # this session has been closed, so this should fail
-    with pytest.raises(InvalidRequestError):
-        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+        assert session._transaction is None
+        # this session has been closed, so this should fail
+        with pytest.raises(InvalidRequestError):
+            session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
 
-    # try using a SmartSession, which should also begin the session:
-    with SmartSession() as session:
-        session.begin()
-        # this should work
-        sources = session.scalars(
-            sa.select(Source).where(Source.id == new_source.id)
-        ).all()
-        assert any([s.id == new_source.id for s in sources])
+        # try using a SmartSession, which should also begin the session:
+        with SmartSession() as session:
+            session.begin()
+            # this should work
+            sources = session.scalars(
+                sa.select(Source).where(Source.id == new_source.id)
+            ).all()
+            assert any([s.id == new_source.id for s in sources])
 
-    assert session._transaction is None
-    # this session has been closed, so this should fail
-    with pytest.raises(InvalidRequestError):
-        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+        assert session._transaction is None
+        # this session has been closed, so this should fail
+        with pytest.raises(InvalidRequestError):
+            session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
 
-    # try using a SmartSession without a context manager inside a function
-    def try_smart_session(session=None):
-        with SmartSession(session) as session:
-            if session._transaction is None:
-                session.begin()
+        # try using a SmartSession without a context manager inside a function
+        def try_smart_session(session=None):
+            with SmartSession(session) as session:
+                if session._transaction is None:
+                    session.begin()
+                sources = session.scalars(
+                    sa.select(Source).where(Source.id == new_source.id)
+                ).all()
+                assert len(sources) > 0
+
+        try_smart_session()  # the function is like a context manager
+
+        assert session._transaction is None
+        # this session has been closed, so this should fail
+        with pytest.raises(InvalidRequestError):
+            session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+        # try calling the function again, but surrounded by a context manager
+        with SmartSession() as session:
+            try_smart_session(session)
+
+            # session should still work even though function has finished
             sources = session.scalars(
                 sa.select(Source).where(Source.id == new_source.id)
             ).all()
             assert len(sources) > 0
 
-    try_smart_session()  # the function is like a context manager
+        assert session._transaction is None
+        # this session has been closed, so this should fail
+        with pytest.raises(InvalidRequestError):
+            session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
 
-    assert session._transaction is None
-    # this session has been closed, so this should fail
-    with pytest.raises(InvalidRequestError):
-        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
-
-    # try calling the function again, but surrounded by a context manager
-    with SmartSession() as session:
-        try_smart_session(session)
-
-        # session should still work even though function has finished
-        sources = session.scalars(
-            sa.select(Source).where(Source.id == new_source.id)
-        ).all()
-        assert len(sources) > 0
-
-    assert session._transaction is None
-    # this session has been closed, so this should fail
-    with pytest.raises(InvalidRequestError):
-        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
-
-    # with an explicit False this should be a no-op session
-    with SmartSession(False) as session:
-        assert isinstance(session, NoOpSession)
-
-        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
-        assert isinstance(query, NullQueryResults)
-        sources = query.all()
-        assert sources == []
-
-        query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
-        assert isinstance(query, NullQueryResults)
-        source = query.first()
-        assert source is None
-
-    # try opening a session inside an open session:
-    with SmartSession() as session:
-        session.begin()
-        with SmartSession(session) as session2:
-            assert session2 is session
-            sources = session2.scalars(
-                sa.select(Source).where(Source.id == new_source.id)
-            ).all()
-            assert len(sources) > 0
-
-        # this still works because internal session doesn't auto-close
-        sources = session2.scalars(
-            sa.select(Source).where(Source.id == new_source.id)
-        ).all()
-        assert len(sources) > 0
-
-    assert session._transaction is None
-    # this should fail because the external session is closed
-    with pytest.raises(InvalidRequestError):
-        session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
-
-    # now change the global scope
-    import src.database
-
-    try:  # make sure we don't leave the global scope changed
-        src.database.NO_DB_SESSION = True
-
-        with SmartSession() as session:
+        # with an explicit False this should be a no-op session
+        with SmartSession(False) as session:
             assert isinstance(session, NoOpSession)
+
             query = session.scalars(sa.select(Source).where(Source.id == new_source.id))
             assert isinstance(query, NullQueryResults)
             sources = query.all()
@@ -1926,5 +1888,53 @@ def test_smart_session(new_source):
             source = query.first()
             assert source is None
 
+        # try opening a session inside an open session:
+        with SmartSession() as session:
+            session.begin()
+            with SmartSession(session) as session2:
+                assert session2 is session
+                sources = session2.scalars(
+                    sa.select(Source).where(Source.id == new_source.id)
+                ).all()
+                assert len(sources) > 0
+
+            # this still works because internal session doesn't auto-close
+            sources = session2.scalars(
+                sa.select(Source).where(Source.id == new_source.id)
+            ).all()
+            assert len(sources) > 0
+
+        assert session._transaction is None
+        # this should fail because the external session is closed
+        with pytest.raises(InvalidRequestError):
+            session.scalars(sa.select(Source).where(Source.id == new_source.id)).all()
+
+        # now change the global scope
+        import src.database
+
+        try:  # make sure we don't leave the global scope changed
+            src.database.NO_DB_SESSION = True
+
+            with SmartSession() as session:
+                assert isinstance(session, NoOpSession)
+                query = session.scalars(
+                    sa.select(Source).where(Source.id == new_source.id)
+                )
+                assert isinstance(query, NullQueryResults)
+                sources = query.all()
+                assert sources == []
+
+                query = session.scalars(
+                    sa.select(Source).where(Source.id == new_source.id)
+                )
+                assert isinstance(query, NullQueryResults)
+                source = query.first()
+                assert source is None
+
+        finally:
+            src.database.NO_DB_SESSION = False
+
     finally:
-        src.database.NO_DB_SESSION = False
+        # make sure to re-state autobegin=True at the end
+        with Session() as session:
+            session.autobegin = True
