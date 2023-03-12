@@ -284,7 +284,7 @@ class Source(Base, conesearch_alchemy.Point):
         ]:
             if not isinstance(value, list):
                 raise ValueError(f"{key} must be a list")
-            new_value = UniqueList(["observatory", "source_name", "series_number"])
+            new_value = UniqueList(["observatory", "series_number"])
             for item in value:
                 item.source = self
                 new_value.append(item)
@@ -295,7 +295,10 @@ class Source(Base, conesearch_alchemy.Point):
             value.cfg_hash = self.cfg_hash
         super().__setattr__(key, value)
 
+    rp = add_alias("raw_photometry")
+
     reduced_lightcurves = add_alias("reduced_photometry")
+    rl = add_alias("reduced_photometry")
 
     def save_reduced_photometry(self, session=None):
         """
@@ -313,6 +316,7 @@ class Source(Base, conesearch_alchemy.Point):
                 raise e
 
     processed_lightcurves = add_alias("processed_photometry")
+    pl = add_alias("processed_photometry")
 
     def save_processed_photometry(self, session=None):
         """
@@ -329,6 +333,7 @@ class Source(Base, conesearch_alchemy.Point):
                 raise e
 
     simulated_lightcurves = add_alias("simulated_photometry")
+    sl = add_alias("simulated_photometry")
 
     def save_simulated_photometry(self, session=None):
         """

@@ -1124,7 +1124,7 @@ class VirtualObservatory:
 
         # make sure each reduced dataset has a serial number:
         for i, d in enumerate(new_datasets):
-            d.series_number = i + 1
+            d.series_number = i
             d.series_total = len(new_datasets)
 
         if source is not None:
