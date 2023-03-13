@@ -15,7 +15,7 @@ import numpy as np
 import sqlalchemy as sa
 
 import src.database
-from src.database import Base, SmartSession
+from src.database import Base, SmartSession, safe_mkdir
 from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
@@ -944,11 +944,11 @@ class Project:
         if self.pars.version_control:
             self.output_folder += f"_{self.cfg_hash}"
 
+        print(f"DATA_ROOT= {src.database.DATA_ROOT}")
         self.output_folder = os.path.join(src.database.DATA_ROOT, self.output_folder)
 
         # create the output folder
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
+        safe_mkdir(self.output_folder)
 
         self.analysis.output_folder = self.output_folder
 

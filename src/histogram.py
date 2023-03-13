@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from src.database import safe_mkdir
 from src.parameters import Parameters
 from src.source import Source
 from src.utils import help_with_class, help_with_object, unit_convert_bytes, is_scalar
@@ -257,13 +258,6 @@ class Histogram:
 
         self.data.attrs["source_names"] = []
         self.source_names = set()
-
-        if self.output_folder is None:
-            self.output_folder = os.getcwd()
-
-        # create the output folder
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
 
     @staticmethod
     def _make_pars_object(kwargs):
@@ -949,6 +943,9 @@ class Histogram:
         filename, after the extension
         (e.g., "histograms_all_score.nc.temp")
         """
+        # make sure folder is there
+        if not os.path.isdir(self.output_folder):
+            safe_mkdir(self.output_folder)
 
         fullname = self.get_fullname(suffix=suffix)
         # netCDF files can't store dicts, must convert to string

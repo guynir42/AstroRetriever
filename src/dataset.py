@@ -22,7 +22,7 @@ from sqlalchemy.schema import UniqueConstraint
 
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import engine, Base, SmartSession
+from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
 
 
@@ -843,8 +843,7 @@ class DatasetMixin:
 
         # make a path if missing
         path = os.path.dirname(self.get_fullname())
-        if not os.path.isdir(path):
-            os.makedirs(path)
+        safe_mkdir(path)
 
         # specific format save functions
         if self.format == "hdf5":

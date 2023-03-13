@@ -26,14 +26,15 @@ from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
 
 
+# this is the root AstroRetriever folder
+CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+
 # this is where the data lives
 # (could be changed for, e.g., new external drive)
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:  # TODO: should also check if folder exists?
-    DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
-
-# this is the root AstroRetriever folder
-CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+    # DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+    DATA_ROOT = os.path.join(CODE_ROOT, "results")
 
 DATA_TEMP = os.path.join(CODE_ROOT, "DATA_TEMP")
 
@@ -165,7 +166,12 @@ def SmartSession(input_session=None):
 
 def safe_mkdir(path):
 
-    allowed_dirs = [DATA_ROOT, os.path.join(CODE_ROOT, "results"), DATA_TEMP]
+    allowed_dirs = [
+        DATA_ROOT,
+        os.path.join(CODE_ROOT, "results"),
+        os.path.join(CODE_ROOT, "catalogs"),
+        DATA_TEMP,
+    ]
 
     ok = False
 
@@ -180,6 +186,7 @@ def safe_mkdir(path):
     if not ok:
         err_str = "Cannot make a new folder not inside the following folders: "
         err_str += "\n".join(allowed_dirs)
+        err_str += f"\n\nAttempted folder: {path}"
         raise ValueError(err_str)
 
     # if the path is ok, also make the subfolders
