@@ -1,19 +1,11 @@
-import os
-import glob
-import requests
-from collections import defaultdict
 from datetime import datetime
 import numpy as np
 import pandas as pd
 import sqlalchemy as sa
-import warnings
 import socket
-
-from timeit import default_timer as timer
 
 from astroquery.mast import Observations, Catalogs
 from astropy.coordinates import SkyCoord
-from astropy.time import Time
 import astropy.io.fits as fits
 
 # from src.source import angle_diff
@@ -161,8 +153,6 @@ class VirtualTESS(VirtualObservatory):
             return []
         dfs = dataset.data.groupby("SECTOR")
         sectors = [df[0] for df in dfs]
-        # print(sectors)
-        # print([a['SECTOR'] for a in altdata_base['file_headers']])
         new_datasets = []
         for df_tuple in dfs:
             sector = df_tuple[0]

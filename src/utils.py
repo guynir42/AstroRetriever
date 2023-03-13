@@ -500,6 +500,10 @@ class UniqueList(list):
         return True
 
     def _compare(self, key1, key2):
+        """
+        Check if the two keys are the same.
+        If ignorecase is True, will convert to lower case.
+        """
         if self.ignorecase and isinstance(key1, str) and isinstance(key2, str):
             return key1.lower() == key2.lower()
         else:

@@ -275,7 +275,7 @@ class Analysis:
                         non_empty += 1
             if non_empty == 0:
                 source.properties = Properties(
-                    has_data=False, project=self.pars.project
+                    has_data=False, project=self.pars.project, test_hash=self._test_hash
                 )
                 continue  # skip sources without data
 
@@ -537,7 +537,9 @@ class Analysis:
         """
         # TODO: calculate best S/N and so on...
 
-        source.properties = Properties(has_data=True, project=self.pars.project)
+        source.properties = Properties(
+            has_data=True, project=self.pars.project, test_hash=self._test_hash
+        )
 
     def _inject_to_lightcurves(self, lightcurves, source, index=0):
         """

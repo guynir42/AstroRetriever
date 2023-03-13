@@ -33,7 +33,6 @@ CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
 # (could be changed for, e.g., new external drive)
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:  # TODO: should also check if folder exists?
-    # DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
     DATA_ROOT = os.path.join(CODE_ROOT, "results")
 
 DATA_TEMP = os.path.join(CODE_ROOT, "DATA_TEMP")

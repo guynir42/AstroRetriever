@@ -22,16 +22,13 @@ from sqlalchemy.schema import UniqueConstraint
 
 from sqlalchemy.dialects.postgresql import JSONB
 
+import src.database
 from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
 from src.utils import random_string, legalize
 
 lock = threading.Lock()
 
-# root folder is either defined via an environment variable
-# or is the in the main repository, under subfolder "data"
-
-import src.database
 
 PHOT_ZP = 23.9
 LOG_BASE = np.log(10) / 2.5

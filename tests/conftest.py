@@ -38,6 +38,9 @@ def data_dir():
 
 @pytest.fixture(scope="session", autouse=True)
 def example_data_dir():
+    # this is where you'd save example data, like lightcurves for surveys
+    # this folder is part of the repo and is not supposed to change.
+    # don't put temporary files in there, that's what data_dir is for!
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "DATA"))
 
 
