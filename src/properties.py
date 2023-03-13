@@ -7,6 +7,8 @@ from src.database import Base, engine
 from src.source import Source
 from sqlalchemy import orm, func
 
+from src.utils import legalize
+
 utcnow = func.timezone("UTC", func.current_timestamp())
 
 
@@ -22,6 +24,13 @@ class Properties(Base):
             name="_properties_source_name_in_project_uc",
         ),
     )
+
+    def __setattr__(self, key, value):
+        if key == "project" and value is not None:
+            value = legalize(value)
+
+        super().__setattr__(key, value)
+
     # source_id = sa.Column(
     #     sa.ForeignKey("sources.id", ondelete="CASCADE"),
     #     nullable=False,

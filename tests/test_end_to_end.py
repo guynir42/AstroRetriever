@@ -9,6 +9,7 @@ from pprint import pprint
 
 from src.project import Project
 from src.observatory import VirtualDemoObs
+from src.utils import legalize, random_string
 
 
 def test_project_histograms(test_hash):
@@ -174,10 +175,12 @@ def test_project_multiple_runs(test_hash):
 
 def test_project_with_simulated_events(test_hash):
     filenames = []
+    original_name = f" {random_string(8)}-{random_string(8)} 42"
+    legal_name = legalize(original_name)
 
     try:  # cleanup at end
         proj = Project(
-            name="default_test",
+            name=original_name,
             obs_names=["demo"],
             analysis_kwargs={"num_injections": 3},
             obs_kwargs={},
@@ -202,6 +205,11 @@ def test_project_with_simulated_events(test_hash):
             assert s.raw_photometry[0].get_fullname() is not None
             assert os.path.exists(s.raw_photometry[0].get_fullname())
             filenames.append(s.raw_photometry[0].get_fullname())
+
+            # check project name is legal
+            assert s.project == legal_name
+            assert s.reduced_photometry[0].project == legal_name
+            assert s.properties.project == legal_name
 
     # TODO: add simulator, check detections are found
     #  check the detections are all labelled as simulated

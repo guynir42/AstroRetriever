@@ -20,7 +20,7 @@ from src.parameters import (
     convert_data_type,
     get_class_from_data_type,
 )
-from src.utils import ra2sex, dec2sex, add_alias, UniqueList
+from src.utils import ra2sex, dec2sex, add_alias, UniqueList, legalize
 
 
 DEFAULT_PROJECT = "test_project"
@@ -293,6 +293,10 @@ class Source(Base, conesearch_alchemy.Point):
             value.source_name = self.name
             value.project = self.project
             value.cfg_hash = self.cfg_hash
+
+        if key == "project" and value is not None:
+            value = legalize(value)
+
         super().__setattr__(key, value)
 
     rp = add_alias("raw_photometry")

@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
-from src.utils import random_string
+from src.utils import random_string, legalize
 
 lock = threading.Lock()
 
@@ -364,6 +364,8 @@ class DatasetMixin:
             if not isinstance(value, Source):
                 raise ValueError(f"Source must be a Source object, not {type(value)}")
             self.source_name = value.name
+        if key == "project" and value is not None:
+            value = legalize(value)
 
         super().__setattr__(key, value)
 
@@ -450,7 +452,7 @@ class DatasetMixin:
         if self.folder is not None:
             f = self.folder
         elif hasattr(self, "project") and self.project is not None:
-            f = self.project.upper()
+            f = self.project
         elif self.observatory is not None:
             f = self.observatory.upper()
         else:

@@ -3,6 +3,7 @@ import copy
 import yaml
 
 from src.database import DATA_ROOT
+from src.utils import legalize
 
 # A cached dictionary of dictionaries
 # loaded form YAML files.
@@ -303,6 +304,9 @@ class Parameters:
 
         if new_attrs_check and key not in self.__dict__ and key not in propagated_keys:
             raise AttributeError(f'Attribute "{key}" does not exist.')
+
+        if key == "project" and value is not None:
+            value = legalize(value)
 
         if key == "data_types":
             value = normalize_data_types(value)

@@ -22,7 +22,7 @@ from src.parameters import (
 from src.source import Source, get_source_identifiers
 from src.dataset import DatasetMixin, RawPhotometry, Lightcurve, commit_and_save
 from src.catalog import Catalog
-from src.utils import help_with_class, help_with_object, CircularBufferList
+from src.utils import help_with_class, help_with_object, CircularBufferList, legalize
 
 lock = threading.Lock()
 
@@ -272,6 +272,13 @@ class VirtualObservatory:
             # are given by the config/user inputs
             # prefer to use that instead of the file content
             self._credentials.update(self.pars.credentials)
+
+    def __setattr__(self, key, value):
+
+        if key == "name" and value is not None:
+            value = legalize(value)
+
+        super().__setattr__(key, value)
 
     @property
     def project(self):

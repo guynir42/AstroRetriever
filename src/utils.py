@@ -319,7 +319,7 @@ def add_alias(att):
     )
 
 
-def legalize(name):
+def legalize(name, to_lower=False):
     """
     Turn a given name for a project/observatory into a legal name.
     This trims whitespace, replaces inner spaces and dashes with underscores,
@@ -328,15 +328,26 @@ def legalize(name):
     to various search methods.
     All these names should be saved after being legalized, so they can be
     searched against a legalized version of the user input.
+
+    Parameters
+    ----------
+    name: str
+        The name to be legalized.
+    to_lower: bool
+        If True, will convert to lower case instead of upper case. Default is False.
+
     """
 
     name = name.strip()
     name = name.replace(" ", "_").replace("-", "_")
-    name = name.upper()
+    if to_lower:
+        name = name.lower()
+    else:
+        name = name.upper()
 
     if re.match(LEGAL_NAME_RE, name) is None:
         raise ValueError(
-            f'Cannot legalize name "{name}". Must be alphanumeric without leading number. '
+            f'Cannot legalize name "{name}". Must be alphanumeric without a leading number. '
         )
 
     return name

@@ -24,7 +24,13 @@ from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
 from src.properties import Properties
 from src.detection import Detection
-from src.utils import help_with_class, help_with_object, NamedList, CircularBufferList
+from src.utils import (
+    help_with_class,
+    help_with_object,
+    NamedList,
+    CircularBufferList,
+    legalize,
+)
 
 
 class ParsProject(Parameters):
@@ -338,6 +344,8 @@ class Project:
         self.num_sources_scanned = None
 
     def __setattr__(self, key, value):
+        if key == "name" and value is not None:
+            value = legalize(value)
         if key == "_test_hash":
             if hasattr(self, "analysis"):
                 self.analysis._test_hash = value
@@ -447,8 +455,9 @@ class Project:
         new_obs.catalog = self.catalog
         new_obs._test_hash = self._test_hash
 
-        if not hasattr(self, name.lower()):
-            setattr(self, name.lower(), new_obs)
+        shorthand = legalize(name, to_lower=True)
+        if not hasattr(self, shorthand):
+            setattr(self, shorthand, new_obs)
 
         return new_obs
 

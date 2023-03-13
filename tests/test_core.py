@@ -32,7 +32,7 @@ from src.catalog import Catalog
 from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
-from src.utils import NamedList, UniqueList, CircularBufferList, random_string
+from src.utils import NamedList, UniqueList, CircularBufferList, random_string, legalize
 
 
 def test_load_save_parameters(data_dir):
@@ -235,6 +235,43 @@ def test_project_config_file():
     finally:
         os.remove(filename)
         os.remove(data["observatories"]["ztf"]["credentials"]["filename"])
+
+
+def test_legal_project_names(new_source, raw_phot):
+    original_name = random_string()
+    proj = Project(original_name, catalog_kwargs={"default": "test"})
+    assert proj.name != original_name
+    assert proj.name == original_name.upper()
+
+    original_name = f"  {random_string(8)}-{random_string(8)}12 "
+    proj = Project(original_name, catalog_kwargs={"default": "test"})
+    assert proj.name != original_name
+    assert proj.name == legalize(original_name)
+    assert proj.name.endswith("12")
+    assert not proj.name.startswith(" ")
+    assert "-" not in proj.name
+    assert "_" in proj.name
+
+    assert proj.pars.project == legalize(original_name)
+
+    new_source.project = original_name
+    assert new_source.project == legalize(original_name)
+
+    raw_phot.project = original_name
+    assert raw_phot.project == legalize(original_name)
+
+    prop = Properties(project=original_name)
+    assert prop.project == legalize(original_name)
+
+    original_name = f"1{random_string(8)}-{random_string(8)}12 "
+    with pytest.raises(ValueError) as e:
+        Project(original_name, catalog_kwargs={"default": "test"})
+    assert "Cannot legalize name" in str(e.value)
+
+    original_name = f"{random_string(8)}-{random_string(8)} $ "
+    with pytest.raises(ValueError) as e:
+        Project(original_name, catalog_kwargs={"default": "test"})
+    assert "Cannot legalize name" in str(e.value)
 
 
 def test_version_control(data_dir):
