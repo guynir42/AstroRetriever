@@ -765,8 +765,9 @@ class Parameters:
         filename = inputs.get("cfg_file", None)
         explicit = filename is not None
 
-        if filename is None:
-            filename = inputs.get("project", None)
+        if filename is None and "project" in inputs:
+            filename = inputs["project"]
+            filename = legalize(filename, to_lower=True)
 
         cfg_key = inputs.get("cfg_key", None)
 

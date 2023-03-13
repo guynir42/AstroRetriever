@@ -37,6 +37,11 @@ def data_dir():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def example_data_dir():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "DATA"))
+
+
+@pytest.fixture(scope="session", autouse=True)
 def test_hash():
     # mark all the test objects with this
     # and then delete them at the end

@@ -375,6 +375,7 @@ class NamedList(list):
         super().__init__()
 
     def convert_name(self, name):
+        # TODO: maybe replace with legalize?
         if self.ignorecase:
             return name.lower()
         else:
@@ -408,10 +409,12 @@ class UniqueList(list):
     object, using the list of comparison_attributes specified.
     """
 
-    def __init__(self, comparison_attributes=[]):
+    def __init__(self, comparison_attributes=[], ignorecase=False):
         self.comparison_attributes = comparison_attributes
         if len(comparison_attributes) == 0:
             self.comparison_attributes = ["name"]
+        self.ignorecase = ignorecase
+
         super().__init__()
 
     def __setitem__(self, key, value):
@@ -432,7 +435,9 @@ class UniqueList(list):
                 if i >= len(key):
                     break  # no more keys to check
                 shortlist = [
-                    item for item in shortlist if getattr(item, attr) == key[i]
+                    item
+                    for item in shortlist
+                    if self._compare(key[i], getattr(item, attr))
                 ]
 
             if i == len(key) - 1:
@@ -446,7 +451,7 @@ class UniqueList(list):
             shortlist = [
                 item
                 for item in self
-                if getattr(item, self.comparison_attributes[0]) == key
+                if self._compare(key, getattr(item, self.comparison_attributes[0]))
             ]
             if len(shortlist) == 0:
                 raise KeyError(f"Key {key} not found in list.")
@@ -489,10 +494,16 @@ class UniqueList(list):
         the check returns True. If any are different, returns False.
         """
         for att in self.comparison_attributes:
-            if getattr(value, att) != getattr(other, att):
+            if not self._compare(getattr(value, att), getattr(other, att)):
                 return False
 
         return True
+
+    def _compare(self, key1, key2):
+        if self.ignorecase and isinstance(key1, str) and isinstance(key2, str):
+            return key1.lower() == key2.lower()
+        else:
+            return key1 == key2
 
 
 class CircularBufferList(list):

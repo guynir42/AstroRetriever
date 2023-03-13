@@ -366,7 +366,8 @@ class DatasetMixin:
             self.source_name = value.name
         if key == "project" and value is not None:
             value = legalize(value)
-
+        if key == "observatory" and value is not None:
+            value = legalize(value)
         super().__setattr__(key, value)
 
     @orm.reconstructor
@@ -1753,7 +1754,7 @@ class Lightcurve(DatasetMixin, Base):
                         new_filt = kwargs["filtmap"]
                         if self.observatory:
                             new_filt = new_filt.replace(
-                                "<observatory>", self.observatory
+                                "<observatory>", self.observatory.lower()
                             )
                         return new_filt.replace("<filter>", filt)
 

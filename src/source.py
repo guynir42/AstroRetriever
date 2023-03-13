@@ -23,7 +23,7 @@ from src.parameters import (
 from src.utils import ra2sex, dec2sex, add_alias, UniqueList, legalize
 
 
-DEFAULT_PROJECT = "test_project"
+DEFAULT_PROJECT = "TEST_PROJECT"
 
 # get rid of annoying cosd/sind warnings regarding conesearch_alchemy:
 # ref: https://github.com/tiangolo/sqlmodel/issues/189#issuecomment-1018014753
@@ -58,7 +58,9 @@ def get_source_identifiers(project_name, cfg_hash=None, column="id"):
     hash = cfg_hash if cfg_hash is not None else ""
     with SmartSession() as session:
         stmt = sa.select([getattr(Source, column)])
-        stmt = stmt.where(Source.project == project_name, Source.cfg_hash == hash)
+        stmt = stmt.where(
+            Source.project == legalize(project_name), Source.cfg_hash == hash
+        )
         source_ids = session.execute(stmt).all()
 
         return {s[0] for s in source_ids}
@@ -272,7 +274,7 @@ class Source(Base, conesearch_alchemy.Point):
         if key == "raw_photometry":
             if not isinstance(value, list):
                 raise ValueError("raw_photometry must be a list")
-            new_value = UniqueList(["observatory"])
+            new_value = UniqueList(["observatory"], ignorecase=True)
             for item in value:
                 item.source = self
                 new_value.append(item)
@@ -284,7 +286,7 @@ class Source(Base, conesearch_alchemy.Point):
         ]:
             if not isinstance(value, list):
                 raise ValueError(f"{key} must be a list")
-            new_value = UniqueList(["observatory", "series_number"])
+            new_value = UniqueList(["observatory", "series_number"], ignorecase=True)
             for item in value:
                 item.source = self
                 new_value.append(item)
@@ -484,7 +486,7 @@ class Source(Base, conesearch_alchemy.Point):
                     found_data = session.scalars(
                         sa.select(DataClass).where(
                             DataClass.source_name == self.name,
-                            DataClass.observatory == obs,
+                            DataClass.observatory == legalize(obs),
                         )
                     ).all()
                 else:
@@ -494,8 +496,8 @@ class Source(Base, conesearch_alchemy.Point):
                     found_data = session.scalars(
                         sa.select(DataClass).where(
                             DataClass.source_name == self.name,
-                            DataClass.observatory == obs,
-                            DataClass.project == self.project,
+                            DataClass.observatory == legalize(obs),
+                            DataClass.project == legalize(self.project),
                             DataClass.cfg_hash == self.cfg_hash,
                             DataClass.was_processed == False,
                         )

@@ -98,7 +98,7 @@ def test_tess_download(tess_project, wd_cat):
         assert num_sources_with_data > 0
 
 
-def test_tess_reduction(tess_project, new_source, test_hash):
+def test_tess_reduction(tess_project, new_source, test_hash, example_data_dir):
     # make sure the project has tess observatory:
     assert len(tess_project.observatories) == 1
     assert "tess" in tess_project.observatories
@@ -113,7 +113,7 @@ def test_tess_reduction(tess_project, new_source, test_hash):
     raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
     raw_data.test_hash = test_hash
     raw_data.filename = "TESS_photometry.h5"
-    raw_data.folder = "DATA"
+    raw_data.folder = example_data_dir
     raw_data.load()
     new_source.raw_photometry.append(raw_data)
 
@@ -143,7 +143,7 @@ def test_tess_reduction(tess_project, new_source, test_hash):
     # TODO: more tests for this specific observatory reduction?
 
 
-def test_tess_analysis(tess_project, new_source):
+def test_tess_analysis(tess_project, new_source, example_data_dir):
     # make sure the project has tess observatory:
     assert len(tess_project.observatories) == 1
     assert "tess" in tess_project.observatories
@@ -157,7 +157,7 @@ def test_tess_analysis(tess_project, new_source):
     colmap, time_info = tess.get_colmap_time_info()
     raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
     raw_data.filename = "TESS_photometry.h5"
-    raw_data.folder = "DATA"
+    raw_data.folder = example_data_dir
     raw_data.load()
     new_source.raw_photometry.append(raw_data)
 
@@ -203,7 +203,7 @@ def test_tess_download_by_ticid(tess_project):
         source = tess.fetch_source(cat_row, reduce=False, save=True)
         source_name = source.name
         assert source.loaded_status == "new"
-        assert source.raw_photometry[0].observatory == "tess"
+        assert source.raw_photometry[0].observatory == "TESS"
         assert source.raw_photometry[0].loaded_status == "new"
 
         ticid = str(source.local_names["TESS"])
@@ -212,7 +212,7 @@ def test_tess_download_by_ticid(tess_project):
         source2 = tess.fetch_by_ticid(ticid, download=True, use_catalog=True)
         assert source2.loaded_status == "database"
         assert source2.name == source_name
-        assert source2.raw_photometry[0].observatory == "tess"
+        assert source2.raw_photometry[0].observatory == "TESS"
         assert source2.raw_photometry[0].loaded_status == "database"
 
         # delete the source and the re-fetch it using the TICID
@@ -224,7 +224,7 @@ def test_tess_download_by_ticid(tess_project):
         source3 = tess.fetch_by_ticid(ticid, download=True, use_catalog=True)
         assert source3.loaded_status == "new"
         assert source3.name == source_name
-        assert source3.raw_photometry[0].observatory == "tess"
+        assert source3.raw_photometry[0].observatory == "TESS"
         assert source3.raw_photometry[0].loaded_status == "database"
 
         # re-fetch using the TICID, without a catalog (name should be TICID)
@@ -232,7 +232,7 @@ def test_tess_download_by_ticid(tess_project):
         assert source4.loaded_status == "new"
         assert source4.name != source_name
         assert source4.name == ticid
-        assert source4.raw_photometry[0].observatory == "tess"
+        assert source4.raw_photometry[0].observatory == "TESS"
         assert source4.raw_photometry[0].loaded_status == "database"
 
     finally:

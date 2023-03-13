@@ -94,7 +94,7 @@ def test_load_save_parameters(data_dir):
 def test_default_project():
     proj = Project("default_test", catalog_kwargs={"default": "test"})
     assert proj.pars.obs_names == ["DEMO"]
-    assert "demo" in [obs.name for obs in proj.observatories]
+    assert "DEMO" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)
 
 
@@ -117,7 +117,7 @@ def test_project_user_inputs():
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
-    assert "ztf" in [obs.name for obs in proj.observatories]
+    assert "ZTF" in [obs.name for obs in proj.observatories]
     idx = None
     for i, item in enumerate(proj.observatories):
         if isinstance(item, VirtualZTF):
@@ -747,7 +747,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         # reduce the data using the demo observatory
         assert len(test_project.observatories) == 1
         obs_key = list(test_project.observatories.keys())[0]
-        assert obs_key == "demo"
+        assert obs_key == "DEMO"
         obs = test_project.observatories[obs_key]
         assert isinstance(obs, VirtualDemoObs)
 
@@ -1881,6 +1881,20 @@ def test_unique_list():
     # check that array indexing works with two out of three attributes
     assert ul[["object one", "foo1"]] == [obj1]
     assert ul[["object two", "foo2"]] == [obj2]
+
+    # check that we can ignore case
+    obj4 = TempObject()
+    obj4.name = "Foo"
+
+    obj5 = TempObject()
+    obj5.name = "fOO"
+
+    ul = UniqueList(comparison_attributes=["name"], ignorecase=True)
+    ul.append(obj4)
+    ul.append(obj5)
+    assert len(ul) == 1
+    assert ul["foo"] == obj5
+    assert ul["FOO"] == obj5
 
 
 def test_circular_buffer_list():
