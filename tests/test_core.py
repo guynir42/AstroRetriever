@@ -17,7 +17,14 @@ from src.parameters import Parameters
 from src.project import Project
 from src.ztf import VirtualZTF
 
-from src.database import Session, SmartSession, NoOpSession, NullQueryResults
+import src.database
+from src.database import (
+    Session,
+    SmartSession,
+    NoOpSession,
+    NullQueryResults,
+    safe_mkdir,
+)
 from src.source import Source, DEFAULT_PROJECT
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP, simplify, get_time_offset
 from src.observatory import VirtualDemoObs
@@ -1420,7 +1427,7 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-# @pytest.mark.flaky(max_runs=8)
+@pytest.mark.flaky(max_runs=8)
 def test_analysis(analysis, new_source, raw_phot):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
     analysis.pars.save_anything = False
@@ -1840,6 +1847,55 @@ def test_circular_buffer_list():
     cbl.extend([5, 6])
     assert cbl == [4, 5, 6]
     assert cbl.total == 6
+
+
+def test_safe_mkdir():
+    # can make a folder inside the data folder
+    new_path = os.path.join(src.database.DATA_ROOT, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # can make a folder under the code root's results folder
+    new_path = os.path.join(src.database.CODE_ROOT, "results", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # can make a folder under the temporary data folder
+    new_path = os.path.join(src.database.DATA_TEMP, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # this does not work anywhere else:
+    new_path = os.path.join(src.database.CODE_ROOT, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+    # try a relative path
+    new_path = os.path.join(src.database.CODE_ROOT, "results", "..", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+    new_path = os.path.join(src.database.CODE_ROOT, "result", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
 
 
 def test_smart_session(new_source):

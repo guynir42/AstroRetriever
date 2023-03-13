@@ -24,11 +24,18 @@ import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
-from sqlalchemy.orm.session import make_transient
 
+
+# this is where the data lives
+# (could be changed for, e.g., new external drive)
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:  # TODO: should also check if folder exists?
     DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+
+# this is the root AstroRetriever folder
+CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir))
+
+DATA_TEMP = os.path.join(CODE_ROOT, "DATA_TEMP")
 
 # set this to True if you want to disable all database interactions
 NO_DB_SESSION = False
@@ -156,13 +163,27 @@ def SmartSession(input_session=None):
         )
 
 
-class CloseSession:
-    def __init__(self, session=None):
-        self.session = session
+def safe_mkdir(path):
 
-    def __del__(self):
-        if self.session is not None:
-            self.session.close()
+    allowed_dirs = [DATA_ROOT, os.path.join(CODE_ROOT, "results"), DATA_TEMP]
+
+    ok = False
+
+    for d in allowed_dirs:
+        parent = os.path.realpath(os.path.abspath(d))
+        child = os.path.realpath(os.path.abspath(path))
+
+        if os.path.commonpath([parent]) == os.path.commonpath([parent, child]):
+            ok = True
+            break
+
+    if not ok:
+        err_str = "Cannot make a new folder not inside the following folders: "
+        err_str += "\n".join(allowed_dirs)
+        raise ValueError(err_str)
+
+    # if the path is ok, also make the subfolders
+    os.makedirs(path, exist_ok=True)
 
 
 def clear_tables():
