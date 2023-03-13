@@ -266,13 +266,13 @@ def test_tess_download_by_ticid(tess_project):
         assert raw_phot is None
 
 
-def test_tess_to_skyportal_conversion(tess_project, new_source):
+def test_tess_to_skyportal_conversion(tess_project, new_source, example_data_dir):
     assert isinstance(tess_project.tess, VirtualTESS)
     colmap, time_info = tess_project.tess.get_colmap_time_info()
 
     raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
     raw_data.filename = "TESS_photometry.h5"
-    raw_data.folder = "DATA"
+    raw_data.folder = example_data_dir
     raw_data.load()
     new_source.raw_photometry.append(raw_data)
 
