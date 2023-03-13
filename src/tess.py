@@ -1,6 +1,7 @@
 import os
 import glob
 import requests
+from collections import defaultdict
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -156,8 +157,12 @@ class VirtualTESS(VirtualObservatory):
         altdata_base = init_kwargs.pop("altdata", dataset.altdata)
 
         # split the dataframe into sectors
+        if len(dataset.data) == 0:
+            return []
         dfs = dataset.data.groupby("SECTOR")
         sectors = [df[0] for df in dfs]
+        # print(sectors)
+        # print([a['SECTOR'] for a in altdata_base['file_headers']])
         new_datasets = []
         for df_tuple in dfs:
             sector = df_tuple[0]
@@ -165,8 +170,8 @@ class VirtualTESS(VirtualObservatory):
             new_altdata = altdata_base.copy()
             new_altdata["sectors"] = sector
             new_altdata["filter"] = "TESS"
-            idx = None
 
+            idx = None
             for i in range(len(sectors)):
                 if int(altdata_base["file_headers"][i]["SECTOR"]) == int(sector):
                     idx = i
@@ -657,11 +662,13 @@ class VirtualTESS(VirtualObservatory):
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
+        sectors = []
         df_list = []
-        altdata = {}
-        altdata["TICID"] = int(ticid)
+        file_header_list = []
+        lc_header_list = []
+        aperture_list = []
+        ap_header_list = []
 
-        sectors = set()
         for i in lc_indices:
             uri = data_query["dataURL"][i]
             (
@@ -672,32 +679,52 @@ class VirtualTESS(VirtualObservatory):
                 aperture_header,
             ) = self._try_open_fits(base_url + uri)
 
-            sectors.add(file_header["SECTOR"])
+            sectors.append(file_header["SECTOR"])
             lightcurve_data["SECTOR"] = file_header["SECTOR"]
             # get the exposure time from the header
             lightcurve_data["EXPTIME"] = lightcurve_header["EXPOSURE"]
             df_list.append(lightcurve_data)
 
-            if "file_headers" not in altdata:
-                altdata["file_headers"] = []
-            altdata["file_headers"].append(file_header)
+            file_header_list.append(file_header)
+            lc_header_list.append(lightcurve_header)
 
-            if "lightcurve_headers" not in altdata:
-                altdata["lightcurve_headers"] = []
-            altdata["lightcurve_headers"].append(lightcurve_header)
-
-            if "aperture_arrays" not in altdata:
-                altdata["aperture_arrays"] = []
             # convert the aperture matrix into a nested list
-            altdata["aperture_arrays"].append(aperture_array.tolist())
-            if "aperture_headers" not in altdata:
-                altdata["aperture_headers"] = []
-            altdata["aperture_headers"].append(aperture_header)
+            aperture_list.append(aperture_array.tolist())
+            ap_header_list.append(aperture_header)
 
+        # go over the dataframes and find the ones with the most exposures per sector:
+        new_file_header_list = []
+        new_lc_header_list = []
+        new_aperture_list = []
+        new_ap_header_list = []
+        new_df_list = []
+        unique_sectors = list(set(sectors))
+        unique_sectors.sort()
+        for s in unique_sectors:
+            best_len = 0
+            best_idx = None
+            for i, (df, h) in enumerate(zip(df_list, file_header_list)):
+                if h["SECTOR"] == s and len(df) > best_len:
+                    best_len = len(df)
+                    best_idx = i
+
+            new_df_list.append(df_list[best_idx])
+            new_file_header_list.append(file_header_list[best_idx])
+            new_lc_header_list.append(lc_header_list[best_idx])
+            new_aperture_list.append(aperture_list[best_idx])
+            new_ap_header_list.append(ap_header_list[best_idx])
+
+        altdata = dict(TICID=int(ticid), filter="TESS")
+
+        altdata["SECTORS"] = unique_sectors
+        altdata["file_headers"] = new_file_header_list
+        altdata["lightcurve_headers"] = new_lc_header_list
+        altdata["aperture_arrays"] = new_aperture_list
+        altdata["aperture_headers"] = new_ap_header_list
         self._get_exposure_time(altdata)
-        altdata["filter"] = "TESS"
 
-        data = pd.concat(df_list, ignore_index=True)
+        data = pd.concat(new_df_list, ignore_index=True)
+
         altdata["sectors"] = list(sectors)
 
         return data, altdata

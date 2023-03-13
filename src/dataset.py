@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
-
+from src.utils import random_string
 
 lock = threading.Lock()
 
@@ -586,11 +586,6 @@ class DatasetMixin:
     def load_netcdf(self):
         pass
 
-    @staticmethod
-    def random_string(length=16):
-        letters = list(string.ascii_lowercase)
-        return "".join(np.random.choice(letters, length))
-
     def invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
     ):
@@ -673,7 +668,7 @@ class DatasetMixin:
             if source_name is None:
                 source_name = self.source_name
             if source_name is None:
-                source_name = self.random_string()
+                source_name = random_string()
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
                 raise ValueError(
@@ -695,7 +690,7 @@ class DatasetMixin:
                         binning += f"{ra:02d}s"
 
             else:
-                binning = self.random_string(15)
+                binning = random_string(15)
 
             # add prefix using the type of data and observatory
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
@@ -750,7 +745,7 @@ class DatasetMixin:
             else:
                 raise TypeError("source name must be a string")
         else:
-            self.filekey = self.random_string(8)
+            self.filekey = random_string(8)
 
         # add the type of data
         self.filekey = f"{self.type}_{self.filekey}"
@@ -1249,6 +1244,7 @@ class DatasetMixin:
         "public",
         "observatory",
         "cfg_hash",
+        "test_hash",
         "folder",
         "colmap",
         "time_info",

@@ -255,6 +255,7 @@ class VirtualObservatory:
         self.latest_source = None
         self.latest_reductions = None
         self.num_loaded = None
+        self._test_hash = None
         self.reset()
 
         if not isinstance(self.project, str):
@@ -644,7 +645,12 @@ class VirtualObservatory:
             # if not, create one now
             if source is None:
                 self.pars.vprint(f'Creating new source: {cat_row["name"]}', 9)
-                source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
+                source = Source(
+                    **cat_row,
+                    project=self.project,
+                    cfg_hash=self.cfg_hash,
+                    test_hash=self._test_hash,
+                )
                 source.cat_row = cat_row  # save the raw catalog row as well
                 report_dict["source"] = "new"
 
@@ -743,6 +749,7 @@ class VirtualObservatory:
 
                     dataset_args["colmap"] = colmap
                     dataset_args["time_info"] = time_info
+                    dataset_args["test_hash"] = self._test_hash
 
                     # create a raw data for this class (e.g., RawPhotometry)
                     raw_data = DataClass(

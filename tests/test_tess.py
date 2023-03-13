@@ -41,9 +41,7 @@ def test_tess_download(tess_project, wd_cat):
     # download the lightcurve:
     tess_project.catalog = c
     tess.catalog = c
-    tess.fetch_all_sources(
-        reduce=False
-    )  # TODO: when finished adding reducer, remove this
+    tess.fetch_all_sources()
 
     def cleanup():  # to be called at the end
         with SmartSession() as session:
@@ -51,6 +49,9 @@ def test_tess_download(tess_project, wd_cat):
                 for p in s.raw_photometry:
                     p.delete_data_from_disk()
                     session.delete(p)
+                for lc in s.reduced_lightcurves:
+                    lc.delete_data_from_disk()
+                    session.delete(lc)
                 session.delete(s)
 
             session.commit()
@@ -97,7 +98,7 @@ def test_tess_download(tess_project, wd_cat):
         assert num_sources_with_data > 0
 
 
-def test_tess_reduction(tess_project, new_source):
+def test_tess_reduction(tess_project, new_source, test_hash):
     # make sure the project has tess observatory:
     assert len(tess_project.observatories) == 1
     assert "tess" in tess_project.observatories
@@ -110,6 +111,7 @@ def test_tess_reduction(tess_project, new_source):
     new_source.project = "test_TESS"
     colmap, time_info = tess.get_colmap_time_info()
     raw_data = RawPhotometry(observatory="tess", colmap=colmap, time_info=time_info)
+    raw_data.test_hash = test_hash
     raw_data.filename = "TESS_photometry.h5"
     raw_data.folder = "DATA"
     raw_data.load()

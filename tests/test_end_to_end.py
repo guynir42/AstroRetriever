@@ -11,7 +11,7 @@ from src.project import Project
 from src.observatory import VirtualDemoObs
 
 
-def test_project_histograms():
+def test_project_histograms(test_hash):
 
     filenames = []
 
@@ -24,6 +24,7 @@ def test_project_histograms():
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
 
         proj.demo.pars.check_data_exists = True
@@ -75,7 +76,7 @@ def test_project_histograms():
         assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
 
 
-def test_project_multiple_runs():
+def test_project_multiple_runs(test_hash):
     num_sources_with_data = 0
     filenames = []
 
@@ -88,6 +89,7 @@ def test_project_multiple_runs():
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
 
         assert isinstance(proj.demo, VirtualDemoObs)
@@ -170,7 +172,7 @@ def test_project_multiple_runs():
         assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
 
 
-def test_project_with_simulated_events():
+def test_project_with_simulated_events(test_hash):
     filenames = []
 
     try:  # cleanup at end
@@ -182,6 +184,7 @@ def test_project_with_simulated_events():
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
         obs = proj.observatories["demo"]
         assert isinstance(obs, VirtualDemoObs)

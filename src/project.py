@@ -296,6 +296,7 @@ class Project:
         # filled by _setup_output_folder at runtime:
         self.output_folder = None
         self.cfg_hash = None  # hash of the config file (for version control)
+        self._test_hash = None
 
         # version control:
         if self.pars.version_control:
@@ -335,6 +336,16 @@ class Project:
 
         self.sources = None  # list to be filled by analysis
         self.num_sources_scanned = None
+
+    def __setattr__(self, key, value):
+        if key == "_test_hash":
+            if hasattr(self, "analysis"):
+                self.analysis._test_hash = value
+            if hasattr(self, "observatories"):
+                for obs in self.observatories:
+                    obs._test_hash = value
+
+        super().__setattr__(key, value)
 
     @staticmethod
     def _make_pars_object(kwargs):
@@ -434,6 +445,7 @@ class Project:
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
+        new_obs._test_hash = self._test_hash
 
         if not hasattr(self, name.lower()):
             setattr(self, name.lower(), new_obs)

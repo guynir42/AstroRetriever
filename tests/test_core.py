@@ -32,7 +32,7 @@ from src.catalog import Catalog
 from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
-from src.utils import NamedList, UniqueList, CircularBufferList
+from src.utils import NamedList, UniqueList, CircularBufferList, random_string
 
 
 def test_load_save_parameters(data_dir):
@@ -379,6 +379,7 @@ def test_catalog_nearest_search():
 
 
 def test_observatory_filename_conventions(test_project):
+
     obs = test_project.observatories["demo"]
 
     # load a big catalog with more than a million rows
@@ -426,7 +427,7 @@ def test_observatory_filename_conventions(test_project):
     assert data.filekey == f"{data.type}_{name}"
 
 
-def test_add_source_and_data(data_dir):
+def test_add_source_and_data(data_dir, test_hash):
     fullname = ""
     try:  # at end, delete the temp file
 
@@ -443,6 +444,7 @@ def test_add_source_and_data(data_dir):
                 name=source_name,
                 ra=np.random.uniform(0, 360),
                 dec=np.random.uniform(-90, 90),
+                test_hash=test_hash,
             )
             assert isinstance(new_source.raw_photometry, UniqueList)
 
@@ -467,6 +469,7 @@ def test_add_source_and_data(data_dir):
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(foo="bar"),
+                test_hash=test_hash,
             )
 
             # check the times make sense
@@ -584,15 +587,15 @@ def test_add_source_and_data(data_dir):
         session.commit()
 
 
-def test_source_unique_constraint():
+def test_source_unique_constraint(test_hash):
 
     with SmartSession() as session:
         name1 = str(uuid.uuid4())
-        source1 = Source(name=name1, ra=0, dec=0)
+        source1 = Source(name=name1, ra=0, dec=0, test_hash=test_hash)
         assert source1.cfg_hash == ""  # the default has is an empty string
         session.add(source1)
 
-        source2 = Source(name=name1, ra=0, dec=0)
+        source2 = Source(name=name1, ra=0, dec=0, test_hash=test_hash)
         assert source1.cfg_hash == ""  # the default has is an empty string
         session.add(source2)
 
@@ -602,7 +605,7 @@ def test_source_unique_constraint():
         session.rollback()
 
         name2 = str(uuid.uuid4())
-        source2 = Source(name=name2, ra=0, dec=0)
+        source2 = Source(name=name2, ra=0, dec=0, test_hash=test_hash)
         session.add(source1)
         session.add(source2)
         session.commit()
@@ -642,7 +645,7 @@ def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
         session.rollback()
 
         # should work once the observatory name is different
-        raw_phot_no_exptime.observatory = str(uuid.uuid4())
+        raw_phot_no_exptime.observatory = random_string(8)
         session.add(raw_phot)
         session.add(raw_phot_no_exptime)
         session.commit()
@@ -839,7 +842,7 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
 
 @pytest.mark.flaky(max_runs=3)
-def test_reducer_with_outliers(test_project, new_source):
+def test_reducer_with_outliers(test_project, new_source, test_hash):
     num_points = 30
     outlier_indices = [5, 8, 12]
     flagged_indices = [5, 10, 15]
@@ -870,6 +873,7 @@ def test_reducer_with_outliers(test_project, new_source):
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(exptime="25.0"),
+                test_hash=test_hash,
             )
             new_data.source = new_source
             new_source.raw_photometry.append(new_data)
@@ -983,10 +987,11 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
-def test_filter_mapping(raw_phot):
+def test_filter_mapping(raw_phot, test_hash):
 
     # make a demo observatory with a string filtmap:
     obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+    obs.test_hash = test_hash
     obs.pars.save_reduced = False  # do not save automatically
 
     # check parameter is propagated correctly
@@ -1433,8 +1438,9 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
 
 
 @pytest.mark.flaky(max_runs=8)
-def test_analysis(analysis, new_source, raw_phot):
+def test_analysis(analysis, new_source, raw_phot, test_hash):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
+    obs.test_hash = test_hash
     analysis.pars.save_anything = False
     new_source.raw_photometry.append(raw_phot)
 
@@ -1576,9 +1582,10 @@ def test_analysis(analysis, new_source, raw_phot):
 
 
 @pytest.mark.flaky(max_runs=8)
-def test_quality_checks(analysis, new_source, raw_phot):
+def test_quality_checks(analysis, new_source, raw_phot, test_hash):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
+    obs.test_hash = test_hash
     new_source.raw_photometry.append(raw_phot)
     obs.reduce(new_source, "photometry")
 

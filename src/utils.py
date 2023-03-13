@@ -3,6 +3,8 @@ Various utility functions and classes
 that were not relevant to any specific module.
 """
 import sys
+import string
+import re
 import numpy as np
 from datetime import datetime, timezone
 import dateutil.parser
@@ -11,6 +13,9 @@ from inspect import signature
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
+
+
+LEGAL_NAME_RE = re.compile(r"^(?!\d)\w+$")
 
 
 class OnClose:
@@ -312,6 +317,38 @@ def add_alias(att):
         fset=lambda self, value: setattr(self, att, value),
         doc=f'Alias for "{att}"',
     )
+
+
+def legalize(name):
+    """
+    Turn a given name for a project/observatory into a legal name.
+    This trims whitespace, replaces inner spaces and dashes with underscores,
+    and pushes name up to upper case.
+    This allows some freedom when giving the name of the project/observatory
+    to various search methods.
+    All these names should be saved after being legalized, so they can be
+    searched against a legalized version of the user input.
+    """
+
+    name = name.strip()
+    name = name.replace(" ", "_").replace("-", "_")
+    name = name.upper()
+
+    if re.match(LEGAL_NAME_RE, name) is None:
+        raise ValueError(
+            f'Cannot legalize name "{name}". Must be alphanumeric without leading number. '
+        )
+
+    return name
+
+
+def random_string(length=16):
+    """
+    Generate a string of given length,
+    made of random letters.
+    """
+    letters = list(string.ascii_lowercase)
+    return "".join(np.random.choice(letters, length))
 
 
 class NamedList(list):

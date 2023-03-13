@@ -221,18 +221,19 @@ def clear_tables():
         pass
 
 
-def clear_test_objects():
+def clear_test_objects(specific_hash=None):
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve
     from src.detection import Detection
     from src.properties import Properties
 
-    with Session() as session:
-        session.execute(sa.delete(Properties).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Detection).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Lightcurve).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(RawPhotometry).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Source).where(Source.test_hash.is_not(None)))
+    for tab in [Properties, Detection, Lightcurve, RawPhotometry, Source]:
+        with SmartSession() as session:
+            if specific_hash is None:
+                session.execute(sa.delete(tab).where(tab.test_hash.is_not(None)))
+            else:
+                session.execute(sa.delete(tab).where(tab.test_hash == specific_hash))
+            session.commit()
 
 
 class RetrieverBase:
@@ -265,7 +266,6 @@ class RetrieverBase:
     test_hash = sa.Column(
         sa.String,
         nullable=True,
-        default=False,
         doc="Apply this to any test objects, "
         "either in the testing suite or when "
         "just debugging code interactively. "
