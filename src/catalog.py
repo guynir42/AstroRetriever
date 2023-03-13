@@ -354,8 +354,7 @@ class Catalog:
             if not os.path.isfile(self.get_fullpath()):
                 raise FileNotFoundError(f"File {self.get_fullpath()} not found.")
 
-        if self.pars.verbose:
-            print(f"Loading catalog from {self.get_fullpath()}")
+        self.pars.vprint(f"Loading catalog from {self.get_fullpath()}")
 
         # do the actual loading:
         type = self._guess_file_type()

@@ -564,7 +564,7 @@ class VirtualTESS(VirtualObservatory):
 
         if mag > 16:
             # TESS can't see stars fainter than 16 mag
-            self._print(f"Magnitude of {mag} is too faint for TESS.", self.pars.verbose)
+            self.pars.vprint(f"Magnitude of {mag} is too faint for TESS.")
             return pd.DataFrame(), {}
 
         cat_params = {
@@ -576,9 +576,7 @@ class VirtualTESS(VirtualObservatory):
             Catalogs.query_region, cat_params, self.pars.verbose
         )
         if len(catalog_data) == 0:
-            self._print(
-                "No TESS object found for given catalog row.", self.pars.verbose
-            )
+            self.pars.vprint("No TESS object found for given catalog row.")
             return pd.DataFrame(), {}
 
         candidate_idx = None
@@ -598,9 +596,8 @@ class VirtualTESS(VirtualObservatory):
                 break
 
         if candidate_idx is None:
-            self._print(
+            self.pars.vprint(
                 "No objects found within mag difference threshold for TIC query.",
-                self.pars.verbose,
             )
             return pd.DataFrame(), {}
 
@@ -639,12 +636,10 @@ class VirtualTESS(VirtualObservatory):
         )
 
         if len(data_query) == 0:
-            self._print(f"No data found for object {tess_name}.", self.pars.verbose)
+            self.pars.vprint(f"No data found for object {tess_name}.")
             return pd.DataFrame(), {}
         if ticid not in data_query["target_name"]:
-            self._print(
-                f"No timeseries data found for object {tess_name}.", self.pars.verbose
-            )
+            self.pars.vprint(f"No timeseries data found for object {tess_name}.")
             return pd.DataFrame(), {}
 
         lc_indices = []
@@ -655,15 +650,10 @@ class VirtualTESS(VirtualObservatory):
                 lc_indices.append(i)
 
         if not lc_indices:
-            self._print(
-                f"No lightcurve data found for object {tess_name}.", self.pars.verbose
-            )
+            self.pars.vprint(f"No lightcurve data found for object {tess_name}.")
             return pd.DataFrame(), {}
 
-        self._print(
-            f"Found {len(lc_indices)} light curve(s) for this source.",
-            self.pars.verbose,
-        )
+        self.pars.vprint(f"Found {len(lc_indices)} light curve(s) for this source.")
 
         base_url = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 
@@ -720,13 +710,13 @@ class VirtualTESS(VirtualObservatory):
         # maybe try using multiprocessing to terminate after 10 secs?
         for tries in range(10):
             try:
-                self._print(
-                    f"Making query request, " f"attempt {tries + 1}/10 ...", verbose
+                self.pars.vprint(
+                    f"Making query request, " f"attempt {tries + 1}/10 ..."
                 )
                 ret = query_fn(**params)
                 return ret
             except TimeoutError as e:
-                self._print(f"Request timed out.", verbose)
+                self.pars.vprint(f"Request timed out.")
 
         raise TimeoutError(f"Too many timeouts from query request.")
 
@@ -777,13 +767,6 @@ class VirtualTESS(VirtualObservatory):
                 continue
 
         raise TimeoutError(f"Too many timeouts from trying to open fits.")
-
-    def _print(self, msg, verbose):
-        """
-        Verbose print helper.
-        """
-        if verbose > 0:
-            print(msg)
 
 
 if __name__ == "__main__":

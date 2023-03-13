@@ -100,7 +100,7 @@ def help_with_class(cls, pars_cls=None, sub_classes=None):
         print("Parameters:")
         # initialize a parameters object and print it
         pars = pars_cls(cfg_file=False)  # do not read config file
-        pars.print()  # show a list of parameters
+        pars.show_pars()  # show a list of parameters
         print()  # newline
 
     if sub_classes is not None:
@@ -122,7 +122,7 @@ def help_with_object(obj, owner_pars):
 
     if hasattr(obj, "pars"):
         print("Parameters:")
-        obj.pars.print(owner_pars)
+        obj.pars.show_pars(owner_pars)
         print()  # newline
         this_pars = obj.pars
 

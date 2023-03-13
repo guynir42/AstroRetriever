@@ -143,7 +143,8 @@ class Parameters:
     - get_data_path() returns the path to the data folder.
     - get_class_instance() create a contained object using the keywords in this object.
     - add_defaults_to_dict() adds some attributes that should be shared to all pars.
-    - print() shows the parameters and descriptions.
+    - show_pars() shows the parameters and descriptions.
+    - vprint() prints the text given if the verbose level exceeds a threshold.
 
     Adding new parameters
     ---------------------
@@ -633,7 +634,7 @@ class Parameters:
             if k in self and k not in inputs:
                 inputs[k] = self[k]
 
-    def print(self, owner_pars=None):
+    def show_pars(self, owner_pars=None):
         """
         Print the parameters.
 
@@ -665,6 +666,24 @@ class Parameters:
             max_length = max(len(n) for n in names)
             for n, d in zip(names, desc):
                 print(f" {n:>{max_length}}{d}")
+
+    def vprint(self, text, threshold=1):
+        """
+        Print the text to standard output, but only
+        if the verbose level is above a given threshold.
+
+        Parameters
+        ----------
+        text: str
+            The text to print.
+        threshold: bool or int
+            The minimal level of the verbose parameter needed
+            to print out the text. If self.verbose is lower
+            than that, nothing will be printed.
+
+        """
+        if self.verbose > threshold:
+            print(text)
 
     def compare(self, other, hidden=False, ignore=None, verbose=False):
         """

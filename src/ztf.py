@@ -134,10 +134,9 @@ class VirtualZTF(VirtualObservatory):
 
         """
 
-        if verbose:
-            print(
-                f'Fetching data from ZTF observatory for source {cat_row["cat_index"]}'
-            )
+        self.pars.vprint(
+            f'Fetching data from ZTF observatory for source {cat_row["cat_index"]}'
+        )
 
         if (
             cat_row["dec"] < self.pars.minimal_declination

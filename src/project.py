@@ -944,7 +944,6 @@ class Project:
         if self.pars.version_control:
             self.output_folder += f"_{self.cfg_hash}"
 
-        print(f"DATA_ROOT= {src.database.DATA_ROOT}")
         self.output_folder = os.path.join(src.database.DATA_ROOT, self.output_folder)
 
         # create the output folder

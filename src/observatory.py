@@ -402,8 +402,7 @@ class VirtualObservatory:
             and wants to know when to stop.
 
         """
-        if self.pars.verbose > 3:
-            print("Downloading all sources...")
+        self.pars.vprint("Downloading all sources...", 3)
 
         cat_length = len(self.catalog)
         start = 0 if start is None else start
@@ -417,8 +416,7 @@ class VirtualObservatory:
 
             if i >= cat_length:
                 break
-            if self.pars.verbose > 5:
-                print(f"Source number {i} of {cat_length}")
+            self.pars.vprint(f"Source number {i} of {cat_length}", 5)
 
             num_threads = min(self.pars.num_threads_download, stop - i)
 
@@ -609,8 +607,7 @@ class VirtualObservatory:
             The source+data will be saved to disk/DB if save=True.
 
         """
-        if self.pars.verbose > 6:
-            print(f'fetch_source: {cat_row["name"]}')
+        self.pars.vprint(f'fetch_source: {cat_row["name"]}', 6)
 
         report_dict = {}  # record of where things were fetched from
         if source is not None:
@@ -636,15 +633,17 @@ class VirtualObservatory:
                         Source.cfg_hash == hash,
                     )
                 ).first()
-                if self.pars.verbose > 9:
-                    print(f"Is source found in database: {source is not None}")
+
+                self.pars.vprint(
+                    f"Is source found in database: {source is not None}", 9
+                )
+
                 if source is not None:
                     report_dict["source"] = "database"
 
             # if not, create one now
             if source is None:
-                if self.pars.verbose > 9:
-                    print(f'Creating new source: {cat_row["name"]}')
+                self.pars.vprint(f'Creating new source: {cat_row["name"]}', 9)
                 source = Source(**cat_row, project=self.project, cfg_hash=self.cfg_hash)
                 source.cat_row = cat_row  # save the raw catalog row as well
                 report_dict["source"] = "new"
@@ -663,8 +662,9 @@ class VirtualObservatory:
                     check_data=self.pars.check_data_exists,
                 )
                 raw_data = raw_data[0] if len(raw_data) > 0 else None
-                if self.pars.verbose > 9:
-                    print(f"Is raw {dt} found in database: {raw_data is not None}")
+                self.pars.vprint(
+                    f"Is raw {dt} found in database: {raw_data is not None}", 9
+                )
 
                 if raw_data is not None:
                     report_dict[f"raw_{dt}"] = "database"
@@ -728,8 +728,7 @@ class VirtualObservatory:
                         cat_row, **download_args
                     )
 
-                    if self.pars.verbose > 9:
-                        print(f"len(data)= {len(data)} | altdata= {altdata}")
+                    self.pars.vprint(f"len(data)= {len(data)} | altdata= {altdata}", 9)
 
                     # save the catalog info
                     # TODO: should we get the full catalog row?
@@ -794,8 +793,7 @@ class VirtualObservatory:
                 # if debugging or saving outside this function, set save=False
                 if save:
                     try:
-                        if self.pars.verbose > 9:
-                            print(f"Saving source {source.name}")
+                        self.pars.vprint(f"Saving source {source.name}", 9)
                         session.add(source)
                         session.commit()
                     except Exception:
@@ -935,16 +933,14 @@ class VirtualObservatory:
         source_ids = get_source_identifiers(self.project, column)
 
         dir = self.pars.get_data_path()
-        if self.pars.verbose:
-            print(f"Reading from data folder: {dir}")
+        self.pars.vprint(f"Reading from data folder: {dir}", 9)
 
         with SmartSession() as session:
             for i, filename in enumerate(glob.glob(os.path.join(dir, files_glob))):
                 if num_files and i >= num_files:
                     break
 
-                if self.pars.verbose:
-                    print(f"Reading filename: {filename}")
+                self.pars.vprint(f"Reading filename: {filename}")
                 # TODO: add if-else for different file types
                 with pd.HDFStore(filename) as store:
                     keys = store.keys()
@@ -961,8 +957,7 @@ class VirtualObservatory:
                             data, data_type, cat_id, source_ids, filename, k, session
                         )
 
-        if self.pars.verbose:
-            print("Done populating sources.")
+        self.pars.vprint("Done populating sources.")
 
     def _find_dataset_identifier(self, data, key):
         """
@@ -1356,7 +1351,6 @@ class VirtualDemoObs(VirtualObservatory):
         cat_row,
         wait_time=None,
         wait_time_poisson=None,
-        verbose=False,
         sim_args={},
     ):
         """
@@ -1398,8 +1392,7 @@ class VirtualDemoObs(VirtualObservatory):
             Additional data to be stored in the RawPhotometry object.
 
         """
-        if self.pars.verbose > 9:
-            print(f"download_from_observatory for {cat_row['name']}")
+        self.pars.vprint(f"download_from_observatory for {cat_row['name']}", 9)
 
         if wait_time is None:
             wait_time = self.pars.wait_time
@@ -1411,10 +1404,9 @@ class VirtualDemoObs(VirtualObservatory):
             sim_args_default.update(sim_args)
             sim_args = sim_args_default
 
-        if verbose:
-            print(
-                f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
-            )
+        self.pars.print(
+            f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
+        )
         total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
         data = self.simulate_lightcurve(cat_row, **sim_args)
         altdata = {
@@ -1424,11 +1416,10 @@ class VirtualDemoObs(VirtualObservatory):
 
         time.sleep(total_wait_time_seconds)
 
-        if verbose:
-            print(
-                f'Finished fetching data for source {cat_row["cat_index"]} '
-                f"after {total_wait_time_seconds} seconds"
-            )
+        self.pars.vprint(
+            f'Finished fetching data for source {cat_row["cat_index"]} '
+            f"after {total_wait_time_seconds} seconds"
+        )
 
         return data, altdata
 
