@@ -1,4 +1,5 @@
 import os
+import shutil
 import uuid
 import numpy as np
 import pandas as pd
@@ -7,7 +8,7 @@ import pytest
 
 import sqlalchemy as sa
 
-from src.database import SmartSession
+from src.database import SmartSession, safe_mkdir
 from src.catalog import Catalog
 from src.source import Source
 from src.project import Project
@@ -18,9 +19,20 @@ import src.database
 
 @pytest.fixture(scope="session", autouse=True)
 def data_dir():
-    basepath = os.path.abspath(os.path.dirname(__file__))
-    src.database.DATA_ROOT = basepath
-    return basepath
+
+    # make sure the DATA_ROOT points at the DATA_TEMP folder
+    old_data_root = src.database.DATA_ROOT
+    src.database.DATA_ROOT = src.database.DATA_TEMP
+
+    safe_mkdir(src.database.DATA_TEMP)
+
+    yield src.database.DATA_TEMP
+
+    # make sure to remove this folder and all temporary data at the end
+    shutil.rmtree(src.database.DATA_TEMP)
+
+    # reset the data root
+    src.database.DATA_ROOT = old_data_root
 
 
 @pytest.fixture(scope="session")

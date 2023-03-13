@@ -33,7 +33,7 @@ if DATA_ROOT is None:  # TODO: should also check if folder exists?
     DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
 
 # this is the root AstroRetriever folder
-CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir))
+CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
 
 DATA_TEMP = os.path.join(CODE_ROOT, "DATA_TEMP")
 

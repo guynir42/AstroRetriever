@@ -39,6 +39,7 @@ def test_load_save_parameters(data_dir):
 
     filename = "parameters_test.yaml"
     filename = os.path.abspath(os.path.join(data_dir, filename))
+    safe_mkdir(os.path.dirname(filename))
 
     # write an example parameters file
     with open(filename, "w") as file:
@@ -136,9 +137,11 @@ def test_project_user_inputs():
     assert proj.demo.pars.reduce_kwargs["reducer_key"] == "reducer_value2"
 
 
-def test_project_config_file(data_dir):
+def test_project_config_file():
     project_str1 = str(uuid.uuid4())
     project_str2 = str(uuid.uuid4())
+
+    configs_folder = os.path.join(src.database.CODE_ROOT, "configs")
 
     data = {
         "project": {  # project wide definitions
@@ -156,7 +159,7 @@ def test_project_config_file(data_dir):
             "ztf": {
                 "credentials": {
                     "filename": os.path.abspath(
-                        os.path.join(data_dir, "passwords_test.yaml")
+                        os.path.join(configs_folder, "passwords_test.yaml")
                     ),
                 },
                 "reduce_kwargs": {
@@ -171,13 +174,15 @@ def test_project_config_file(data_dir):
     }
 
     # make config and passwords file
-    configs_folder = os.path.abspath(os.path.join(data_dir, "../configs"))
-
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
     filename = os.path.join(configs_folder, "default_test.yaml")
+
+    # make the config file
     with open(filename, "w") as file:
         yaml.dump(data, file, sort_keys=False)
+
+    # make the passwords file
     with open(data["observatories"]["ztf"]["credentials"]["filename"], "w") as file:
         password = str(uuid.uuid4())
         yaml.dump(
