@@ -1404,7 +1404,7 @@ class VirtualDemoObs(VirtualObservatory):
             sim_args_default.update(sim_args)
             sim_args = sim_args_default
 
-        self.pars.print(
+        self.pars.vprint(
             f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
         )
         total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
