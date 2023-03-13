@@ -7,6 +7,8 @@ from sqlalchemy.ext.declarative import declared_attr
 from src.database import Base, engine
 from src.source import Source
 from src.dataset import RawPhotometry, Lightcurve
+from src.utils import legalize
+
 
 utcnow = func.timezone("UTC", func.current_timestamp())
 
@@ -233,6 +235,9 @@ class Detection(Base):
         """
         if key == "source":
             self.source_name = value.name
+        if key == "project" and value is None:
+            value = legalize(value)
+
         super().__setattr__(key, value)
 
 

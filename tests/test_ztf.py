@@ -76,7 +76,7 @@ def test_ztf_download(ztf_project, wd_cat):
             }
 
 
-def test_ztf_reduction(ztf_project, new_source):
+def test_ztf_reduction(ztf_project, new_source, example_data_dir):
     # make sure the project has ZTF observatory:
     assert len(ztf_project.observatories) == 1
     assert "ztf" in ztf_project.observatories
@@ -89,7 +89,7 @@ def test_ztf_reduction(ztf_project, new_source):
     new_source.project = "test_ZTF"
     raw_data = RawPhotometry(observatory="ztf")
     raw_data.filename = "ZTF_lightcurve.csv"
-    raw_data.folder = "DATA"
+    raw_data.folder = example_data_dir
     raw_data.load()
 
     # set the source mag to fit the data:

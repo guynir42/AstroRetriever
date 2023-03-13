@@ -22,16 +22,13 @@ from sqlalchemy.schema import UniqueConstraint
 
 from sqlalchemy.dialects.postgresql import JSONB
 
-from src.database import engine, Base, SmartSession
+import src.database
+from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
-
+from src.utils import random_string, legalize
 
 lock = threading.Lock()
 
-# root folder is either defined via an environment variable
-# or is the in the main repository, under subfolder "data"
-
-import src.database
 
 PHOT_ZP = 23.9
 LOG_BASE = np.log(10) / 2.5
@@ -364,7 +361,10 @@ class DatasetMixin:
             if not isinstance(value, Source):
                 raise ValueError(f"Source must be a Source object, not {type(value)}")
             self.source_name = value.name
-
+        if key == "project" and value is not None:
+            value = legalize(value)
+        if key == "observatory" and value is not None:
+            value = legalize(value)
         super().__setattr__(key, value)
 
     @orm.reconstructor
@@ -450,7 +450,7 @@ class DatasetMixin:
         if self.folder is not None:
             f = self.folder
         elif hasattr(self, "project") and self.project is not None:
-            f = self.project.upper()
+            f = self.project
         elif self.observatory is not None:
             f = self.observatory.upper()
         else:
@@ -586,11 +586,6 @@ class DatasetMixin:
     def load_netcdf(self):
         pass
 
-    @staticmethod
-    def random_string(length=16):
-        letters = list(string.ascii_lowercase)
-        return "".join(np.random.choice(letters, length))
-
     def invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
     ):
@@ -673,7 +668,7 @@ class DatasetMixin:
             if source_name is None:
                 source_name = self.source_name
             if source_name is None:
-                source_name = self.random_string()
+                source_name = random_string()
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
                 raise ValueError(
@@ -695,7 +690,7 @@ class DatasetMixin:
                         binning += f"{ra:02d}s"
 
             else:
-                binning = self.random_string(15)
+                binning = random_string(15)
 
             # add prefix using the type of data and observatory
             obs = self.observatory.upper() if self.observatory else "UNKNOWN_OBS"
@@ -750,7 +745,7 @@ class DatasetMixin:
             else:
                 raise TypeError("source name must be a string")
         else:
-            self.filekey = self.random_string(8)
+            self.filekey = random_string(8)
 
         # add the type of data
         self.filekey = f"{self.type}_{self.filekey}"
@@ -843,8 +838,7 @@ class DatasetMixin:
 
         # make a path if missing
         path = os.path.dirname(self.get_fullname())
-        if not os.path.isdir(path):
-            os.makedirs(path)
+        safe_mkdir(path)
 
         # specific format save functions
         if self.format == "hdf5":
@@ -1250,6 +1244,7 @@ class DatasetMixin:
         "public",
         "observatory",
         "cfg_hash",
+        "test_hash",
         "folder",
         "colmap",
         "time_info",
@@ -1756,7 +1751,7 @@ class Lightcurve(DatasetMixin, Base):
                         new_filt = kwargs["filtmap"]
                         if self.observatory:
                             new_filt = new_filt.replace(
-                                "<observatory>", self.observatory
+                                "<observatory>", self.observatory.lower()
                             )
                         return new_filt.replace("<filter>", filt)
 

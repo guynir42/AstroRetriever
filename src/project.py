@@ -15,7 +15,7 @@ import numpy as np
 import sqlalchemy as sa
 
 import src.database
-from src.database import Base, SmartSession
+from src.database import Base, SmartSession, safe_mkdir
 from src.parameters import Parameters, get_class_from_data_type
 from src.catalog import Catalog
 from src.observatory import ParsObservatory
@@ -24,7 +24,13 @@ from src.dataset import RawPhotometry, Lightcurve
 from src.analysis import Analysis
 from src.properties import Properties
 from src.detection import Detection
-from src.utils import help_with_class, help_with_object, NamedList, CircularBufferList
+from src.utils import (
+    help_with_class,
+    help_with_object,
+    NamedList,
+    CircularBufferList,
+    legalize,
+)
 
 
 class ParsProject(Parameters):
@@ -296,6 +302,7 @@ class Project:
         # filled by _setup_output_folder at runtime:
         self.output_folder = None
         self.cfg_hash = None  # hash of the config file (for version control)
+        self._test_hash = None
 
         # version control:
         if self.pars.version_control:
@@ -335,6 +342,18 @@ class Project:
 
         self.sources = None  # list to be filled by analysis
         self.num_sources_scanned = None
+
+    def __setattr__(self, key, value):
+        if key == "name" and value is not None:
+            value = legalize(value)
+        if key == "_test_hash":
+            if hasattr(self, "analysis"):
+                self.analysis._test_hash = value
+            if hasattr(self, "observatories"):
+                for obs in self.observatories:
+                    obs._test_hash = value
+
+        super().__setattr__(key, value)
 
     @staticmethod
     def _make_pars_object(kwargs):
@@ -434,9 +453,11 @@ class Project:
 
         # the catalog is just referenced from the project
         new_obs.catalog = self.catalog
+        new_obs._test_hash = self._test_hash
 
-        if not hasattr(self, name.lower()):
-            setattr(self, name.lower(), new_obs)
+        shorthand = legalize(name, to_lower=True)
+        if not hasattr(self, shorthand):
+            setattr(self, shorthand, new_obs)
 
         return new_obs
 
@@ -947,8 +968,7 @@ class Project:
         self.output_folder = os.path.join(src.database.DATA_ROOT, self.output_folder)
 
         # create the output folder
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
+        safe_mkdir(self.output_folder)
 
         self.analysis.output_folder = self.output_folder
 

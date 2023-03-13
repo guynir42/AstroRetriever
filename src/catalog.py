@@ -21,7 +21,7 @@ from astropy.io import fits
 
 from src.parameters import Parameters
 from src.source import Source
-from src.database import SmartSession
+from src.database import SmartSession, safe_mkdir
 from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
 
 
@@ -354,8 +354,7 @@ class Catalog:
             if not os.path.isfile(self.get_fullpath()):
                 raise FileNotFoundError(f"File {self.get_fullpath()} not found.")
 
-        if self.pars.verbose:
-            print(f"Loading catalog from {self.get_fullpath()}")
+        self.pars.vprint(f"Loading catalog from {self.get_fullpath()}")
 
         # do the actual loading:
         type = self._guess_file_type()
@@ -393,8 +392,7 @@ class Catalog:
         downloaded_filename = SANITIZE_RE.sub("", downloaded_filename)
 
         with requests.get(URL, stream=True) as r:
-            if not os.path.isdir(path):
-                os.makedirs(path)
+            safe_mkdir(path)
             with open(downloaded_filename, "wb") as f:
                 print(f"Downloading {URL} \n to {downloaded_filename}")
                 shutil.copyfileobj(r.raw, f)
@@ -854,8 +852,7 @@ class Catalog:
         filename += f".{fmt}"
 
         path = os.path.dirname(filename)
-        if not os.path.isdir(path):
-            os.makedirs(path)
+        safe_mkdir(path)
 
         if fmt == "csv":
             df.to_csv(filename, index=False, header=True)

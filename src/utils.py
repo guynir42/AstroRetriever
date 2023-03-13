@@ -3,6 +3,8 @@ Various utility functions and classes
 that were not relevant to any specific module.
 """
 import sys
+import string
+import re
 import numpy as np
 from datetime import datetime, timezone
 import dateutil.parser
@@ -11,6 +13,9 @@ from inspect import signature
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
+
+
+LEGAL_NAME_RE = re.compile(r"^(?!\d)\w+$")
 
 
 class OnClose:
@@ -100,7 +105,7 @@ def help_with_class(cls, pars_cls=None, sub_classes=None):
         print("Parameters:")
         # initialize a parameters object and print it
         pars = pars_cls(cfg_file=False)  # do not read config file
-        pars.print()  # show a list of parameters
+        pars.show_pars()  # show a list of parameters
         print()  # newline
 
     if sub_classes is not None:
@@ -122,7 +127,7 @@ def help_with_object(obj, owner_pars):
 
     if hasattr(obj, "pars"):
         print("Parameters:")
-        obj.pars.print(owner_pars)
+        obj.pars.show_pars(owner_pars)
         print()  # newline
         this_pars = obj.pars
 
@@ -314,6 +319,49 @@ def add_alias(att):
     )
 
 
+def legalize(name, to_lower=False):
+    """
+    Turn a given name for a project/observatory into a legal name.
+    This trims whitespace, replaces inner spaces and dashes with underscores,
+    and pushes name up to upper case.
+    This allows some freedom when giving the name of the project/observatory
+    to various search methods.
+    All these names should be saved after being legalized, so they can be
+    searched against a legalized version of the user input.
+
+    Parameters
+    ----------
+    name: str
+        The name to be legalized.
+    to_lower: bool
+        If True, will convert to lower case instead of upper case. Default is False.
+
+    """
+
+    name = name.strip()
+    name = name.replace(" ", "_").replace("-", "_")
+    if to_lower:
+        name = name.lower()
+    else:
+        name = name.upper()
+
+    if re.match(LEGAL_NAME_RE, name) is None:
+        raise ValueError(
+            f'Cannot legalize name "{name}". Must be alphanumeric without a leading number. '
+        )
+
+    return name
+
+
+def random_string(length=16):
+    """
+    Generate a string of given length,
+    made of random letters.
+    """
+    letters = list(string.ascii_lowercase)
+    return "".join(np.random.choice(letters, length))
+
+
 class NamedList(list):
     """
     A list of objects, each of which has
@@ -327,6 +375,7 @@ class NamedList(list):
         super().__init__()
 
     def convert_name(self, name):
+        # TODO: maybe replace with legalize?
         if self.ignorecase:
             return name.lower()
         else:
@@ -360,10 +409,12 @@ class UniqueList(list):
     object, using the list of comparison_attributes specified.
     """
 
-    def __init__(self, comparison_attributes=[]):
+    def __init__(self, comparison_attributes=[], ignorecase=False):
         self.comparison_attributes = comparison_attributes
         if len(comparison_attributes) == 0:
             self.comparison_attributes = ["name"]
+        self.ignorecase = ignorecase
+
         super().__init__()
 
     def __setitem__(self, key, value):
@@ -384,7 +435,9 @@ class UniqueList(list):
                 if i >= len(key):
                     break  # no more keys to check
                 shortlist = [
-                    item for item in shortlist if getattr(item, attr) == key[i]
+                    item
+                    for item in shortlist
+                    if self._compare(key[i], getattr(item, attr))
                 ]
 
             if i == len(key) - 1:
@@ -398,7 +451,7 @@ class UniqueList(list):
             shortlist = [
                 item
                 for item in self
-                if getattr(item, self.comparison_attributes[0]) == key
+                if self._compare(key, getattr(item, self.comparison_attributes[0]))
             ]
             if len(shortlist) == 0:
                 raise KeyError(f"Key {key} not found in list.")
@@ -441,10 +494,20 @@ class UniqueList(list):
         the check returns True. If any are different, returns False.
         """
         for att in self.comparison_attributes:
-            if getattr(value, att) != getattr(other, att):
+            if not self._compare(getattr(value, att), getattr(other, att)):
                 return False
 
         return True
+
+    def _compare(self, key1, key2):
+        """
+        Check if the two keys are the same.
+        If ignorecase is True, will convert to lower case.
+        """
+        if self.ignorecase and isinstance(key1, str) and isinstance(key2, str):
+            return key1.lower() == key2.lower()
+        else:
+            return key1 == key2
 
 
 class CircularBufferList(list):

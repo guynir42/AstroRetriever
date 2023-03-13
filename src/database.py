@@ -24,11 +24,18 @@ import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
-from sqlalchemy.orm.session import make_transient
 
+
+# this is the root AstroRetriever folder
+CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+
+# this is where the data lives
+# (could be changed for, e.g., new external drive)
 DATA_ROOT = os.getenv("RETRIEVER_DATA")
 if DATA_ROOT is None:  # TODO: should also check if folder exists?
-    DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+    DATA_ROOT = os.path.join(CODE_ROOT, "results")
+
+DATA_TEMP = os.path.join(CODE_ROOT, "DATA_TEMP")
 
 # set this to True if you want to disable all database interactions
 NO_DB_SESSION = False
@@ -156,13 +163,33 @@ def SmartSession(input_session=None):
         )
 
 
-class CloseSession:
-    def __init__(self, session=None):
-        self.session = session
+def safe_mkdir(path):
 
-    def __del__(self):
-        if self.session is not None:
-            self.session.close()
+    allowed_dirs = [
+        DATA_ROOT,
+        os.path.join(CODE_ROOT, "results"),
+        os.path.join(CODE_ROOT, "catalogs"),
+        DATA_TEMP,
+    ]
+
+    ok = False
+
+    for d in allowed_dirs:
+        parent = os.path.realpath(os.path.abspath(d))
+        child = os.path.realpath(os.path.abspath(path))
+
+        if os.path.commonpath([parent]) == os.path.commonpath([parent, child]):
+            ok = True
+            break
+
+    if not ok:
+        err_str = "Cannot make a new folder not inside the following folders: "
+        err_str += "\n".join(allowed_dirs)
+        err_str += f"\n\nAttempted folder: {path}"
+        raise ValueError(err_str)
+
+    # if the path is ok, also make the subfolders
+    os.makedirs(path, exist_ok=True)
 
 
 def clear_tables():
@@ -193,18 +220,19 @@ def clear_tables():
         pass
 
 
-def clear_test_objects():
+def clear_test_objects(specific_hash=None):
     from src.source import Source
     from src.dataset import RawPhotometry, Lightcurve
     from src.detection import Detection
     from src.properties import Properties
 
-    with Session() as session:
-        session.execute(sa.delete(Properties).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Detection).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Lightcurve).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(RawPhotometry).where(Source.test_hash.is_not(None)))
-        session.execute(sa.delete(Source).where(Source.test_hash.is_not(None)))
+    for tab in [Properties, Detection, Lightcurve, RawPhotometry, Source]:
+        with SmartSession() as session:
+            if specific_hash is None:
+                session.execute(sa.delete(tab).where(tab.test_hash.is_not(None)))
+            else:
+                session.execute(sa.delete(tab).where(tab.test_hash == specific_hash))
+            session.commit()
 
 
 class RetrieverBase:
@@ -237,7 +265,6 @@ class RetrieverBase:
     test_hash = sa.Column(
         sa.String,
         nullable=True,
-        default=False,
         doc="Apply this to any test objects, "
         "either in the testing suite or when "
         "just debugging code interactively. "

@@ -90,6 +90,7 @@ class Finder:
     def __init__(self, **kwargs):
         self.pars = self._make_pars_object(kwargs)
         self.checker = None
+        self._test_hash = None
 
     @staticmethod
     def _make_pars_object(kwargs):

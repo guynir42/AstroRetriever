@@ -208,12 +208,17 @@ class Analysis:
         self.detections = []  # a list of Detection objects
         # TODO: should we limit the length of this list in memory?
 
+        self._test_hash = None
+
     def __setattr__(self, key, value):
         if key == "output_folder":
             if hasattr(self, "quality_values"):
                 self.quality_values.output_folder = value
                 self.all_scores.output_folder = value
                 self.good_scores.output_folder = value
+        if key == "_test_hash":
+            if hasattr(self, "finder"):
+                self.finder._test_hash = value
 
         super().__setattr__(key, value)
 
@@ -270,7 +275,7 @@ class Analysis:
                         non_empty += 1
             if non_empty == 0:
                 source.properties = Properties(
-                    has_data=False, project=self.pars.project
+                    has_data=False, project=self.pars.project, test_hash=self._test_hash
                 )
                 continue  # skip sources without data
 
@@ -532,7 +537,9 @@ class Analysis:
         """
         # TODO: calculate best S/N and so on...
 
-        source.properties = Properties(has_data=True, project=self.pars.project)
+        source.properties = Properties(
+            has_data=True, project=self.pars.project, test_hash=self._test_hash
+        )
 
     def _inject_to_lightcurves(self, lightcurves, source, index=0):
         """

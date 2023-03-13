@@ -9,9 +9,10 @@ from pprint import pprint
 
 from src.project import Project
 from src.observatory import VirtualDemoObs
+from src.utils import legalize, random_string
 
 
-def test_project_histograms():
+def test_project_histograms(test_hash):
 
     filenames = []
 
@@ -24,6 +25,7 @@ def test_project_histograms():
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
 
         proj.demo.pars.check_data_exists = True
@@ -75,7 +77,7 @@ def test_project_histograms():
         assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
 
 
-def test_project_multiple_runs():
+def test_project_multiple_runs(test_hash):
     num_sources_with_data = 0
     filenames = []
 
@@ -88,6 +90,7 @@ def test_project_multiple_runs():
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
 
         assert isinstance(proj.demo, VirtualDemoObs)
@@ -170,18 +173,21 @@ def test_project_multiple_runs():
         assert not os.path.exists(os.path.join(proj.output_folder, "config.yaml"))
 
 
-def test_project_with_simulated_events():
+def test_project_with_simulated_events(test_hash):
     filenames = []
+    original_name = f" {random_string(8)}-{random_string(8)} 42"
+    legal_name = legalize(original_name)
 
     try:  # cleanup at end
         proj = Project(
-            name="default_test",
+            name=original_name,
             obs_names=["demo"],
             analysis_kwargs={"num_injections": 3},
             obs_kwargs={},
             catalog_kwargs={"default": "test"},
             verbose=0,
         )
+        proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
         obs = proj.observatories["demo"]
         assert isinstance(obs, VirtualDemoObs)
@@ -199,6 +205,11 @@ def test_project_with_simulated_events():
             assert s.raw_photometry[0].get_fullname() is not None
             assert os.path.exists(s.raw_photometry[0].get_fullname())
             filenames.append(s.raw_photometry[0].get_fullname())
+
+            # check project name is legal
+            assert s.project == legal_name
+            assert s.reduced_photometry[0].project == legal_name
+            assert s.properties.project == legal_name
 
     # TODO: add simulator, check detections are found
     #  check the detections are all labelled as simulated

@@ -17,7 +17,14 @@ from src.parameters import Parameters
 from src.project import Project
 from src.ztf import VirtualZTF
 
-from src.database import Session, SmartSession, NoOpSession, NullQueryResults
+import src.database
+from src.database import (
+    Session,
+    SmartSession,
+    NoOpSession,
+    NullQueryResults,
+    safe_mkdir,
+)
 from src.source import Source, DEFAULT_PROJECT
 from src.dataset import RawPhotometry, Lightcurve, PHOT_ZP, simplify, get_time_offset
 from src.observatory import VirtualDemoObs
@@ -25,13 +32,14 @@ from src.catalog import Catalog
 from src.detection import Detection
 from src.properties import Properties
 from src.histogram import Histogram
-from src.utils import NamedList, UniqueList, CircularBufferList
+from src.utils import NamedList, UniqueList, CircularBufferList, random_string, legalize
 
 
 def test_load_save_parameters(data_dir):
 
     filename = "parameters_test.yaml"
     filename = os.path.abspath(os.path.join(data_dir, filename))
+    safe_mkdir(os.path.dirname(filename))
 
     # write an example parameters file
     with open(filename, "w") as file:
@@ -86,7 +94,7 @@ def test_load_save_parameters(data_dir):
 def test_default_project():
     proj = Project("default_test", catalog_kwargs={"default": "test"})
     assert proj.pars.obs_names == ["DEMO"]
-    assert "demo" in [obs.name for obs in proj.observatories]
+    assert "DEMO" in [obs.name for obs in proj.observatories]
     assert isinstance(proj.observatories[0], VirtualDemoObs)
 
 
@@ -109,7 +117,7 @@ def test_project_user_inputs():
     assert proj.catalog.pars.filename == "test.csv"
 
     # check the observatory was loaded correctly
-    assert "ztf" in [obs.name for obs in proj.observatories]
+    assert "ZTF" in [obs.name for obs in proj.observatories]
     idx = None
     for i, item in enumerate(proj.observatories):
         if isinstance(item, VirtualZTF):
@@ -129,9 +137,11 @@ def test_project_user_inputs():
     assert proj.demo.pars.reduce_kwargs["reducer_key"] == "reducer_value2"
 
 
-def test_project_config_file(data_dir):
+def test_project_config_file():
     project_str1 = str(uuid.uuid4())
     project_str2 = str(uuid.uuid4())
+
+    configs_folder = os.path.join(src.database.CODE_ROOT, "configs")
 
     data = {
         "project": {  # project wide definitions
@@ -149,7 +159,7 @@ def test_project_config_file(data_dir):
             "ztf": {
                 "credentials": {
                     "filename": os.path.abspath(
-                        os.path.join(data_dir, "passwords_test.yaml")
+                        os.path.join(configs_folder, "passwords_test.yaml")
                     ),
                 },
                 "reduce_kwargs": {
@@ -164,13 +174,15 @@ def test_project_config_file(data_dir):
     }
 
     # make config and passwords file
-    configs_folder = os.path.abspath(os.path.join(data_dir, "../configs"))
-
     if not os.path.isdir(configs_folder):
         os.mkdir(configs_folder)
     filename = os.path.join(configs_folder, "default_test.yaml")
+
+    # make the config file
     with open(filename, "w") as file:
         yaml.dump(data, file, sort_keys=False)
+
+    # make the passwords file
     with open(data["observatories"]["ztf"]["credentials"]["filename"], "w") as file:
         password = str(uuid.uuid4())
         yaml.dump(
@@ -223,6 +235,43 @@ def test_project_config_file(data_dir):
     finally:
         os.remove(filename)
         os.remove(data["observatories"]["ztf"]["credentials"]["filename"])
+
+
+def test_legal_project_names(new_source, raw_phot):
+    original_name = random_string()
+    proj = Project(original_name, catalog_kwargs={"default": "test"})
+    assert proj.name != original_name
+    assert proj.name == original_name.upper()
+
+    original_name = f"  {random_string(8)}-{random_string(8)}12 "
+    proj = Project(original_name, catalog_kwargs={"default": "test"})
+    assert proj.name != original_name
+    assert proj.name == legalize(original_name)
+    assert proj.name.endswith("12")
+    assert not proj.name.startswith(" ")
+    assert "-" not in proj.name
+    assert "_" in proj.name
+
+    assert proj.pars.project == legalize(original_name)
+
+    new_source.project = original_name
+    assert new_source.project == legalize(original_name)
+
+    raw_phot.project = original_name
+    assert raw_phot.project == legalize(original_name)
+
+    prop = Properties(project=original_name)
+    assert prop.project == legalize(original_name)
+
+    original_name = f"1{random_string(8)}-{random_string(8)}12 "
+    with pytest.raises(ValueError) as e:
+        Project(original_name, catalog_kwargs={"default": "test"})
+    assert "Cannot legalize name" in str(e.value)
+
+    original_name = f"{random_string(8)}-{random_string(8)} $ "
+    with pytest.raises(ValueError) as e:
+        Project(original_name, catalog_kwargs={"default": "test"})
+    assert "Cannot legalize name" in str(e.value)
 
 
 def test_version_control(data_dir):
@@ -367,6 +416,7 @@ def test_catalog_nearest_search():
 
 
 def test_observatory_filename_conventions(test_project):
+
     obs = test_project.observatories["demo"]
 
     # load a big catalog with more than a million rows
@@ -414,7 +464,7 @@ def test_observatory_filename_conventions(test_project):
     assert data.filekey == f"{data.type}_{name}"
 
 
-def test_add_source_and_data(data_dir):
+def test_add_source_and_data(data_dir, test_hash):
     fullname = ""
     try:  # at end, delete the temp file
 
@@ -431,6 +481,7 @@ def test_add_source_and_data(data_dir):
                 name=source_name,
                 ra=np.random.uniform(0, 360),
                 dec=np.random.uniform(-90, 90),
+                test_hash=test_hash,
             )
             assert isinstance(new_source.raw_photometry, UniqueList)
 
@@ -455,6 +506,7 @@ def test_add_source_and_data(data_dir):
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(foo="bar"),
+                test_hash=test_hash,
             )
 
             # check the times make sense
@@ -572,15 +624,15 @@ def test_add_source_and_data(data_dir):
         session.commit()
 
 
-def test_source_unique_constraint():
+def test_source_unique_constraint(test_hash):
 
     with SmartSession() as session:
         name1 = str(uuid.uuid4())
-        source1 = Source(name=name1, ra=0, dec=0)
+        source1 = Source(name=name1, ra=0, dec=0, test_hash=test_hash)
         assert source1.cfg_hash == ""  # the default has is an empty string
         session.add(source1)
 
-        source2 = Source(name=name1, ra=0, dec=0)
+        source2 = Source(name=name1, ra=0, dec=0, test_hash=test_hash)
         assert source1.cfg_hash == ""  # the default has is an empty string
         session.add(source2)
 
@@ -590,7 +642,7 @@ def test_source_unique_constraint():
         session.rollback()
 
         name2 = str(uuid.uuid4())
-        source2 = Source(name=name2, ra=0, dec=0)
+        source2 = Source(name=name2, ra=0, dec=0, test_hash=test_hash)
         session.add(source1)
         session.add(source2)
         session.commit()
@@ -630,7 +682,7 @@ def test_raw_photometry_unique_constraint(raw_phot, raw_phot_no_exptime):
         session.rollback()
 
         # should work once the observatory name is different
-        raw_phot_no_exptime.observatory = str(uuid.uuid4())
+        raw_phot_no_exptime.observatory = random_string(8)
         session.add(raw_phot)
         session.add(raw_phot_no_exptime)
         session.commit()
@@ -695,7 +747,7 @@ def test_data_reduction(test_project, new_source, raw_phot_no_exptime):
         # reduce the data using the demo observatory
         assert len(test_project.observatories) == 1
         obs_key = list(test_project.observatories.keys())[0]
-        assert obs_key == "demo"
+        assert obs_key == "DEMO"
         obs = test_project.observatories[obs_key]
         assert isinstance(obs, VirtualDemoObs)
 
@@ -827,7 +879,7 @@ def test_reduced_data_file_keys(test_project, new_source, raw_phot):
 
 
 @pytest.mark.flaky(max_runs=3)
-def test_reducer_with_outliers(test_project, new_source):
+def test_reducer_with_outliers(test_project, new_source, test_hash):
     num_points = 30
     outlier_indices = [5, 8, 12]
     flagged_indices = [5, 10, 15]
@@ -858,6 +910,7 @@ def test_reducer_with_outliers(test_project, new_source):
                 observatory="demo",
                 folder="data_temp",
                 altdata=dict(exptime="25.0"),
+                test_hash=test_hash,
             )
             new_data.source = new_source
             new_source.raw_photometry.append(new_data)
@@ -971,10 +1024,11 @@ def test_reducer_magnitude_conversions(test_project, new_source):
     #  make sure the flux_min/max are correct
 
 
-def test_filter_mapping(raw_phot):
+def test_filter_mapping(raw_phot, test_hash):
 
     # make a demo observatory with a string filtmap:
     obs = VirtualDemoObs(project="test", filtmap="<observatory>-<filter>")
+    obs.test_hash = test_hash
     obs.pars.save_reduced = False  # do not save automatically
 
     # check parameter is propagated correctly
@@ -1420,9 +1474,10 @@ def test_finder(simple_finder, new_source, lightcurve_factory):
     assert np.isclose(Time(det[0].time_end).mjd, lc.data.mjd.iloc[14])
 
 
-# @pytest.mark.flaky(max_runs=8)
-def test_analysis(analysis, new_source, raw_phot):
+@pytest.mark.flaky(max_runs=8)
+def test_analysis(analysis, new_source, raw_phot, test_hash):
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
+    obs.test_hash = test_hash
     analysis.pars.save_anything = False
     new_source.raw_photometry.append(raw_phot)
 
@@ -1564,9 +1619,10 @@ def test_analysis(analysis, new_source, raw_phot):
 
 
 @pytest.mark.flaky(max_runs=8)
-def test_quality_checks(analysis, new_source, raw_phot):
+def test_quality_checks(analysis, new_source, raw_phot, test_hash):
     analysis.pars.save_anything = False
     obs = VirtualDemoObs(project=analysis.pars.project, save_reduced=False)
+    obs.test_hash = test_hash
     new_source.raw_photometry.append(raw_phot)
     obs.reduce(new_source, "photometry")
 
@@ -1826,6 +1882,20 @@ def test_unique_list():
     assert ul[["object one", "foo1"]] == [obj1]
     assert ul[["object two", "foo2"]] == [obj2]
 
+    # check that we can ignore case
+    obj4 = TempObject()
+    obj4.name = "Foo"
+
+    obj5 = TempObject()
+    obj5.name = "fOO"
+
+    ul = UniqueList(comparison_attributes=["name"], ignorecase=True)
+    ul.append(obj4)
+    ul.append(obj5)
+    assert len(ul) == 1
+    assert ul["foo"] == obj5
+    assert ul["FOO"] == obj5
+
 
 def test_circular_buffer_list():
     cbl = CircularBufferList(3)
@@ -1840,6 +1910,55 @@ def test_circular_buffer_list():
     cbl.extend([5, 6])
     assert cbl == [4, 5, 6]
     assert cbl.total == 6
+
+
+def test_safe_mkdir():
+    # can make a folder inside the data folder
+    new_path = os.path.join(src.database.DATA_ROOT, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # can make a folder under the code root's results folder
+    new_path = os.path.join(src.database.CODE_ROOT, "results", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # can make a folder under the temporary data folder
+    new_path = os.path.join(src.database.DATA_TEMP, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+
+    safe_mkdir(new_path)
+    assert os.path.isdir(new_path)
+
+    os.rmdir(new_path)
+
+    # this does not work anywhere else:
+    new_path = os.path.join(src.database.CODE_ROOT, uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+    # try a relative path
+    new_path = os.path.join(src.database.CODE_ROOT, "results", "..", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+    new_path = os.path.join(src.database.CODE_ROOT, "result", uuid.uuid4().hex)
+    assert not os.path.isdir(new_path)
+    with pytest.raises(ValueError) as e:
+        safe_mkdir(new_path)
+    assert "Cannot make a new folder not inside the following folders" in str(e.value)
 
 
 def test_smart_session(new_source):
