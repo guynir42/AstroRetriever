@@ -487,7 +487,7 @@ def test_observatory_filename_conventions(test_project):
     # test the filename conventions
     source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
-    data.invent_filename(ra_deg=cat_row["ra"])
+    data._invent_filename(ra_deg=cat_row["ra"])
 
     assert (
         data.filename
@@ -503,7 +503,7 @@ def test_observatory_filename_conventions(test_project):
     # test the filename conventions
     source = obs.fetch_source(cat_row, save=False)
     data = source.raw_photometry[0]
-    data.invent_filename(ra_deg=cat_row["ra"])
+    data._invent_filename(ra_deg=cat_row["ra"])
 
     assert (
         data.filename
@@ -511,7 +511,7 @@ def test_observatory_filename_conventions(test_project):
     )
 
     # test the key conventions:
-    data.invent_filekey(source_name=name)
+    data._invent_filekey(source_name=name)
     assert data.filekey == f"{data.type}_{name}"
 
 
