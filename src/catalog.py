@@ -22,7 +22,7 @@ from astropy.io import fits
 from src.parameters import Parameters
 from src.source import Source
 from src.database import SmartSession, safe_mkdir
-from src.utils import help_with_class, help_with_object, ra2sex, dec2sex
+from src.utils import help_with_class, help_with_object, ra2sex, dec2sex, legalize
 
 
 SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_\./\\\\]+|\.\.")
@@ -108,6 +108,21 @@ class ParsCatalog(Parameters):
             "default", None, (None, str), "Apply a default configuration"
         )
 
+        self.mag_to_column_map = self.add_par(
+            "mag_to_column_map",
+            None,
+            [None, dict],
+            "Map (dict) between the canonical name of the filter (using lower-case legalize) "
+            "and the name of the column in the catalog file. ",
+        )
+        self.mag_to_error_column_map = self.add_par(
+            "mag_to_error_column_map",
+            None,
+            [None, dict],
+            "Map (dict) between the canonical name of the filter (using lower-case legalize) "
+            "and the name of the column for the mag error in the catalog file. ",
+        )
+
         self.url = self.add_par(
             "url", None, (None, str), "URL to download the catalog file"
         )
@@ -164,6 +179,9 @@ class ParsCatalog(Parameters):
             self.pm_dec_column = None
             self.parallax_column = None
             self.filename = "test.csv"
+            self.mag_to_column_map = {"r": "mag"}
+            self.mag_to_error_column_map = {"r": "magerr"}
+
         elif default in ("wd", "wds", "white dwarf", "white_dwarfs"):
             self.catalog_name = "Gaia eDR3 white dwarfs"
             # file to save inside "catalogs" directory
@@ -190,6 +208,17 @@ class ParsCatalog(Parameters):
             self.pm_dec_column = "pmdec"
             self.parallax_column = "parallax"
             self.catalog_observation_year = 2016.5
+            self.mag_to_column_map = {
+                "gaia_g": "phot_g_mean_mag",
+                "gaia_bp": "phot_bp_mean_mag",
+                "gaia_rp": "phot_rp_mean_mag",
+            }
+
+            self.mag_to_error_column_map = {
+                "gaia_g": "phot_g_mean_mag_error",
+                "gaia_bp": "phot_bp_mean_mag_error",
+                "gaia_rp": "phot_rp_mean_mag_error",
+            }
 
     def __setattr__(self, key, value):
         if key in ("name", "cat_name"):
@@ -623,7 +652,9 @@ class Catalog:
 
         return new_data
 
-    def get_row(self, loc, index_type="number", output="raw", obstime=None):
+    def get_row(
+        self, loc, index_type="number", output="raw", obstime=None, preferred_mag=None
+    ):
         """
         Get a row from the catalog.
         Can get it by index or by name.
@@ -653,6 +684,12 @@ class Catalog:
             proper motion to the source based on the time
             the catalog was observed relative to the given time.
             Only works when output="dict".
+        preferred_mag: str
+            The preferred magnitude to use for the source.
+            This should name the canonical name of the filter,
+            e.g., Gaia_G (and not phot_g_mean_mag).
+            The input goes through legalize() so case is ignored
+            and spaces are replaced with underscores.
 
         Returns
         -------
@@ -677,11 +714,11 @@ class Catalog:
         if output == "raw":
             return row
         elif output == "dict":
-            return self.dict_from_row(row, obstime=obstime)
+            return self.dict_from_row(row, obstime=obstime, preferred_mag=preferred_mag)
         else:
             raise ValueError('Parameter "output" must be "raw" or "dict"')
 
-    def dict_from_row(self, row, obstime=None):
+    def dict_from_row(self, row, obstime=None, preferred_mag=None):
         """
         Extract the relevant information from a row of the catalog as a dictionary.
 
@@ -693,6 +730,12 @@ class Catalog:
             The time of the observation to use for calculating
             the apparent coordinates for the required survey
             using proper motion of the source.
+        preferred_mag: str
+            The preferred magnitude to use for the source.
+            This should name the canonical name of the filter,
+            e.g., Gaia_G (and not phot_g_mean_mag).
+            The input goes through legalize() so case is ignored
+            and spaces are replaced with underscores.
         """
         index = self.get_index_from_name(row[self.pars.name_column])
         name = self.name_to_string(row[self.pars.name_column])
@@ -700,11 +743,37 @@ class Catalog:
         ra, dec = self.convert_coords(row, obstime)
 
         mag = float(row[self.pars.mag_column])
+
         if "mag_err_column" in self.pars:
             mag_err = float(row[self.pars.mag_err_column])
         else:
             mag_err = None
         filter_name = self.pars.mag_filter_name
+
+        if preferred_mag is not None:
+            preferred_mag = legalize(preferred_mag, to_lower=True)
+            if self.pars.mag_to_column_map is not None:
+                if preferred_mag in self.pars.mag_to_column_map:
+                    mag = float(row[self.pars.mag_to_column_map[preferred_mag]])
+                    filter_name = preferred_mag
+                else:
+                    raise ValueError(
+                        f'Preferred magnitude "{preferred_mag}" not found in mag_to_column_map.'
+                    )
+            else:
+                raise ValueError(
+                    "preferred_mag is not None, but mag_to_column_map is None."
+                )
+            if self.pars.mag_to_error_column_map is not None:
+                if preferred_mag in self.pars.mag_to_error_column_map:
+                    mag_err = float(
+                        row[self.pars.mag_to_error_column_map[preferred_mag]]
+                    )
+                else:
+                    raise ValueError(
+                        f'Preferred magnitude "{preferred_mag}" not found in mag_to_error_column_map.'
+                    )
+
         if self.pars.alias_column:
             alias = self.name_to_string(row[self.pars.alias_column])
         else:
