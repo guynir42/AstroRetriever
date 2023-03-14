@@ -375,8 +375,59 @@ def test_catalog_wds():
     assert abs(cat.data["ra"].mean() - 229) < 1
     assert abs(cat.data["dec"].mean() + 20) < 1
 
-    # magnitude hovers around the limit of ~20
+    # mean magnitude hovers around the limit of ~20
     assert abs(cat.data[cat.pars.mag_column].mean() - 20) < 0.1
+
+
+def test_catalog_get_row():
+    cat = Catalog(default="wds")
+    cat.load()
+    assert len(cat.data) > 0
+
+    # get row based on index
+    row = cat.get_row(0)  # first row
+    assert isinstance(row, np.record)
+    assert row["ra"] == cat.data["ra"][0]
+    assert row["dec"] == cat.data["dec"][0]
+
+    row = cat.get_row(-1)  # last row
+    assert isinstance(row, np.record)
+    assert row["ra"] == cat.data["ra"][-1]
+    assert row["dec"] == cat.data["dec"][-1]
+
+    idx = 7  # random choice
+    row = cat.get_row(idx)
+    assert isinstance(row, np.record)
+    assert row["ra"] == cat.data["ra"][idx]
+    assert row["dec"] == cat.data["dec"][idx]
+
+    name = row[cat.pars.name_column]
+    assert name == cat.data[cat.pars.name_column][idx]
+
+    # get row based on name
+    row = cat.get_row(name, index_type="name")
+    assert isinstance(row, np.record)
+    assert row["ra"] == cat.data["ra"][idx]
+    assert row["dec"] == cat.data["dec"][idx]
+
+    # get the row in the form of a dict
+    row = cat.get_row(name, index_type="name", output="dict")
+    assert isinstance(row, dict)
+    assert row["name"] == str(name)
+    assert row["ra"] == cat.data["ra"][idx]
+    assert row["dec"] == cat.data["dec"][idx]
+
+    # try to apply proper motion
+    t = Time("2022-01-01")
+    row = cat.get_row(name, index_type="name", output="dict", obstime=t)
+    assert isinstance(row, dict)
+    assert row["ra"] != cat.data["ra"][idx]
+    assert abs(row["ra"] - cat.data["ra"][idx]) < 0.1
+
+    # choose a preferred mag that is not Gaia_G
+    row = cat.get_row(name, index_type="name", output="dict", preferred_mag="Gaia_BP")
+    assert isinstance(row, dict)
+    assert row["mag"] == cat.data["phot_bp_mean_mag"][idx]
 
 
 def test_catalog_nearest_search():

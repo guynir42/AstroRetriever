@@ -28,6 +28,8 @@ class ParsObsTESS(ParsObservatory):
 
         super().__init__("tess")
 
+        self.preferred_catalog_mag = "Gaia_RP"
+
         self.distance_thresh = self.add_par(
             "distance_thresh",
             10.0,
@@ -791,42 +793,43 @@ if __name__ == "__main__":
 
     src.database.DATA_ROOT = "data"
     tess = VirtualTESS(project="testing VirtualTESS", verbose=0)
-    white_dwarfs = Catalog(default="wd")
-    white_dwarfs.load()
 
-    print("finished loading catalog")
+    # white_dwarfs = Catalog(default="wd")
+    # white_dwarfs.load()
+    #
+    # print("finished loading catalog")
+    #
+    # count = 0
+    # for i in range(len(white_dwarfs.data)):
+    #     if i > 20:
+    #         break
+    #
+    #     cat_row = white_dwarfs.get_row(i, output="dict")
+    #     if cat_row["mag"] > 16:
+    #         continue
+    #
+    #     print(f"index={i}, cat_row: {cat_row}")
+    #     tess.fetch_source(cat_row, reduce=True, save=1)
 
-    count = 0
-    for i in range(len(white_dwarfs.data)):
-        if i > 20:
-            break
+    # result = tess.download_from_observatory(cat_row, verbose=1)
+    # if not result[1]:  # failed fetch returns empty dict
+    #     continue
+    #
+    #
+    #
+    # lc_data, altdata = result
+    # print(
+    #     f"TICID = {altdata['TICID']}, GAIA mag = {cat_row['mag']}, TESS mag = {altdata['TESSMAG']}"
+    # )
+    # count += 1
+    #
+    # ticid = altdata["TICID"]
+    # print("saving to disk...")
+    # lc_data.to_hdf(
+    #     "/Users/felix_3gpdyfd/astro_research/virtualobserver"
+    #     f"/notebook/tess_data_TEST/tess_lc_{ticid}.h5",
+    #     key="df",
+    # )
 
-        cat_row = white_dwarfs.get_row(i, output="dict")
-        if cat_row["mag"] > 16:
-            continue
-
-        print(f"index={i}, cat_row: {cat_row}")
-        tess.fetch_source(cat_row, reduce=True, save=1)
-
-        # result = tess.download_from_observatory(cat_row, verbose=1)
-        # if not result[1]:  # failed fetch returns empty dict
-        #     continue
-        #
-        #
-        #
-        # lc_data, altdata = result
-        # print(
-        #     f"TICID = {altdata['TICID']}, GAIA mag = {cat_row['mag']}, TESS mag = {altdata['TESSMAG']}"
-        # )
-        count += 1
-        #
-        # ticid = altdata["TICID"]
-        # print("saving to disk...")
-        # lc_data.to_hdf(
-        #     "/Users/felix_3gpdyfd/astro_research/virtualobserver"
-        #     f"/notebook/tess_data_TEST/tess_lc_{ticid}.h5",
-        #     key="df",
-        # )
-
-    print(f"\nFinal Count: {count}")
-    print(tess.latest_source.raw_photometry[0].loaded_status)
+    # print(f"\nFinal Count: {count}")
+    # print(tess.latest_source.raw_photometry[0].loaded_status)
