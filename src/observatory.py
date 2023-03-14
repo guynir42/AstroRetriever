@@ -79,6 +79,14 @@ class ParsObservatory(Parameters):
             "proper motion. Should be given as julian year format, e.g., 2018.3",
         )
 
+        self.preferred_catalog_mag = self.add_par(
+            "preferred_catalog_mag",
+            None,
+            [None, str],
+            "Which magnitude to use when querying the catalog. "
+            "If None (default) will just use whatever is the catalog default. ",
+        )
+
         self.dataset_attribute = self.add_par(
             "dataset_attribute",
             "source_name",
@@ -348,6 +356,28 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
+    def _get_catalog_row(self, index):
+        """
+        Get the catalog row as a dictionary,
+        for the index (serial number) inside
+        the catalog.
+        The output is updated for proper motion,
+        if self.pars.observation time is given.
+        If using self.pars.preferred_catalog_mag,
+        can choose a magnitude column different
+        than the default one (e.g., choose Gaia_RP
+        instead of Gaia_G).
+        This data is used to download raw data
+        from the observatory.
+        """
+        return self.catalog.get_row(
+            loc=index,
+            index_type="number",
+            output="dict",
+            obstime=self.pars.observation_time,
+            preferred_mag=self.pars.preferred_catalog_mag,
+        )
+
     def fetch_all_sources(
         self,
         start=0,
@@ -430,7 +460,7 @@ class VirtualObservatory:
 
             # TODO: add report return parameters and append them to a circular buffer
             if num_threads <= 1:  # single threaded execution
-                cat_row = self.catalog.get_row(i, "number", "dict")
+                cat_row = self._get_catalog_row(i)
                 s = self.fetch_source(
                     cat_row=cat_row,
                     save=save,
@@ -518,11 +548,8 @@ class VirtualObservatory:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = []
-            obstime = self.pars.observation_time
             for i in range(start, stop):
-                cat_row = self.catalog.get_row(
-                    loc=i, index_type="number", output="dict", obstime=obstime
-                )
+                cat_row = self._get_catalog_row(i)
                 futures.append(
                     executor.submit(
                         self.fetch_source,
