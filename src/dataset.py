@@ -442,7 +442,7 @@ class DatasetMixin:
         if self.data is None:
             return 0
         else:
-            return self.data.memory_usage(index=True).sum()
+            return int(self.data.memory_usage(index=True).sum())
 
     def get_path(self):
         """
