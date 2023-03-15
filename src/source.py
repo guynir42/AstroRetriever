@@ -256,7 +256,7 @@ class Source(Base, conesearch_alchemy.Point):
         return string
 
     @orm.reconstructor
-    def init_on_load(self):
+    def _init_on_load(self):
         """
         This is called when the object
         is loaded from the database.

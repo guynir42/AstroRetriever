@@ -1,6 +1,5 @@
 import os
 import re
-import string
 import warnings
 from tables import NaturalNameWarning
 from copy import deepcopy
@@ -314,7 +313,7 @@ class DatasetMixin:
             data = kwargs.pop("data")
 
             # first figure out the data columns and time conversions
-            self.update_colmap(data)
+            self._update_colmap(data)
             self.data = data  # also calculate times and other stats
 
         # override any existing attributes
@@ -340,7 +339,7 @@ class DatasetMixin:
 
         # guess some attributes that were not given
         if self.format is None:
-            self.format = self.guess_format()
+            self.format = self._guess_format()
 
         self.loaded_status = "new"
         # TODO: figure out the series identifier and object
@@ -368,7 +367,7 @@ class DatasetMixin:
         super().__setattr__(key, value)
 
     @orm.reconstructor
-    def init_on_load(self):
+    def _init_on_load(self):
         """
         This is called when the object
         is loaded from the database.
@@ -380,7 +379,7 @@ class DatasetMixin:
         self.source = None
         self.loaded_status = "database"
 
-    def guess_format(self):
+    def _guess_format(self):
         """
         Guess the format of the data file
         using its extension.
@@ -414,7 +413,7 @@ class DatasetMixin:
         else:
             return None
 
-    def guess_extension(self):
+    def _guess_extension(self):
         """
         Guess the extension of the data file
         based on the format.
@@ -436,10 +435,14 @@ class DatasetMixin:
     def calc_size(self):
         """
         Calculate the size of the data file.
+        This does not include the metadata,
+        only the dataframe itself.
         """
-        # TODO: implement this
         # ref: https://stackoverflow.com/questions/18089667/how-to-estimate-how-much-memory-a-pandas-dataframe-will-need
-        return 0
+        if self.data is None:
+            return 0
+        else:
+            return int(self.data.memory_usage(index=True).sum())
 
     def get_path(self):
         """
@@ -530,26 +533,26 @@ class DatasetMixin:
         if not self.check_file_exists():
             raise FileNotFoundError(f"File {self.get_fullname()} does not exist")
         if self.format is None:
-            self.format = self.guess_format()
+            self.format = self._guess_format()
 
         if self.format == "hdf5":
-            data, altdata = self.load_hdf5()
+            data, altdata = self._load_hdf5()
         elif self.format == "fits":
-            data, altdata = self.load_fits()
+            data, altdata = self._load_fits()
         elif self.format == "csv":
-            data, altdata = self.load_csv()
+            data, altdata = self._load_csv()
         elif self.format == "json":
-            data, altdata = self.load_json()
+            data, altdata = self._load_json()
         elif self.format == "netcdf":
-            data, altdata = self.load_netcdf()
+            data, altdata = self._load_netcdf()
         else:
             raise ValueError(f"Unknown format {self.format}")
 
-        self.update_colmap(data)
+        self._update_colmap(data)
         self.data = data
         self.altdata = altdata
 
-    def load_hdf5(self):
+    def _load_hdf5(self):
         """
         Load the data from a HDF5 file.
         """
@@ -572,21 +575,21 @@ class DatasetMixin:
 
             return data, altdata
 
-    def load_fits(self):
+    def _load_fits(self):
         pass
 
-    def load_csv(self):
+    def _load_csv(self):
         data = pd.read_csv(self.get_fullname())
 
         return data, {}
 
-    def load_json(self):
+    def _load_json(self):
         pass
 
-    def load_netcdf(self):
+    def _load_netcdf(self):
         pass
 
-    def invent_filename(
+    def _invent_filename(
         self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
     ):
 
@@ -705,9 +708,9 @@ class DatasetMixin:
                 self.filename += "_reduced"
 
         # add extension
-        self.filename += self.guess_extension()
+        self.filename += self._guess_extension()
 
-    def invent_filekey(self, source_name=None, prefix=None, suffix=None):
+    def _invent_filekey(self, source_name=None, prefix=None, suffix=None):
         """
         Make an in-file key string to save the data into.
         This is used for e.g., HDF5 group names for each
@@ -820,7 +823,7 @@ class DatasetMixin:
 
         # if no filename/key are given, make them up
         if self.filename is None:
-            self.invent_filename(
+            self._invent_filename(
                 source_name=source_name,
                 ra_deg=ra_deg,
                 ra_minute=ra_minute,
@@ -829,7 +832,7 @@ class DatasetMixin:
 
         # for any of the formats where we need an in-file key:
         if self.filekey is None and self.format in ("hdf5",):
-            self.invent_filekey(
+            self._invent_filekey(
                 source_name=source_name, prefix=key_prefix, suffix=key_suffix
             )
 
@@ -842,19 +845,19 @@ class DatasetMixin:
 
         # specific format save functions
         if self.format == "hdf5":
-            self.save_hdf5(overwrite)
+            self._save_hdf5(overwrite)
         elif self.format == "fits":
-            self.save_fits(overwrite)
+            self._save_fits(overwrite)
         elif self.format == "csv":
-            self.save_csv(overwrite)
+            self._save_csv(overwrite)
         elif self.format == "json":
-            self.save_json(overwrite)
+            self._save_json(overwrite)
         elif self.format == "netcdf":
-            self.save_netcdf(overwrite)
+            self._save_netcdf(overwrite)
         else:
             raise ValueError(f"Unknown format {self.format}")
 
-    def save_hdf5(self, overwrite):
+    def _save_hdf5(self, overwrite):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", NaturalNameWarning)
             if isinstance(self._data, xr.Dataset):
@@ -886,16 +889,16 @@ class DatasetMixin:
             else:
                 raise ValueError(f"Unknown data type {type(self._data)}")
 
-    def save_fits(self, overwrite):
+    def _save_fits(self, overwrite):
         pass
 
-    def save_csv(self, overwrite):
+    def _save_csv(self, overwrite):
         pass
 
-    def save_json(self, overwrite):
+    def _save_json(self, overwrite):
         pass
 
-    def save_netcdf(self, overwrite):
+    def _save_netcdf(self, overwrite):
         pass
 
     def delete_data_from_disk(self, remove_folders=True):
@@ -933,7 +936,7 @@ class DatasetMixin:
                     if len(os.listdir(path)) == 0:
                         os.rmdir(path)
 
-    def update_colmap(self, data):
+    def _update_colmap(self, data):
         """
         Calculate the column map for the data.
         Locates column names in the data that
@@ -1034,7 +1037,7 @@ class DatasetMixin:
                 self.colmap["flag"] = c
                 break
 
-    def calc_times(self):
+    def _calc_times(self):
         """
         Calculate datetimes and MJDs for each epoch,
         based on the conversions found in self.time_info.
@@ -1135,12 +1138,12 @@ class DatasetMixin:
         ax.plot(t[bad_idx], m[bad_idx], "xk", **kwargs, zorder=2)
 
         # add labels like "MJD" and "mag" to axes
-        self.axis_labels(ax, ttype=ttype, ftype=ftype)  # TODO: add font_size
+        self._axis_labels(ax, ttype=ttype, ftype=ftype)  # TODO: add font_size
 
         return ax
 
     @staticmethod
-    def axis_labels(ax, ttype, ftype, font_size=12):
+    def _axis_labels(ax, ttype, ftype, font_size=12):
         if ttype == "times":
             # ax.set_xlabel("Time", fontsize=font_size) # don't need label on dates?
             formatter = mdates.DateFormatter("%Y-%m-%d")
@@ -1197,15 +1200,15 @@ class DatasetMixin:
         self.shape = self._data.shape
         self.number = len(self._data)  # for imaging data this would be different?
         self.size = self.calc_size()
-        self.format = self.guess_format()
-        self.calc_times()
+        self.format = self._guess_format()
+        self._calc_times()
 
     @property
     def times(self):
         if self._data is None and self.autoload and self.filename is not None:
             self.load()
         if self._times is None:
-            self.calc_times()
+            self._calc_times()
         return self._times
 
     @times.setter
@@ -1217,7 +1220,7 @@ class DatasetMixin:
         if self._data is None and self.autoload and self.filename is not None:
             self.load()
         if self._mjds is None:
-            self.calc_times()
+            self._calc_times()
         return self._mjds
 
     @mjds.setter
@@ -1768,25 +1771,25 @@ class Lightcurve(DatasetMixin, Base):
             self.data.reset_index(drop=True, inplace=True)
 
         # get flux from mag or vice-versa
-        self.calc_mag_flux()
+        self._calc_mag_flux()
 
         # make sure keys in altdata are standardized
-        self.translate_altdata()
+        self._translate_altdata()
 
         # find exposure time, frame rate, uniformity
-        self.find_cadence()
+        self._find_cadence()
 
         # get averages and standard deviations
-        self.calc_stats()
+        self._calc_stats()
 
         # get the signal-to-noise ratio
-        self.calc_snr()
+        self._calc_snr()
 
         # get the peak flux and S/N
-        self.calc_best()
+        self._calc_best()
 
         # remove columns we don't use
-        self.drop_and_rename_columns()
+        self._drop_and_rename_columns()
 
     def __repr__(self):
         string = []
@@ -1823,8 +1826,8 @@ class Lightcurve(DatasetMixin, Base):
         return "photometry"
 
     # overload the DatasetMixin method
-    def invent_filekey(self, source_name=None, prefix=None, suffix=None):
-        DatasetMixin.invent_filekey(self, source_name, prefix, suffix)
+    def _invent_filekey(self, source_name=None, prefix=None, suffix=None):
+        DatasetMixin._invent_filekey(self, source_name, prefix, suffix)
 
         number = self.series_number if self.series_number else 0
         total = self.series_total if self.series_total else 0
@@ -1837,7 +1840,7 @@ class Lightcurve(DatasetMixin, Base):
         if self.is_simulated:
             self.filekey += f"_simulated_{self.simulation_number:02d}_of_{self.simulation_total:02d}"
 
-    def translate_altdata(self):
+    def _translate_altdata(self):
         """
         Change the column names given in altdata
         to conform to internal naming convention.
@@ -1853,7 +1856,7 @@ class Lightcurve(DatasetMixin, Base):
                 self.altdata["exptime"] = value
                 del self.altdata[key]
 
-    def calc_mag_flux(self):
+    def _calc_mag_flux(self):
         """
         Calculate the flux from the magnitude,
         or the magnitude from the flux
@@ -1898,7 +1901,7 @@ class Lightcurve(DatasetMixin, Base):
 
         # TODO: should there be another option for when both are given?
 
-    def find_cadence(self):
+    def _find_cadence(self):
         """
         Find the exposure time and frame rate of the data.
         """
@@ -1925,7 +1928,7 @@ class Lightcurve(DatasetMixin, Base):
             dt_amp *= self.frame_rate  # divide by median(dt)
             self.is_uniformly_sampled = dt_amp < UNIFORMITY_THRESHOLD
 
-    def calc_stats(self):
+    def _calc_stats(self):
         """
         Calculate summary statistics on this lightcurve.
         """
@@ -1939,14 +1942,14 @@ class Lightcurve(DatasetMixin, Base):
         self.flux_rms = float(np.nanstd(fluxes)) if len(fluxes) else None
 
         # robust statistics
-        self.flux_mean_robust, self.flux_rms_robust = self.sigma_clipping(fluxes)
+        self.flux_mean_robust, self.flux_rms_robust = self._sigma_clipping(fluxes)
 
         # only count the good points
         self.num_good = len(fluxes)
         # additional statistics like first/last detected?
 
     @staticmethod
-    def sigma_clipping(input_values, iterations=3, sigma=3.0):
+    def _sigma_clipping(input_values, iterations=3, sigma=3.0):
         """
         Calculate a robust estimate of the mean and scatter
         of the values given to it, using a few iterations
@@ -2007,7 +2010,7 @@ class Lightcurve(DatasetMixin, Base):
 
         return float(mean_value), float(scatter)
 
-    def calc_snr(self):
+    def _calc_snr(self):
         fluxes = self.data[self.colmap["flux"]]
         fluxerrs = self.data[self.colmap["fluxerr"]]
         if self.flux_rms_robust:
@@ -2029,7 +2032,7 @@ class Lightcurve(DatasetMixin, Base):
         self.colmap["dsnr"] = "dsnr"
         self.colmap["dmag"] = "dmag"
 
-    def calc_best(self):
+    def _calc_best(self):
         """
         Find some minimal/maximal S/N values
         and other similar properties on the data.
@@ -2060,7 +2063,7 @@ class Lightcurve(DatasetMixin, Base):
             self.dmag_brightest = float(np.nanmax(dmag))
             self.dmag_faintest = float(np.nanmin(dmag))
 
-    def drop_and_rename_columns(self):
+    def _drop_and_rename_columns(self):
         """
         Remove from the underying data the
         unused columns (those not defined in
@@ -2103,7 +2106,7 @@ class Lightcurve(DatasetMixin, Base):
                 pass
         # TODO: we need to finish this!
 
-    def get_filter_plot_color(self):
+    def _get_filter_plot_color(self):
         """
         Get a color for plotting the lightcurve.
         """
@@ -2168,7 +2171,7 @@ class Lightcurve(DatasetMixin, Base):
             return ax  # short circuit if no data
 
         # color options, etc
-        options = dict(fmt="o", color=self.get_filter_plot_color(), zorder=1)
+        options = dict(fmt="o", color=self._get_filter_plot_color(), zorder=1)
         options.update(dict(label=f"{self.filter} {ftype} values"))
         options.update(kwargs)
 
@@ -2179,7 +2182,7 @@ class Lightcurve(DatasetMixin, Base):
             ax.plot(t, m, **options)
 
         # add labels like "MJD" and "mag" to axes
-        self.axis_labels(ax, ttype=ttype, ftype=ftype, font_size=font_size)
+        self._axis_labels(ax, ttype=ttype, ftype=ftype, font_size=font_size)
 
         # add area scatter
         if ftype == "mag":
@@ -2192,7 +2195,7 @@ class Lightcurve(DatasetMixin, Base):
             t,
             mean_value - 3 * scatter,
             mean_value + 3 * scatter,
-            color=self.get_filter_plot_color(),
+            color=self._get_filter_plot_color(),
             zorder=0,
             alpha=0.2,
             label=f"{self.filter} 3-\u03C3 scatter",
@@ -2232,7 +2235,7 @@ class Lightcurve(DatasetMixin, Base):
 
         return ax
 
-    def get_sncosmo_filter(self, filter):
+    def _get_sncosmo_filter(self, filter):
         if self.observatory.lower() == "ztf":
             d = dict(zg="ztfg", zr="ztfi", zi="ztfz")
         elif self.observatory.lower() == "tess":
@@ -2271,7 +2274,7 @@ class Lightcurve(DatasetMixin, Base):
 
         metadata = dict(
             exp_time=self.exp_time,
-            filter=self.get_sncosmo_filter(self.filter),
+            filter=self._get_sncosmo_filter(self.filter),
             ra=self.altdata["ra"],
             dec=self.altdata["dec"],
             series_name=self.altdata["series_name"],
