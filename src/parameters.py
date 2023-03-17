@@ -2,8 +2,8 @@ import os
 import copy
 import yaml
 
-from src.database import DATA_ROOT
-from src.utils import legalize
+from src.database import DATA_ROOT, CODE_ROOT
+from src.utils import legalize, find_file_ignore_case
 
 # A cached dictionary of dictionaries
 # loaded form YAML files.
@@ -387,8 +387,10 @@ class Parameters:
         config = self.load(cfg_file, cfg_key, raise_if_missing=explicit)
         self._cfg_key = cfg_key
         # apply the input kwargs (override config file)
-        if "demo_boolean" in config:
-            print(f'config["demo_boolean"] = {config["demo_boolean"]}')
+
+        if config is None:
+            config = {}
+
         config.update(inputs)
 
         # if there's a way to set up a default configuration
@@ -428,19 +430,20 @@ class Parameters:
         if filename is None or filename is False:
             return {}  # asked explicitly to not load anything
         try:
+            # file has extension
+            folders = [".", os.path.join(CODE_ROOT, "configs")]
+            if os.path.splitext(filename)[1] != "":
+                filepath = find_file_ignore_case(filename, folders)
 
-            if os.path.isabs(filename):
-                filepath = filename
+            # try different extensions
             else:
-                basepath = os.path.dirname(__file__)
-                filepath = os.path.abspath(
-                    os.path.join(basepath, "../configs", filename)
-                )
+                for ext in ["", ".yaml", ".yml", ".cfg"]:
+                    filepath = find_file_ignore_case(filename + ext, folders)
+                    if filepath is not None:
+                        break
+            if filepath is None:
+                return {}
 
-            if not filepath.lower().endswith(("yml", "yaml", "cfg")):
-                filepath += ".yaml"
-
-            # print(f'Loading config from "{filepath}" with key "{key}"')
             config = self._get_file_from_disk(filepath)
 
             if key is not None:

@@ -38,6 +38,13 @@ class ParsObsTESS(ParsObservatory):
             "close stars while querying TIC.",
         )
 
+        self.mag_limit = self.add_par(
+            "mag_limit",
+            18.0,
+            float,
+            "Magnitude limit for querying TIC.",
+        )
+
         self.magdiff_thresh = self.add_par(
             "magdiff_thresh",
             0.75,
@@ -559,8 +566,8 @@ class VirtualTESS(VirtualObservatory):
         ra = cat_row["ra"]
         mag = cat_row["mag"]
 
-        if mag > 16:
-            # TESS can't see stars fainter than 16 mag
+        # TESS can't see stars fainter than this
+        if mag > self.pars.mag_limit:
             self.pars.vprint(f"Magnitude of {mag} is too faint for TESS.")
             return pd.DataFrame(), {}
 

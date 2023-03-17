@@ -98,6 +98,10 @@ class ParsProject(Parameters):
 
         self.load_then_update(kwargs)
 
+    @property
+    def name(self):
+        return self.project
+
     def _verify_observatory_names(self, names):
         """
         Check that the observatory names are a unique set of strings.
@@ -134,6 +138,9 @@ class ParsProject(Parameters):
         if key == "obs_names":
             self._verify_observatory_names(value)
             return
+
+        if key == "name":
+            key = "project"
 
         super().__setattr__(key, value)
 
@@ -705,7 +712,7 @@ class Project:
         self.sources = CircularBufferList(self.pars.source_buffer_size)
         self.num_sources_scanned = 0
 
-    def run(self, **kwargs):
+    def run(self, start=0, finish=None):
         """
         Run the full pipeline on each source in the catalog.
 
@@ -740,13 +747,20 @@ class Project:
 
         Parameters
         ----------
-        kwargs: additional arguments to use such as...
+        start: int
+            Index of the first source to analyze.
+        finish: int
+            Index of the last source, which is not included.
+            So start=0, finish=10 will analyze sources 0-9.
 
         """
 
         self._save_config()
 
         source_names = self.catalog.names
+        if finish is None:
+            finish = len(source_names)
+
         types = self.pars.data_types
         if isinstance(types, str):
             types = [types]
@@ -758,7 +772,9 @@ class Project:
 
         with SmartSession() as session:
             # TODO: add batching of sources
-            for name in source_names:
+            for i, name in enumerate(source_names):
+                if i < start or i >= finish:
+                    continue
                 hash = self.cfg_hash if self.cfg_hash else ""
                 source = session.scalars(
                     sa.select(Source).where(
@@ -995,69 +1011,5 @@ class Project:
 
 
 if __name__ == "__main__":
-
-    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
-    # import warnings
-    # warnings.filterwarnings('error')
-
-    # proj = Project(
-    #     name="default_test",  # must give a name to each project
-    #     description="my project description",  # optional parameter example
-    #     version_control=False,  # whether to use version control on products
-    #     obs_names=["ZTF"],  # must give at least one observatory name
-    #     # parameters to pass to the Analysis object:
-    #     analysis_kwargs={
-    #         "num_injections": 3,
-    #         "finder_kwargs": {  # pass through Analysis into Finder
-    #             "snr_threshold": 7.5,
-    #         },
-    #         "finder_module": "src.finder",  # can choose different module
-    #         "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
-    #     },
-    #     analysis_module="src.analysis",  # replace this with your code path
-    #     analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
-    #     catalog_kwargs={"default": "WD"},  # load the default WD catalog
-    #     # parameters to be passed into each observatory class
-    #     obs_kwargs={
-    #         "reducer": {
-    #             "radius": 3,
-    #             "gap": 40,
-    #         },
-    #         "ZTF": {  # specific instructions for the ZTF observatory only
-    #             "credentials": {
-    #                 "username": "guy",
-    #                 "password": "12345",
-    #             },
-    #         },
-    #     },
-    #     verbose=True,
-    # )
-    proj = Project(
-        name="default_test",
-        obs_names=["demo"],
-        analysis_kwargs={"num_injections": 3},
-        obs_kwargs={},
-        catalog_kwargs={"default": "test"},
-        verbose=6,
-    )
-    # download all data for all sources in the catalog
-    # and reduce the data (skipping raw and reduced data already on file)
-    # and store the results as detection objects in the DB, along with
-    # detection stats in the form of histogram arrays.
-    proj.run()
-
-    # Project.help()
-    # proj.help()
-
-    # proj.delete_all_sources()
-    # proj.catalog = proj.catalog.make_smaller_catalog(range(20))
-    # proj.run()
-
-    # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
-    # sources = proj.get_all_sources()
-    # print(
-    #     f'Database contains {len(sources)} sources associated with project "{proj.name}"'
-    # )
-    # for source in sources:
-    #     for lc in source.lightcurves:
-    #         lc.delete_data_from_disk()
+    proj = Project(name="tess_wds")
+    proj.run(0, 10)

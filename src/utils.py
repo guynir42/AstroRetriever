@@ -2,6 +2,7 @@
 Various utility functions and classes
 that were not relevant to any specific module.
 """
+import os
 import sys
 import string
 import re
@@ -360,6 +361,51 @@ def random_string(length=16):
     """
     letters = list(string.ascii_lowercase)
     return "".join(np.random.choice(letters, length))
+
+
+def find_file_ignore_case(filename, folders=None):
+    """
+    Try to locate a file in a case-insensitive manner.
+    If filename is not an absolute path,
+    will search the current folder.
+    If specifying folders as a list or string,
+    will search those folders instead.
+    To list the current folder use ".".
+
+    Parameters
+    ----------
+    filename: str
+        The filename to search for.
+    folders: list or str
+        The folders to search in. If not specified,
+        will search the current folder.
+        To list the current folder use ".".
+
+    Returns
+    -------
+    path: str
+        The full path to the file, if found.
+        If not found, will return None.
+    """
+    if os.path.isabs(filename):
+        folders, filename = os.path.split(filename)
+
+    if folders is None:
+        folders = ["."]
+    elif isinstance(folders, str):
+        folders = [folders]
+
+    for folder in folders:
+        if not os.path.isdir(folder):
+            raise ValueError(f"Cannot find folder {folder}.")
+        files = [
+            f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))
+        ]
+        for file in files:
+            if file.lower() == filename.lower():
+                return os.path.abspath(os.path.join(folder, file))
+
+    return None
 
 
 class NamedList(list):

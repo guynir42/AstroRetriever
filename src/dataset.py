@@ -439,7 +439,7 @@ class DatasetMixin:
         only the dataframe itself.
         """
         # ref: https://stackoverflow.com/questions/18089667/how-to-estimate-how-much-memory-a-pandas-dataframe-will-need
-        if self.data is None:
+        if self.data is None or len(self.data) == 0:
             return 0
         else:
             return int(self.data.memory_usage(index=True).sum())

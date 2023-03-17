@@ -360,8 +360,9 @@ class Source(Base, conesearch_alchemy.Point):
         Save the detections to the database.
         """
         with SmartSession(session) as session:
-            for det in self.detections:
-                session.add(det)
+            if self.detections is not None:
+                for det in self.detections:
+                    session.add(det)
 
             session.commit()
 

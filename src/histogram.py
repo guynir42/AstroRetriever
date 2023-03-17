@@ -932,8 +932,15 @@ class Histogram:
             if "source_names" in self.data.attrs:
                 if isinstance(self.data.attrs["source_names"], list):
                     names = self.data.attrs["source_names"]
-                else:
+                elif isinstance(self.data.attrs["source_names"], str):
                     names = [self.data.attrs["source_names"]]
+                elif hasattr(self.data.attrs["source_names"], "__len__"):
+                    names = list(self.data.attrs["source_names"])
+                else:
+                    raise TypeError(
+                        f'Unknown type for "source_names": {type(self.data.attrs["source_names"])}'
+                    )
+
                 self.source_names = set(names)
 
     def save(self, suffix=None):

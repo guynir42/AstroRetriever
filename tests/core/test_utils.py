@@ -16,7 +16,7 @@ from src.database import (
     safe_mkdir,
 )
 from src.source import Source
-from src.utils import NamedList, UniqueList, CircularBufferList
+from src.utils import NamedList, UniqueList, CircularBufferList, find_file_ignore_case
 
 
 def test_on_close_utility():
@@ -240,6 +240,55 @@ def test_safe_mkdir():
     with pytest.raises(ValueError) as e:
         safe_mkdir(new_path)
     assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+
+def test_find_file_ignore_case(data_dir):
+    current_dir = os.getcwd()
+    try:
+        os.chdir(data_dir)
+
+        filename1 = "foo.txt"
+        filename2 = "Foo.txt"
+        filename3 = "FOO.txt"
+        subfolder = "subfolder"
+
+        open(filename1, "w").close()
+        open(filename2, "w").close()
+
+        os.mkdir(subfolder)
+        open(os.path.join(subfolder, filename3), "w").close()
+
+        # lower case returns lower case
+        assert find_file_ignore_case(filename1) == os.path.join(data_dir, filename1)
+
+        # watch out! the lower case will be grabbed before the real match!
+        assert find_file_ignore_case(filename2) == os.path.join(data_dir, filename1)
+
+        # search for this file in the subfolder specifically
+        assert find_file_ignore_case(filename3, subfolder) == os.path.join(
+            data_dir, subfolder, filename3
+        )
+
+        # search in the subfolder using an absolute path
+        assert find_file_ignore_case(
+            filename3, os.path.join(data_dir, subfolder)
+        ) == os.path.join(data_dir, subfolder, filename3)
+
+        # if we don't specify the subfolder, it will get the lower case file, not the one in the subfolder
+        assert find_file_ignore_case(filename3) == os.path.join(data_dir, filename1)
+
+        # if we specify the folders, in this order, it finds the first filename
+        assert find_file_ignore_case(filename3, [".", subfolder]) == os.path.join(
+            data_dir, filename1
+        )
+
+        # if we change the order of folders to search it returns the correct file:
+        assert find_file_ignore_case(filename3, [subfolder, "."]) == os.path.join(
+            data_dir, subfolder, filename3
+        )
+
+    finally:
+        os.chdir(current_dir)
 
 
 def test_smart_session(new_source):
