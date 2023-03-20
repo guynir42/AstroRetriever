@@ -1,0 +1,12 @@
+project:
+  name: tess_WDs
+  verbose: 10
+  description: "Download TESS lightcurves for all available white dwarfs."
+  obs_names:
+    - "TESS"
+
+observatories:
+  num_threads_download: 4
+
+catalog:
+  default: WD
