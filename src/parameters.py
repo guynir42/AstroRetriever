@@ -13,13 +13,9 @@ from src.utils import legalize, find_file_ignore_case
 LOADED_FILES = {}
 
 
-# TODO: use typing module to specify types and Annotated for descriptions
-# ref: https://stackoverflow.com/a/8820636/18256949
-
-
 # parameters that are propagated from one Parameters object
-# to the next when creating subclasses.
-# If the child Parameters doesn't have any one of these
+# to the next when adding embedded objects.
+# If the embedded object's Parameters doesn't have any of these
 # then that key is just skipped
 propagated_keys = ["data_types", "project", "cfg_file", "verbose"]
 
@@ -81,7 +77,8 @@ def normalize_data_types(data_types):
     """
     if isinstance(data_types, str):
         return [convert_data_type(data_types)]
-    return sorted(convert_data_type(dt) for dt in data_types)
+    if isinstance(data_types, (list, tuple, set)):
+        return sorted(convert_data_type(dt) for dt in data_types)
 
 
 def get_class_from_data_type(data_type, level="raw"):
@@ -206,7 +203,7 @@ class Parameters:
 
     def __init__(self):
         """
-        Setup a Parameters object.
+        Set up a Parameters object.
         After setting up, the parameters can be set
         either by hard-coded values or by a YAML file,
         using the load() method,
@@ -707,6 +704,8 @@ class Parameters:
         hidden: bool
             If True, include hidden parameters.
             By default, does not include hidden parameters.
+        ignore: list of str
+            A list of parameters to ignore in the comparison.
         verbose: bool
             If True, print the differences between the two
             Parameter objects.

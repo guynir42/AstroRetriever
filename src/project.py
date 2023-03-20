@@ -1012,4 +1012,4 @@ class Project:
 
 if __name__ == "__main__":
     proj = Project(name="tess_wds")
-    proj.run(0, 10)
+    proj.run()

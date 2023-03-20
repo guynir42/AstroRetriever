@@ -311,14 +311,14 @@ class Finder:
         det.test_hash = source.test_hash
 
         # time of peak, snr and so on
-        det.snr = lightcurve.data.loc[peak_idx, "snr"]
+        det.snr = float(lightcurve.data.loc[peak_idx, "snr"])
         # can add score and additional_scores if needed
         det.peak_time = lightcurve.times[peak_idx]
         det.peak_start = lightcurve.times[time_indices[0]]
         det.peak_end = lightcurve.times[time_indices[-1]]
 
-        det.peak_mag = lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
-        det.peak_mag_diff = (
+        det.peak_mag = float(lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]])
+        det.peak_mag_diff = float(
             lightcurve.mag_mean_robust
             - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
         )
@@ -329,7 +329,7 @@ class Finder:
 
         det.raw_photometry = source.raw_photometry
         det.raw_photometry.sort(key=lambda x: x.time_start)
-        det.processed_.sort(key=lambda x: x.time_start)
+        det.processed_photometry.sort(key=lambda x: x.time_start)
 
         # add the quality cut values and quality_flag
         det.quality_values = {}
@@ -343,7 +343,7 @@ class Finder:
                     )
                 else:
                     worst_val = np.max(lightcurve.data[time_indices, col].values)
-                det.quality_values[col] = worst_val
+                det.quality_values[col] = float(worst_val)
 
             det.quality_flag = qflag
 
@@ -351,9 +351,9 @@ class Finder:
         lightcurve.data.loc[time_indices, "detected"] = True
 
         # save the time range of the event for the specific lightcurve
-        idx = det.processed_.index(lightcurve)
-        det.processed__data_ranges = {idx: [int(x) for x in time_indices]}
-        det.processed__peak_number = idx
+        idx = det.processed_photometry.index(lightcurve)
+        det.processed_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
+        det.processed_photometry_peak_number = idx
 
         raw_phot = lightcurve.raw_data
         if raw_phot in det.raw_photometry:

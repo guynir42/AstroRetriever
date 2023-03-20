@@ -576,9 +576,7 @@ class VirtualTESS(VirtualObservatory):
             "catalog": "TIC",
             "radius": self.pars.query_radius / 3600,
         }
-        catalog_data = self._try_query(
-            Catalogs.query_region, cat_params, self.pars.verbose
-        )
+        catalog_data = self._try_query(Catalogs.query_region, cat_params)
         if len(catalog_data) == 0:
             self.pars.vprint("No TESS object found for given catalog row.")
             return pd.DataFrame(), {}
@@ -635,9 +633,7 @@ class VirtualTESS(VirtualObservatory):
             "obs_collection": "TESS",
             "dataproduct_type": "timeseries",
         }
-        data_query = self._try_query(
-            Observations.query_criteria, obs_params, self.pars.verbose
-        )
+        data_query = self._try_query(Observations.query_criteria, obs_params)
 
         if len(data_query) == 0:
             self.pars.vprint(f"No data found for object {tess_name}.")
@@ -728,7 +724,7 @@ class VirtualTESS(VirtualObservatory):
 
         return data, altdata
 
-    def _try_query(self, query_fn, params, verbose):
+    def _try_query(self, query_fn, params):
         """
         Makes an astroquery request repeatedly, ignoring any timeout errors.
         Returns first successful response, otherwise raises TimeoutError.
@@ -736,9 +732,7 @@ class VirtualTESS(VirtualObservatory):
         # maybe try using multiprocessing to terminate after 10 secs?
         for tries in range(10):
             try:
-                self.pars.vprint(
-                    f"Making query request, " f"attempt {tries + 1}/10 ..."
-                )
+                self.pars.vprint(f"Making query request, attempt {tries + 1}/10 ...")
                 ret = query_fn(**params)
                 return ret
             except TimeoutError as e:

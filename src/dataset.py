@@ -872,13 +872,16 @@ class DatasetMixin:
                             raise ValueError(
                                 f"Key {self.filekey} already exists in file {self.get_fullname()}"
                             )
-
-                    store.put(self.filekey, self.data)
-                    if self.altdata:
-                        altdata_to_write = self.altdata
-                    else:
-                        altdata_to_write = {}
-                    store.get_storer(self.filekey).attrs["altdata"] = altdata_to_write
+                    # only store a key for non-empty dataframes
+                    if len(self.data) > 0:
+                        store.put(self.filekey, self.data)
+                        if self.altdata:
+                            altdata_to_write = self.altdata
+                        else:
+                            altdata_to_write = {}
+                        store.get_storer(self.filekey).attrs[
+                            "altdata"
+                        ] = altdata_to_write
 
             elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:

@@ -23,15 +23,8 @@ def test_ztf_download(ztf_project, wd_cat):
     ztf = ztf_project.observatories["ztf"]
     assert isinstance(ztf, VirtualZTF)
 
-    # get a small catalog with only 3 bright sources above the equator
-    idx = (wd_cat.data["phot_g_mean_mag"] < 18) & (wd_cat.data["dec"] > 0)
-    idx = np.where(idx)[0][:3]
-    c = wd_cat.make_smaller_catalog(idx)
-
-    # download the lightcurve:
-    ztf_project.catalog = c
-    ztf.catalog = c
-    ztf.fetch_all_sources()
+    ztf.catalog = wd_cat
+    ztf.fetch_all_sources(0, 3)
 
     def cleanup():  # to be called at the end
         with SmartSession() as session:
@@ -46,6 +39,8 @@ def test_ztf_download(ztf_project, wd_cat):
     _ = OnClose(cleanup)  # called even upon exception
 
     filenames = []
+
+    print(len(ztf.sources))
 
     assert len(ztf.sources) == 3
     for s in ztf.sources:

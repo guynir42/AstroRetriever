@@ -401,6 +401,9 @@ def find_file_ignore_case(filename, folders=None):
         files = [
             f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))
         ]
+        # reverse alphabetical order but with lower case before upper case
+        files.sort(reverse=True)
+
         for file in files:
             if file.lower() == filename.lower():
                 return os.path.abspath(os.path.join(folder, file))

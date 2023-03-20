@@ -519,6 +519,8 @@ class Source(Base, conesearch_alchemy.Point):
                                     except Exception:
                                         session.rollback()
                                 found_data.remove(data)
+                        # TODO: maybe need to remove this part if we are saving files
+                        #  without any data (not even an empty dataframe)
                         else:
                             try:  # verify the data is really there
                                 data.load()
