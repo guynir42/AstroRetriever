@@ -5,6 +5,7 @@ import copy
 import re
 import yaml
 import uuid
+import traceback
 import validators
 import numpy as np
 import pandas as pd
@@ -474,7 +475,9 @@ class VirtualObservatory:
                     sources = [s]
                 except Exception as e:
                     self.pars.vprint(f"Failed to download source {i}: {e}")
-                    self.failures_list.append(dict(index=i, error=e, cat_row=cat_row))
+                    self.failures_list.append(
+                        dict(index=i, error=traceback.format_exc(), cat_row=cat_row)
+                    )
                     sources = []
             else:  # multiple threads
                 sources = self._fetch_sources_asynchronous(

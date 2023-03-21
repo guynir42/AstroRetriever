@@ -2,13 +2,13 @@
 The project is used to combine a catalog,
 some observatories, and analysis objects.
 """
-
-import importlib
 import os
 import json
 import yaml
 import hashlib
 import git
+import traceback
+import importlib
 
 import numpy as np
 
@@ -935,7 +935,7 @@ class Project:
                     except Exception as e:
                         self.pars.vprint(f"Error processing source {name}: {e}")
                         self.failures_list.append(
-                            dict(index=i, error=e, cat_row=cat_row)
+                            dict(index=i, error=traceback.format_exc(), cat_row=cat_row)
                         )
                         num_exceptions += 1
                         num_exceptions_in_a_row += 1
