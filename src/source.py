@@ -267,7 +267,7 @@ class Source(Base, conesearch_alchemy.Point):
         self.processed_photometry = []
         self.simulated_photometry = []
         self.detections = None
-        self.properties = None
+        # self.properties = None
         self.loaded_status = "database"
 
     def __setattr__(self, key, value):
@@ -370,7 +370,7 @@ class Source(Base, conesearch_alchemy.Point):
         """Save the source to the database"""
         with SmartSession(session) as session:
             session.add(self)
-            session.add(self.properties)
+            # session.add(self.properties)
 
             session.commit()
 

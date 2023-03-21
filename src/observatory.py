@@ -262,6 +262,7 @@ class VirtualObservatory:
         self.raw_data = None
         self.latest_source = None
         self.latest_reductions = None
+        self.failures_list = None
         self.num_loaded = None
         self._test_hash = None
         self.reset()
@@ -441,6 +442,7 @@ class VirtualObservatory:
 
         """
         self.pars.vprint("Downloading all sources...", 3)
+        self.failures_list = []
 
         cat_length = len(self.catalog)
         start = 0 if start is None else start
@@ -461,14 +463,19 @@ class VirtualObservatory:
             # TODO: add report return parameters and append them to a circular buffer
             if num_threads <= 1:  # single threaded execution
                 cat_row = self._get_catalog_row(i)
-                s = self.fetch_source(
-                    cat_row=cat_row,
-                    save=save,
-                    reduce=reduce,
-                    download_args=download_args,
-                    dataset_args=dataset_args,
-                )
-                sources = [s]
+                try:
+                    s = self.fetch_source(
+                        cat_row=cat_row,
+                        save=save,
+                        reduce=reduce,
+                        download_args=download_args,
+                        dataset_args=dataset_args,
+                    )
+                    sources = [s]
+                except Exception as e:
+                    self.pars.vprint(f"Failed to download source {i}: {e}")
+                    self.failures_list.append(dict(index=i, error=e, cat_row=cat_row))
+                    sources = []
             else:  # multiple threads
                 sources = self._fetch_sources_asynchronous(
                     start=i,
@@ -569,7 +576,8 @@ class VirtualObservatory:
         for future in done:
             source = future.result()
             if isinstance(source, Exception):
-                raise source
+                self.pars.vprint(f"Failed to download source {i}: {source}")
+                self.failures_list.append(dict(index=i, error=source, cat_row=cat_row))
             if not isinstance(source, Source):
                 raise RuntimeError(
                     f"Source is not a Source object, but a {type(source)}. "

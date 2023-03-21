@@ -31,20 +31,20 @@ class Properties(Base):
 
         super().__setattr__(key, value)
 
-    # source_id = sa.Column(
-    #     sa.ForeignKey("sources.id", ondelete="CASCADE"),
-    #     nullable=False,
-    #     index=True,
-    #     doc="ID of the source these properties are associated with",
-    # )
-    #
-    # source = orm.relationship(
-    #     "Source",
-    #     back_populates="properties",
-    #     cascade="save-update, merge, expunge, refresh-expire",
-    #     foreign_keys="Properties.source_id",
-    # )
-    #
+    source_id = sa.Column(
+        sa.ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="ID of the source these properties are associated with",
+    )
+
+    source = orm.relationship(
+        "Source",
+        back_populates="properties",
+        cascade="save-update, merge, expunge, refresh-expire",
+        foreign_keys="Properties.source_id",
+    )
+
     # source_name = association_proxy("source", "name")
 
     source_name = sa.Column(
@@ -88,16 +88,16 @@ class Properties(Base):
     )
 
 
-# Source.properties = orm.relationship(
-#     "Properties",
-#     back_populates="source",
-#     cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
-#     lazy="selectin",
-#     single_parent=True,
-#     uselist=False,
-#     passive_deletes=True,
-#     doc="Properties associated with this source",
-# )
+Source.properties = orm.relationship(
+    "Properties",
+    back_populates="source",
+    cascade="save-update, merge, refresh-expire, expunge, delete, delete-orphan",
+    lazy="selectin",
+    single_parent=True,
+    uselist=False,
+    passive_deletes=True,
+    doc="Properties associated with this source",
+)
 
 
 Properties.metadata.create_all(engine)

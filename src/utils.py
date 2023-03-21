@@ -579,10 +579,9 @@ class CircularBufferList(list):
         self.total += 1
 
     def extend(self, value):
-        if len(self) + len(value) > self.size:
-            self[:] = self[-self.size + len(value) :]
-        super().extend(value)
         self.total += len(value)
+        super().extend(value)
+        self[:] = self[-self.size :]
 
     def plus(self, value):
         self.extend(value)
