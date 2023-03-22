@@ -1,6 +1,6 @@
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.schema import UniqueConstraint
 
 from src.database import Base, engine
@@ -28,6 +28,8 @@ class Properties(Base):
     def __setattr__(self, key, value):
         if key == "project" and value is not None:
             value = legalize(value)
+        if key == "source" and value is not None:
+            self.source_name = value.name
 
         super().__setattr__(key, value)
 
@@ -101,3 +103,31 @@ Source.properties = orm.relationship(
 
 
 Properties.metadata.create_all(engine)
+
+
+@event.listens_for(Properties, "before_insert")
+def insert_new_dataset(mapper, connection, target):
+    """
+    Make sure Properties that are added to the DB get
+    a source_name a project and a cfg_hash.
+    """
+
+    if target.source_name is None or target.project is None or target.cfg_hash is None:
+        source = None
+        if target.source is not None:
+            source = target.source
+        if source is None and target.source_id is not None:
+            source = connection.scalars(
+                sa.select(Source).where(Source.id == target.source_id)
+            ).first()
+            if source is None:
+                raise ValueError(f"Source with ID {target.source_id} does not exist. ")
+
+        if source is None:
+            raise ValueError(
+                f"Cannot post a Properties object without an associated Source. "
+            )
+
+        target.source_name = source.name
+        target.project = source.project
+        target.cfg_hash = source.cfg_hash
