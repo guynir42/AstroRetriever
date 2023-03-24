@@ -75,7 +75,6 @@ pexpect==4.8.0
 pickleshare==0.7.5
 Pillow==9.3.0
 pinecone-client==2.2.1
-pkg_resources==0.0.0
 platformdirs==2.6.0
 plotly==5.13.1
 pluggy==1.0.0
