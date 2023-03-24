@@ -4,6 +4,7 @@ project:
   description: "Download TESS lightcurves for all available white dwarfs."
   obs_names:
     - "TESS"
+  max_num_total_exceptions: 1
 
 observatories:
   num_threads_download: 4

@@ -134,7 +134,10 @@ class Finder:
             # Add some scores to the lightcurve
             noise = self._estimate_flux_noise(lc, source)
             lc.data["snr"] = (lc.data["flux"] - lc.flux_mean_robust) / noise
-            lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
+            if all(np.isnan(lc.data["mag"])):
+                lc.data["dmag"] = np.nan
+            else:
+                lc.data["dmag"] = lc.data["mag"] - lc.data["mag"].median()
 
             # a column to mark indices in the lightcurve
             # where an event was detected
@@ -355,14 +358,14 @@ class Finder:
         det.processed_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
         det.processed_photometry_peak_number = idx
 
-        raw_phot = lightcurve.raw_data
-        if raw_phot in det.raw_photometry:
-            idx = det.raw_photometry.index(raw_phot)
-        else:
-            idx = None
-        # TODO: figure out how to supply the time range in the raw data
-        # det.raw_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
-        det.raw_photometry_peak_number = idx
+        # raw_phot = lightcurve.raw_data
+        # if raw_phot in det.raw_photometry:
+        #     idx = det.raw_photometry.index(raw_phot)
+        # else:
+        #     idx = None
+        # # TODO: figure out how to supply the time range in the raw data
+        # # det.raw_photometry_data_ranges = {idx: [int(x) for x in time_indices]}
+        # det.raw_photometry_peak_number = idx
 
         # can add matched filter here
 

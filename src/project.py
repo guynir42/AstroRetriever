@@ -787,7 +787,11 @@ class Project:
             If there's no overlap with the other
             arguments, nothing will be analyzed.
         """
+        import warnings
+        from astroquery.exceptions import NoResultsWarning
 
+        warnings.simplefilter("error", RuntimeWarning)
+        warnings.simplefilter("error", NoResultsWarning)
         self._save_config()
 
         if finish is None:
@@ -855,9 +859,7 @@ class Project:
                         ).first()
 
                         if source is None or source.properties is None:
-
-                            if source is None:
-                                cat_row = self.catalog.get_row(name, "name", "dict")
+                            cat_row = self.catalog.get_row(name, "name", "dict")
 
                             need_skip = False
                             # check the source has the needed data
@@ -1071,5 +1073,14 @@ class Project:
 
 
 if __name__ == "__main__":
-    proj = Project(name="tess_wds")
-    proj.run()
+    # proj = Project(name="tess_wds")
+    # proj.run()
+    from pprint import pprint
+    from src.utils import sanitize_attributes
+    from src.database import Session
+
+    session = Session()
+    rp = session.scalars(
+        sa.select(RawPhotometry).where(RawPhotometry.number > 0)
+    ).first()
+    s = session.scalars(sa.select(Source).where(Source.name == rp.source_name)).first()

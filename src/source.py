@@ -473,70 +473,74 @@ class Source(Base, conesearch_alchemy.Point):
         found_data = [  # e.g., go over all raw_photometry...
             data
             for data in getattr(self, f"{level}_{data_type}")
-            if data.observatory == obs
+            if data.observatory == legalize(obs)
         ]
+
         if level == "raw" and len(found_data) > 1:
             raise RuntimeError(
                 f"Source {self.name} has more than one "
                 f"{DataClass.__name__} object from this observatory."
             )
-        with SmartSession(session) as session:
-            # try to recover the data from the DB directly
-            if len(found_data) == 0 and session is not None:
-                if level == "raw":
-                    found_data = session.scalars(
-                        sa.select(DataClass).where(
-                            DataClass.source_name == self.name,
-                            DataClass.observatory == legalize(obs),
-                        )
-                    ).all()
-                else:
-                    # search for data with the correct level,
-                    # the same project name and cfg_hash,
-                    # and only look for un-processed data
-                    found_data = session.scalars(
-                        sa.select(DataClass).where(
-                            DataClass.source_name == self.name,
-                            DataClass.observatory == legalize(obs),
-                            DataClass.project == legalize(self.project),
-                            DataClass.cfg_hash == self.cfg_hash,
-                            DataClass.was_processed == False,
-                        )
-                    ).all()
 
-            # check if the loaded objects have
-            # corresponding files with data in them
-            if check_data:
-                for data in found_data:
-                    # data must exist either in memory (in .data) or on disk
-                    if not data.is_data_loaded:
-                        if not data.check_file_exists():
-                            if delete_missing:
-                                if session is not None:
+        # what to do if we didn't find any data attached to the source?
+        if len(found_data) == 0:
+            with SmartSession(session) as session:
+                # try to recover the data from the DB directly
+                if len(found_data) == 0 and session is not None:
+                    if level == "raw":
+                        found_data = session.scalars(
+                            sa.select(DataClass).where(
+                                DataClass.source_name == self.name,
+                                DataClass.observatory == legalize(obs),
+                            )
+                        ).all()
+                    else:
+                        # search for data with the correct level,
+                        # the same project name and cfg_hash,
+                        # and only look for un-processed data
+                        found_data = session.scalars(
+                            sa.select(DataClass).where(
+                                DataClass.source_name == self.name,
+                                DataClass.observatory == legalize(obs),
+                                DataClass.project == legalize(self.project),
+                                DataClass.cfg_hash == self.cfg_hash,
+                                DataClass.was_processed == False,
+                            )
+                        ).all()
+
+        # check if the loaded objects have
+        # corresponding files with data in them
+        if check_data:
+            for data in found_data:
+                # data must exist either in memory (in .data) or on disk
+                if not data.is_data_loaded:
+                    if not data.check_file_exists():
+                        if delete_missing:
+                            if session is not None:
+                                try:
+                                    session.delete(data)
+                                    session.commit()
+                                except Exception:
+                                    session.rollback()
+                            found_data.remove(data)
+                    # TODO: maybe need to remove this part if we are saving files
+                    #  without any data (not even an empty dataframe)
+                    else:
+                        try:  # verify the data is really there
+                            data.load()
+                        except KeyError as e:
+                            if "No object named" in str(e):
+                                # This does not exist in the file
+                                if delete_missing:
                                     try:
                                         session.delete(data)
                                         session.commit()
                                     except Exception:
                                         session.rollback()
-                                found_data.remove(data)
-                        # TODO: maybe need to remove this part if we are saving files
-                        #  without any data (not even an empty dataframe)
-                        else:
-                            try:  # verify the data is really there
-                                data.load()
-                            except KeyError as e:
-                                if "No object named" in str(e):
-                                    # This does not exist in the file
-                                    if delete_missing:
-                                        try:
-                                            session.delete(data)
-                                            session.commit()
-                                        except Exception:
-                                            session.rollback()
-                                        found_data.remove(data)
+                                    found_data.remove(data)
 
-                            except Exception as e:
-                                raise e
+                        except Exception as e:
+                            raise e
 
             # if no data was found, try to search for orphans
             if len(found_data) == 0 and search_orphans:

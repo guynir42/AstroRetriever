@@ -286,7 +286,6 @@ class Analysis:
                 raise ValueError(
                     f'No analysis function named "{analysis_name}" was found. '
                 )
-
             batch_detections += analysis_func(source)
 
         # this gets appended but never committed

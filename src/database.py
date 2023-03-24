@@ -13,7 +13,7 @@
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
 
 # To drop the entire database (in case things get very messed up):
-# Use sudo -u postgres psql -c "DROP DATABASE AstroRetriever"
+# Use sudo -u postgres psql -c "DROP DATABASE AstroRetriever WITH (force)"
 # This will only work if no connections are active.
 
 import os

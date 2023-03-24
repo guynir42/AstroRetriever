@@ -1,5 +1,6 @@
 import os
 import json
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -919,8 +920,10 @@ class Histogram:
         """
         fullname = self.get_fullname(suffix=suffix)
         if os.path.exists(fullname):
-            with xr.open_dataset(fullname) as ds:
-                self.data = ds.load()
+            with warnings.catch_warnings(record=False):
+                warnings.simplefilter("ignore", RuntimeWarning)
+                with xr.open_dataset(fullname) as ds:
+                    self.data = ds.load()
 
             if "name" in self.data.attrs:
                 self.name = self.data.attrs["name"]
@@ -958,7 +961,9 @@ class Histogram:
         # netCDF files can't store dicts, must convert to string
         self.data.attrs["pars"] = json.dumps(self.pars.to_dict())
         self.data.attrs["source_names"] = list(self.source_names)
-        self.data.to_netcdf(fullname, mode="w")
+        with warnings.catch_warnings(record=False):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.data.to_netcdf(fullname, mode="w")
 
     def remove_data_from_file(self, suffix=None, remove_backup=False):
         """

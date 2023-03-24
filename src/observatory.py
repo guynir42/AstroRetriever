@@ -1212,7 +1212,8 @@ class VirtualObservatory:
             if hasattr(dataset, att):
                 init_kwargs[att] = getattr(dataset, att)
 
-        init_kwargs["raw_data"] = dataset
+        # not needed as we no longer keep a relationship between raw and reduced data
+        # init_kwargs["raw_data"] = dataset
 
         # TODO: what if dataset has not been saved yet and has no filename?
         if "raw_data_filename" not in init_kwargs:
