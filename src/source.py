@@ -314,6 +314,7 @@ class Source(Base, conesearch_alchemy.Point):
 
             try:
                 for lc in self.reduced_photometry:
+                    lc.sanitize()
                     lc.save()
                     session.add(lc)
                 session.commit()
@@ -331,6 +332,7 @@ class Source(Base, conesearch_alchemy.Point):
         with SmartSession(session) as session:
             try:
                 for lc in self.processed_photometry:
+                    lc.sanitize()
                     lc.save(overwrite=True)
                     session.add(lc)
                 session.commit()
@@ -348,6 +350,7 @@ class Source(Base, conesearch_alchemy.Point):
         with SmartSession(session) as session:
             try:
                 for lc in self.simulated_photometry:
+                    lc.sanitize()
                     lc.save(overwrite=True)
                     session.add(lc)
                 session.commit()
@@ -362,6 +365,7 @@ class Source(Base, conesearch_alchemy.Point):
         with SmartSession(session) as session:
             if self.detections is not None:
                 for det in self.detections:
+                    det.sanitize()
                     session.add(det)
 
             session.commit()
@@ -369,8 +373,10 @@ class Source(Base, conesearch_alchemy.Point):
     def save(self, session=None):
         """Save the source to the database"""
         with SmartSession(session) as session:
+            self.sanitize()
+            if self.properties is not None:
+                self.properties.sanitize()
             session.add(self)
-            # session.add(self.properties)
 
             session.commit()
 

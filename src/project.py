@@ -926,10 +926,8 @@ class Project:
 
                             # finished looping on observatories and data types
                             source_batch.append(source)
-
-                            num_exceptions_in_a_row = (
-                                0  # reset count upon successful load/analysis
-                            )
+                            # reset count upon successful load/analysis
+                            num_exceptions_in_a_row = 0
 
                         # make sure to append this source
                         self.sources.append(source)
