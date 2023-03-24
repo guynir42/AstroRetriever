@@ -336,6 +336,9 @@ def sanitize_attributes(attr):
         return None
 
     # convert numpy scalars to python scalars
+    if isinstance(attr, (bool, np.bool_)):
+        return bool(attr)
+
     if issubclass(type(attr), (int, np.integer)):
         return int(attr)
 
@@ -472,6 +475,34 @@ def find_file_ignore_case(filename, folders=None):
                 return os.path.abspath(os.path.join(folder, file))
 
     return None
+
+
+def load_altdata(attrs):
+    """
+    Load the altdata for a given object,
+    that has been saved into an HDF5 store's attributes.
+    This includes the different ways we can save the altdata,
+    like as a simple dictionary or as `altdata_keys` and
+    then individual values for those keys as separate attributes.
+
+    Parameters
+    ----------
+    attrs: dict or tables.attributeset.AttributeSet
+        The attributes of the HDF5 store.
+
+    Returns
+    -------
+    altdata: dict
+        The altdata dictionary.
+    """
+    if "altdata" in attrs:
+        return attrs["altdata"]
+
+    if "altdata_keys" in attrs:
+        altdata = {}
+        for key in attrs["altdata_keys"]:
+            altdata[key] = attrs[key]
+        return altdata
 
 
 class NamedList(list):

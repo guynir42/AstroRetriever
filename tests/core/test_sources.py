@@ -14,7 +14,7 @@ from src.database import SmartSession
 from src.source import Source, DEFAULT_PROJECT
 from src.properties import Properties
 from src.dataset import RawPhotometry
-from src.utils import UniqueList
+from src.utils import UniqueList, load_altdata
 
 
 def test_add_source_and_data(data_dir, test_hash):
@@ -119,7 +119,7 @@ def test_add_source_and_data(data_dir, test_hash):
                 key = store.keys()[0]
                 df_from_file = store.get(key)
                 assert df_from_file.equals(df)
-                altdata = store.get_storer(key).attrs.altdata
+                altdata = load_altdata(store.get_storer(key).attrs)
                 assert altdata["foo"] == "bar"
 
         # check that the data is in the database
@@ -166,7 +166,6 @@ def test_add_source_and_data(data_dir, test_hash):
             check_data=False,
             delete_missing=False,
         )
-        assert len(source.raw_photometry) == 1
         assert len(source.raw_photometry) == 1
         with pytest.raises(FileNotFoundError):
             source.raw_photometry[0].data.equals(df)

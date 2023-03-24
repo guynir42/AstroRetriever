@@ -67,6 +67,8 @@ def test_sanitize_attributes():
         l=[1, 2, np.int32(3)],
         a=np.array([1, np.float64(2), 3]),
         d=dict(a=1, b={"c": np.float32(2.0)}),
+        b=True,
+        np_b=np.bool_(False),
     )
 
     a2 = sanitize_attributes(a1)
@@ -136,6 +138,19 @@ def test_sanitize_attributes():
 
     assert a1["nan"] is np.nan
     assert a2["nan"] is None
+
+    assert a1["b"] == 1
+    assert isinstance(a1["b"], bool)
+    print(type(a2["b"]))
+    assert a2["b"] == 1
+    assert isinstance(a2["b"], bool)
+
+    assert a1["np_b"] == 0
+    assert isinstance(a1["np_b"], np.bool_)
+    assert not isinstance(a1["np_b"], bool)
+    assert a2["np_b"] == 0
+    assert isinstance(a2["np_b"], bool)
+    assert not isinstance(a2["np_b"], np.bool_)
 
 
 def test_on_close_utility():

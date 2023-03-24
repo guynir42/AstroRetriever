@@ -556,8 +556,8 @@ class Source(Base, conesearch_alchemy.Point):
             for d in found_data:
                 d.source = self
 
-            if append:  # append this data on the source (should check for repeats)
-                getattr(self, f"{level}_{data_type}").extend(found_data)
+        if append:  # append this data on the source (should check for repeats)
+            getattr(self, f"{level}_{data_type}").extend(found_data)
 
         return found_data
 

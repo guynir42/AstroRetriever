@@ -4,15 +4,10 @@ import numpy as np
 import pandas as pd
 from astropy.time import Time
 
-from src.utils import OnClose
 from src.database import SmartSession
-
-import src.dataset
 from src.dataset import RawPhotometry
 from src.ztf import VirtualZTF
-
-basepath = os.path.abspath(os.path.dirname(__file__))
-src.dataset.DATA_ROOT = basepath
+from src.utils import OnClose, load_altdata
 
 
 def test_ztf_download(ztf_project, wd_cat):
@@ -59,7 +54,7 @@ def test_ztf_download(ztf_project, wd_cat):
             assert np.all(df["mag"] > 0)
             assert all([x in ["zg", "zr", "zi"] for x in df["filtercode"]])
 
-            altdata = store.get_storer(key).attrs["altdata"]
+            altdata = load_altdata(store.get_storer(key).attrs)
             assert isinstance(altdata, dict)
             assert altdata["cat_row"] == s.cat_row
             assert altdata["download_pars"] == {

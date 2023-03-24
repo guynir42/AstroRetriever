@@ -556,7 +556,7 @@ class DatasetMixin:
         """
         Load the data from a HDF5 file.
         """
-        with pd.HDFStore(self.get_fullname()) as store:
+        with pd.HDFStore(self.get_fullname(), mode="r") as store:
             key = self.filekey
             if key is None:
                 if len(store.keys()) == 1:
@@ -2045,7 +2045,7 @@ class Lightcurve(DatasetMixin, Base):
         # the amount of magnification of the flux relative to the mean, in units of magnitudes (delta-mag)
         lup_flux = luptitudes(fluxes, self.flux_rms_robust)
         lup_mean = luptitudes(self.flux_mean_robust, self.flux_rms_robust)
-        self.data["dmag"] = lup_flux - lup_mean
+        self.data["dmag"] = lup_mean - lup_flux  # positive dmag means brighter!
 
         self.colmap["snr"] = "snr"
         self.colmap["dsnr"] = "dsnr"

@@ -590,15 +590,6 @@ class Project:
             hash = self.cfg_hash if self.cfg_hash else ""
 
             for source in sources:
-                prop = session.scalars(
-                    sa.select(Properties).where(
-                        Properties.source_name == source.name,
-                        Properties.project == self.name,
-                        Properties.cfg_hash == hash,
-                    )
-                ).first()
-                if prop is not None:
-                    session.delete(prop)
                 if remove_associated_data:  # lightcurves, images, etc.
                     for dt in self.pars.data_types:
                         # the reduced level class is the same for processed/simulated
@@ -655,7 +646,7 @@ class Project:
             if remove_associated_data and remove_raw_data and remove_folder:
                 # remove any empty raw-data folders
                 for folder in list(raw_folders):
-                    if not os.listdir(folder):
+                    if os.path.isdir(folder) and not os.listdir(folder):
                         os.rmdir(folder)
 
     def delete_project_files(self, remove_folder=True):
