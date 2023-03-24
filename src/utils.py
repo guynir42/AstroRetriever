@@ -282,6 +282,69 @@ def date2jd(date):
     return Time(t).jd
 
 
+def luptitudes(flux, noise_rms):
+    """
+    Convert fluxes into Luptitude magnitudes.
+
+    Parameters
+    ----------
+    flux: scalar float or array of floats
+        The fluxes to convert.
+    noise_rms: scalar float or array of floats
+        The RMS noise of the fluxes.
+
+    Returns
+    -------
+    luptitudes: scalar float or array of floats
+        The Luptitude magnitudes.
+
+
+    ref: https://ui.adsabs.harvard.edu/abs/1999AJ....118.1406L/abstract
+    """
+    flux = np.asarray(flux)
+    noise_rms = np.asarray(noise_rms)
+    lup = -2.5 / np.log(10) * (np.arcsinh(flux / (2 * noise_rms)) + np.log(noise_rms))
+
+    return lup
+
+
+def sanitize_attributes(attr):
+    """
+    Make sure the attributes that are given do not
+    contain any numpy arrays or scalars, and that
+    each NaN is turned into None.
+
+    This makes it easier to put the data into the database.
+    """
+    if isinstance(attr, np.ndarray):
+        attr = attr.tolist()
+        # no return, recursively iterate through the list:
+    if isinstance(attr, list):
+        return [sanitize_attributes(a) for a in attr]
+
+    if isinstance(attr, dict):
+        new_attr = {}
+        for k, v in attr.items():
+            new_attr[k] = sanitize_attributes(v)
+        return new_attr
+
+    # only scalars beyond this point...
+    if attr is None:
+        return attr
+
+    if attr is np.nan:
+        return None
+
+    # convert numpy scalars to python scalars
+    if issubclass(type(attr), (int, np.integer)):
+        return int(attr)
+
+    if issubclass(type(attr), (float, np.floating)):
+        return float(attr)
+
+    return attr
+
+
 def unit_convert_bytes(units):
     """
     Convert a number of bytes into another unit.
