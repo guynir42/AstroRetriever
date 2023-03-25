@@ -267,7 +267,6 @@ class Source(Base, conesearch_alchemy.Point):
         self.processed_photometry = []
         self.simulated_photometry = []
         self.detections = None
-        # self.properties = None
         self.loaded_status = "database"
 
     def __setattr__(self, key, value):
