@@ -1,4 +1,4 @@
-name: Run Python Tests
+name: Tests for TESS observatory
 on:
   push:
     branches:
@@ -41,4 +41,4 @@ jobs:
           ZTF_USERNAME: ${{ secrets.ZTF_USERNAME }}
           ZTF_PASSWORD: ${{ secrets.ZTF_PASSWORD }}
 
-        run: python -m pytest tests/
+        run: python -m pytest tests/obs/test_tess.py
