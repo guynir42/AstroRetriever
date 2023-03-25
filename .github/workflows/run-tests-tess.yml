@@ -1,4 +1,4 @@
-name: Run Python Tests
+name: Tests for TESS observatory
 on:
   push:
     branches:
