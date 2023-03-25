@@ -12,8 +12,9 @@ from sqlalchemy.exc import IntegrityError
 
 from src.database import SmartSession
 from src.source import Source, DEFAULT_PROJECT
+from src.properties import Properties
 from src.dataset import RawPhotometry
-from src.utils import UniqueList
+from src.utils import UniqueList, load_altdata
 
 
 def test_add_source_and_data(data_dir, test_hash):
@@ -118,7 +119,7 @@ def test_add_source_and_data(data_dir, test_hash):
                 key = store.keys()[0]
                 df_from_file = store.get(key)
                 assert df_from_file.equals(df)
-                altdata = store.get_storer(key).attrs.altdata
+                altdata = load_altdata(store.get_storer(key).attrs)
                 assert altdata["foo"] == "bar"
 
         # check that the data is in the database
@@ -165,7 +166,6 @@ def test_add_source_and_data(data_dir, test_hash):
             check_data=False,
             delete_missing=False,
         )
-        assert len(source.raw_photometry) == 1
         assert len(source.raw_photometry) == 1
         with pytest.raises(FileNotFoundError):
             source.raw_photometry[0].data.equals(df)
@@ -214,3 +214,82 @@ def test_source_unique_constraint(test_hash):
         source2.cfg_hash = "another hash"
         session.add(source2)
         session.commit()
+
+
+def test_source_properties(test_hash):
+    with SmartSession() as session:
+        name1 = str(uuid.uuid4())
+        source = Source(name=name1, ra=0, dec=0, test_hash=test_hash)
+        source.properties = Properties()
+        session.add(source)
+        session.commit()
+        source_id = source.id
+        assert source_id is not None
+        prop_id = source.properties.id
+        assert prop_id is not None
+
+    # now make sure they are persisted
+    with SmartSession() as session:
+        source = session.scalars(
+            sa.select(Source).where(Source.id == source_id)
+        ).first()
+        assert source is not None
+        assert source.id == source_id
+        assert source.properties.id == prop_id
+
+        prop = session.scalars(
+            sa.select(Properties).where(Properties.id == prop_id)
+        ).first()
+        assert prop is not None
+        assert prop.id == prop_id
+        assert prop.source.id == source_id
+        assert prop.source_name == name1
+
+        # what happens if props are removed from source?
+        source.properties = None
+        session.commit()
+
+    with SmartSession() as session:
+        source = session.scalars(
+            sa.select(Source).where(Source.id == source_id)
+        ).first()
+        assert source is not None
+        assert source.id == source_id
+
+        prop = session.scalars(
+            sa.select(Properties).where(Properties.id == prop_id)
+        ).first()
+        assert prop is None
+
+        # delete the source as well
+        session.delete(source)
+        session.commit()
+
+    with SmartSession() as session:
+        name2 = str(uuid.uuid4())
+        source = Source(name=name2, ra=0, dec=0, test_hash=test_hash)
+        p = Properties()
+        p.source = source
+        session.add(p)
+        session.commit()
+        source_id = source.id
+        assert source_id is not None
+        prop_id = source.properties.id
+        assert prop_id is not None
+
+    # now make sure they are persisted
+    with SmartSession() as session:
+        source = session.scalars(
+            sa.select(Source).where(Source.id == source_id)
+        ).first()
+        assert source is not None
+        assert source.id == source_id
+        assert source.properties.id == prop_id
+
+        prop = session.scalars(
+            sa.select(Properties).where(Properties.id == prop_id)
+        ).first()
+        assert prop is not None
+        assert prop.id == prop_id
+        assert prop.source.id == source_id
+        assert prop.source_name == name2

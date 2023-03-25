@@ -3,10 +3,15 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 import socket
+import warnings
+from urllib.error import HTTPError
 
 from astroquery.mast import Observations, Catalogs
+from astroquery.exceptions import NoResultsWarning
+
 from astropy.coordinates import SkyCoord
 import astropy.io.fits as fits
+
 
 # from src.source import angle_diff
 from src.database import SmartSession
@@ -36,6 +41,13 @@ class ParsObsTESS(ParsObservatory):
             float,
             "Distance threshold in arcseconds for flagging "
             "close stars while querying TIC.",
+        )
+
+        self.mag_limit = self.add_par(
+            "mag_limit",
+            18.0,
+            float,
+            "Magnitude limit for querying TIC.",
         )
 
         self.magdiff_thresh = self.add_par(
@@ -559,8 +571,8 @@ class VirtualTESS(VirtualObservatory):
         ra = cat_row["ra"]
         mag = cat_row["mag"]
 
-        if mag > 16:
-            # TESS can't see stars fainter than 16 mag
+        # TESS can't see stars fainter than this
+        if mag > self.pars.mag_limit:
             self.pars.vprint(f"Magnitude of {mag} is too faint for TESS.")
             return pd.DataFrame(), {}
 
@@ -569,9 +581,7 @@ class VirtualTESS(VirtualObservatory):
             "catalog": "TIC",
             "radius": self.pars.query_radius / 3600,
         }
-        catalog_data = self._try_query(
-            Catalogs.query_region, cat_params, self.pars.verbose
-        )
+        catalog_data = self._try_query(Catalogs.query_region, cat_params)
         if len(catalog_data) == 0:
             self.pars.vprint("No TESS object found for given catalog row.")
             return pd.DataFrame(), {}
@@ -628,9 +638,7 @@ class VirtualTESS(VirtualObservatory):
             "obs_collection": "TESS",
             "dataproduct_type": "timeseries",
         }
-        data_query = self._try_query(
-            Observations.query_criteria, obs_params, self.pars.verbose
-        )
+        data_query = self._try_query(Observations.query_criteria, obs_params)
 
         if len(data_query) == 0:
             self.pars.vprint(f"No data found for object {tess_name}.")
@@ -721,7 +729,7 @@ class VirtualTESS(VirtualObservatory):
 
         return data, altdata
 
-    def _try_query(self, query_fn, params, verbose):
+    def _try_query(self, query_fn, params):
         """
         Makes an astroquery request repeatedly, ignoring any timeout errors.
         Returns first successful response, otherwise raises TimeoutError.
@@ -729,11 +737,11 @@ class VirtualTESS(VirtualObservatory):
         # maybe try using multiprocessing to terminate after 10 secs?
         for tries in range(10):
             try:
-                self.pars.vprint(
-                    f"Making query request, " f"attempt {tries + 1}/10 ..."
-                )
-                ret = query_fn(**params)
-                return ret
+                self.pars.vprint(f"Making query request, attempt {tries + 1}/10 ...")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", NoResultsWarning)
+                    ret = query_fn(**params)
+                    return ret
             except TimeoutError as e:
                 self.pars.vprint(f"Request timed out.")
 
@@ -761,16 +769,48 @@ class VirtualTESS(VirtualObservatory):
             Header of the second extension,
             with some metadata about the aperture.
         """
+        file_header_exclusions = [
+            "SIMPLE",
+            "BITPIX",
+            "NAXIS",
+            "EXTEND",
+            "NEXTEND",
+            "EXTNAME",
+            "EXTVER",
+            "ORIGIN",
+            "TELESCO",
+            "INSTRUME",
+        ]
+        extention_header_exclusions = [
+            "XTENSION",
+            "BITPIX",
+            "NAXIS",
+            "NAXIS1",
+            "NAXIS2",
+            "PCOUNT",
+            "GCOUNT",
+        ]
+
         for _ in range(10):
             try:
                 # TODO: can we store some of the extra info from FITS
                 #  e.g., the units on the data columns?
                 with fits.open(url, cache=False) as hdul:
                     file_header = dict(hdul[0].header)
+                    for key in file_header_exclusions:
+                        if key in file_header:
+                            del file_header[key]
+
                     lightcurve_data = pd.DataFrame(hdul[1].data)
                     lightcurve_header = dict(hdul[1].header)
                     aperture_array = hdul[2].data
                     aperture_header = dict(hdul[2].header)
+
+                    for key in extention_header_exclusions:
+                        if key in lightcurve_header:
+                            del lightcurve_header[key]
+                        if key in aperture_header:
+                            del aperture_header[key]
 
                     # rename the TIME column of the lightcurve
                     # this will help make sure we know the units and offset from JD
@@ -783,6 +823,11 @@ class VirtualTESS(VirtualObservatory):
                     aperture_header,
                 )
             except socket.timeout:
+                continue
+            except HTTPError:
+                # This printout can be removed after we figure out
+                # if these errors are common or not.
+                print("Encountered an HTTPError. Retrying...")
                 continue
 
         raise TimeoutError(f"Too many timeouts from trying to open fits.")

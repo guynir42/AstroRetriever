@@ -13,7 +13,7 @@
 # or follow this example: https://stackoverflow.com/a/30971098/18256949
 
 # To drop the entire database (in case things get very messed up):
-# Use sudo -u postgres psql -c "DROP DATABASE AstroRetriever"
+# Use sudo -u postgres psql -c "DROP DATABASE AstroRetriever WITH (force)"
 # This will only work if no connections are active.
 
 import os
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
-
+from src.utils import sanitize_attributes
 
 # this is the root AstroRetriever folder
 CODE_ROOT = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
@@ -283,6 +283,11 @@ class RetrieverBase:
         for k in list(input_dict.keys()):
             if hasattr(self, k):
                 setattr(self, k, input_dict.pop(k))
+
+    def sanitize(self):
+        for k, v in self.__dict__.items():
+            # can add exceptions here if needed
+            self.__dict__[k] = sanitize_attributes(v)
 
 
 Base = declarative_base(cls=RetrieverBase)

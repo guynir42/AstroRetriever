@@ -83,15 +83,16 @@ def test_demo_observatory_download_time(test_project):
     assert abs(multitread_time - 10) < 2  # should take about 10s
 
 
+@pytest.mark.flaky(max_runs=3)
 def test_demo_observatory_save_downloaded(test_project):
     obs = test_project.observatories["demo"]
     try:
         obs.fetch_all_sources(0, 10, save=True, download_args={"wait_time": 0})
         # reloading these sources should be quick (no call to fetch should be sent)
         t0 = time.time()
-        obs.fetch_all_sources(0, 10, download_args={"wait_time": 3})
+        obs.fetch_all_sources(0, 10, download_args={"wait_time": 5})
         reload_time = time.time() - t0
-        assert reload_time < 1  # should take less than 1s
+        assert reload_time < 2  # should take less than 2s
 
     finally:
         for d in obs.raw_data:

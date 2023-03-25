@@ -1,6 +1,7 @@
 import os
 import uuid
 import pytest
+import numpy as np
 
 import sqlalchemy as sa
 from sqlalchemy.exc import InvalidRequestError
@@ -16,7 +17,140 @@ from src.database import (
     safe_mkdir,
 )
 from src.source import Source
-from src.utils import NamedList, UniqueList, CircularBufferList
+from src.utils import (
+    NamedList,
+    UniqueList,
+    CircularBufferList,
+    find_file_ignore_case,
+    luptitudes,
+    sanitize_attributes,
+)
+
+
+def test_luptitudes():
+    # check that well behaved fluxes have equal magnitudes and luptitudes
+    number = 300
+    mean = 1000
+    rms = 10
+    fluxes = np.random.normal(mean, rms, number)
+    lups = luptitudes(fluxes, rms) - luptitudes(mean, rms)
+    mags = -2.5 * np.log10(fluxes / mean)
+
+    assert all(np.isclose(lups, mags, rtol=0.01))
+
+    # low fluxes are not so well-behaved
+    number = 300
+    mean = 10
+    rms = 10
+    fluxes = np.random.normal(mean, rms, number)
+    fluxes[fluxes < 0.01] = np.nan  # avoid numbers that are bad for magnitudes
+    lups = luptitudes(fluxes, rms) - luptitudes(mean, rms)
+    mags = -2.5 * np.log10(fluxes / mean)
+
+    # mostly they are not close
+    assert sum(np.isclose(lups, mags, rtol=0.01) == 0) > 0.9 * number
+
+
+def test_sanitize_attributes():
+    class Obj:
+        pass
+
+    a1 = dict(
+        i=8,
+        np_i=np.int64(10),
+        f=8.0,
+        np_f=np.float64(10.0),
+        s="hello",
+        c=Obj(),
+        n=None,
+        nan=np.nan,
+        l=[1, 2, np.int32(3)],
+        a=np.array([1, np.float64(2), 3]),
+        d=dict(a=1, b={"c": np.float32(2.0)}),
+        b=True,
+        np_b=np.bool_(False),
+    )
+
+    a2 = sanitize_attributes(a1)
+
+    assert a1["i"] == 8
+    assert isinstance(a1["i"], int)
+    assert a2["i"] == 8
+    assert isinstance(a2["i"], int)
+
+    assert a1["np_i"] == 10
+    assert isinstance(a1["np_i"], np.int64)
+    assert not isinstance(a1["np_i"], int)
+    assert a2["np_i"] == 10
+    assert isinstance(a2["np_i"], int)
+
+    assert a1["f"] == 8.0
+    assert isinstance(a1["f"], float)
+    assert a2["f"] == 8.0
+    assert isinstance(a2["f"], float)
+
+    assert a1["np_f"] == 10.0
+    assert isinstance(a1["np_f"], np.float64)
+    assert a2["np_f"] == 10.0
+    assert isinstance(a2["np_f"], float)
+    assert not isinstance(a2["np_f"], np.float64)
+
+    assert a1["s"] == "hello"
+    assert isinstance(a1["s"], str)
+    assert a2["s"] == "hello"
+    assert isinstance(a2["s"], str)
+
+    assert a1["c"] == a2["c"]
+    assert isinstance(a1["c"], Obj)
+    assert isinstance(a2["c"], Obj)
+
+    assert a1["n"] is None
+    assert a2["n"] is None
+
+    assert a1["l"] == [1, 2, 3]
+    assert isinstance(a1["l"], list)
+    assert a2["l"] == [1, 2, 3]
+    assert isinstance(a2["l"], list)
+
+    assert a2["l"][2] == 3
+    assert isinstance(a2["l"][2], int)
+    assert not isinstance(a2["l"][2], np.int32)
+
+    assert isinstance(a1["a"], np.ndarray)
+    assert all(a1["a"] == [1, 2, 3])
+    assert isinstance(a2["a"], list)
+    assert a2["a"] == [1, 2, 3]
+    assert a1["a"][1] == 2
+    assert isinstance(a1["a"][1], np.float64)
+    assert a2["a"][1] == 2
+    assert isinstance(a2["a"][1], float)
+
+    assert a1["d"] == dict(a=1, b={"c": 2.0})
+    assert isinstance(a1["d"], dict)
+    assert a1["d"]["b"]["c"] == 2.0
+    assert isinstance(a1["d"]["b"]["c"], np.float32)
+
+    assert a2["d"] == dict(a=1, b={"c": 2.0})
+    assert isinstance(a2["d"], dict)
+    assert a2["d"]["b"]["c"] == 2.0
+    print(type(a2["d"]["b"]["c"]))
+    assert isinstance(a2["d"]["b"]["c"], float)
+
+    assert a1["nan"] is np.nan
+    assert a2["nan"] is None
+
+    assert a1["b"] == 1
+    assert isinstance(a1["b"], bool)
+    print(type(a2["b"]))
+    assert a2["b"] == 1
+    assert isinstance(a2["b"], bool)
+
+    assert a1["np_b"] == 0
+    assert isinstance(a1["np_b"], np.bool_)
+    assert not isinstance(a1["np_b"], bool)
+    assert a2["np_b"] == 0
+    assert isinstance(a2["np_b"], bool)
+    assert not isinstance(a2["np_b"], np.bool_)
 
 
 def test_on_close_utility():
@@ -240,6 +374,55 @@ def test_safe_mkdir():
     with pytest.raises(ValueError) as e:
         safe_mkdir(new_path)
     assert "Cannot make a new folder not inside the following folders" in str(e.value)
+
+
+def test_find_file_ignore_case(data_dir):
+    current_dir = os.getcwd()
+    try:
+        os.chdir(data_dir)
+
+        filename1 = "foo.txt"
+        filename2 = "Foo.txt"
+        filename3 = "FOO.txt"
+        subfolder = "subfolder"
+
+        open(filename1, "w").close()
+        open(filename2, "w").close()
+
+        os.mkdir(subfolder)
+        open(os.path.join(subfolder, filename3), "w").close()
+
+        # lower case returns lower case
+        assert find_file_ignore_case(filename1) == os.path.join(data_dir, filename1)
+
+        # watch out! the lower case will be grabbed before the real match!
+        assert find_file_ignore_case(filename2) == os.path.join(data_dir, filename1)
+
+        # search for this file in the subfolder specifically
+        assert find_file_ignore_case(filename3, subfolder) == os.path.join(
+            data_dir, subfolder, filename3
+        )
+
+        # search in the subfolder using an absolute path
+        assert find_file_ignore_case(
+            filename3, os.path.join(data_dir, subfolder)
+        ) == os.path.join(data_dir, subfolder, filename3)
+
+        # if we don't specify the subfolder, it will get the lower case file, not the one in the subfolder
+        assert find_file_ignore_case(filename3) == os.path.join(data_dir, filename1)
+
+        # if we specify the folders, in this order, it finds the first filename
+        assert find_file_ignore_case(filename3, [".", subfolder]) == os.path.join(
+            data_dir, filename1
+        )
+
+        # if we change the order of folders to search it returns the correct file:
+        assert find_file_ignore_case(filename3, [subfolder, "."]) == os.path.join(
+            data_dir, subfolder, filename3
+        )
+
+    finally:
+        os.chdir(current_dir)
 
 
 def test_smart_session(new_source):

@@ -2,17 +2,18 @@
 The project is used to combine a catalog,
 some observatories, and analysis objects.
 """
-
-import importlib
 import os
 import json
 import yaml
 import hashlib
 import git
+import traceback
+import importlib
 
 import numpy as np
 
 import sqlalchemy as sa
+from sqlalchemy.orm import joinedload
 
 import src.database
 from src.database import Base, SmartSession, safe_mkdir
@@ -51,6 +52,27 @@ class ParsProject(Parameters):
             100,
             int,
             "Number of sources to keep inside the `sources` attibute of the project. ",
+        )
+
+        self.source_batch_size = self.add_par(
+            "source_batch_size",
+            10,
+            int,
+            "Number of sources to process in one batch, after which we commit the sources and save the histograms.",
+        )
+
+        self.max_num_total_exceptions = self.add_par(
+            "max_num_total_exceptions",
+            100,
+            int,
+            "Maximum number of exceptions (total) to raise before stopping the analysis.",
+        )
+
+        self.max_num_sequence_exceptions = self.add_par(
+            "max_num_sequence_exceptions",
+            10,
+            int,
+            "Maximum number of exceptions (in a row) to raise before stopping the analysis.",
         )
 
         self.version_control = self.add_par(
@@ -98,6 +120,10 @@ class ParsProject(Parameters):
 
         self.load_then_update(kwargs)
 
+    @property
+    def name(self):
+        return self.project
+
     def _verify_observatory_names(self, names):
         """
         Check that the observatory names are a unique set of strings.
@@ -134,6 +160,9 @@ class ParsProject(Parameters):
         if key == "obs_names":
             self._verify_observatory_names(value)
             return
+
+        if key == "name":
+            key = "project"
 
         super().__setattr__(key, value)
 
@@ -341,6 +370,7 @@ class Project:
         self.analysis.observatories = self.observatories
 
         self.sources = None  # list to be filled by analysis
+        self.failures_list = None  # list of failed sources
         self.num_sources_scanned = None
 
     def __setattr__(self, key, value):
@@ -560,15 +590,6 @@ class Project:
             hash = self.cfg_hash if self.cfg_hash else ""
 
             for source in sources:
-                prop = session.scalars(
-                    sa.select(Properties).where(
-                        Properties.source_name == source.name,
-                        Properties.project == self.name,
-                        Properties.cfg_hash == hash,
-                    )
-                ).first()
-                if prop is not None:
-                    session.delete(prop)
                 if remove_associated_data:  # lightcurves, images, etc.
                     for dt in self.pars.data_types:
                         # the reduced level class is the same for processed/simulated
@@ -625,7 +646,7 @@ class Project:
             if remove_associated_data and remove_raw_data and remove_folder:
                 # remove any empty raw-data folders
                 for folder in list(raw_folders):
-                    if not os.listdir(folder):
+                    if os.path.isdir(folder) and not os.listdir(folder):
                         os.rmdir(folder)
 
     def delete_project_files(self, remove_folder=True):
@@ -703,9 +724,10 @@ class Project:
 
     def reset(self):
         self.sources = CircularBufferList(self.pars.source_buffer_size)
+        self.failures_list = []
         self.num_sources_scanned = 0
 
-    def run(self, **kwargs):
+    def run(self, start=0, finish=None, source_names=None, source_ids=None):
         """
         Run the full pipeline on each source in the catalog.
 
@@ -740,13 +762,48 @@ class Project:
 
         Parameters
         ----------
-        kwargs: additional arguments to use such as...
-
+        start: int
+            Index of the first source to analyze.
+        finish: int
+            Index of the last source, which is not included.
+            So start=0, finish=10 will analyze sources 0-9.
+        source_names: list of str
+            List of source names to analyze.
+            Can also give a single source name.
+            If there's no overlap with the other
+            arguments, nothing will be analyzed.
+        source_ids: list of int
+            List of source IDs to analyze.
+            Can also give a single source ID.
+            If there's no overlap with the other
+            arguments, nothing will be analyzed.
         """
-
+        # use this to pin point warnings
+        # import warnings
+        # warnings.simplefilter("error")
         self._save_config()
 
-        source_names = self.catalog.names
+        if finish is None:
+            finish = len(self.catalog.names)
+
+        if source_names is not None:
+            if isinstance(source_names, str):
+                source_names = [source_names]
+
+            if not isinstance(source_names, list):
+                raise TypeError(
+                    f"source_names must be a list of strings. Got {type(source_names)}"
+                )
+
+        if source_ids is not None:
+            if isinstance(source_ids, int):
+                source_ids = [source_ids]
+
+            if not isinstance(source_ids, list):
+                raise TypeError(
+                    f"source_ids must be a list of integers. Got {type(source_ids)}"
+                )
+
         types = self.pars.data_types
         if isinstance(types, str):
             types = [types]
@@ -756,148 +813,156 @@ class Project:
         for obs in self.observatories:
             obs.reset()
 
+        hash = self.cfg_hash if self.cfg_hash else ""
+
         with SmartSession() as session:
-            # TODO: add batching of sources
-            for name in source_names:
-                hash = self.cfg_hash if self.cfg_hash else ""
-                source = session.scalars(
-                    sa.select(Source).where(
-                        Source.name == name,
-                        Source.project == self.name,
-                        Source.cfg_hash == hash,
-                    )
-                ).first()
-                if source is not None:
-                    source.properties = session.scalars(
-                        sa.select(Properties).where(
-                            Properties.source_name == name,
-                            Properties.project == self.name,
-                            Properties.cfg_hash == hash,
-                        )
-                    ).first()
 
-                # check if source has already been processed (has properties)
-                if source is not None and source.properties is not None:
-                    for obs in self.observatories:
-                        obs.sources.append(source)
-                        for dt in self.pars.data_types:
-                            # make sure the raw/reduced data is available on each source, too
-                            source.get_data(
-                                obs.name,
-                                data_type=dt,
-                                level="raw",
-                                session=session,
-                                check_data=False,
-                                append=True,
+            num_exceptions = 0
+            num_exceptions_in_a_row = 0
+            source_batch = []
+            try:  # not matter what happens, save the batch at end
+                for i, name in enumerate(self.catalog.names):
+                    # only run sources in range
+                    if i < start or i >= finish:
+                        continue
+
+                    # only run sources in source_names
+                    if source_names is not None and name not in source_names:
+                        continue
+
+                    # only run sources in source_ids
+                    if source_ids is not None and i not in source_ids:
+                        continue
+
+                    try:  # log any exceptions instead of stopping
+
+                        # look for the source in the database
+                        source = session.scalars(
+                            sa.select(Source)
+                            .where(
+                                Source.name == name,
+                                Source.project == self.name,
+                                Source.cfg_hash == hash,
                             )
-                            source.get_data(
-                                obs.name,
-                                data_type=dt,
-                                level="reduced",
-                                session=session,
-                                check_data=False,
-                                append=True,
-                            )
+                            .options(joinedload(Source.properties))
+                        ).first()
 
-                else:  # no source found, need to make it (and download data maybe?)
-                    cat_row = self.catalog.get_row(name, "name", "dict")
+                        if source is None or source.properties is None:
+                            cat_row = self.catalog.get_row(name, "name", "dict")
 
-                    need_skip = False
-                    for obs in self.observatories:
-                        if need_skip:
-                            continue
-
-                        # try to download the data for this observatory
-
-                        source = obs.fetch_source(
-                            cat_row,
-                            source=source,
-                            save=True,
-                            session=session,
-                        )
-
-                        for dt in types:
-                            if need_skip:
-                                continue
-
-                            if dt == "photometry":
-                                # did we find any raw photometry?
-                                data = [
-                                    rp
-                                    for rp in source.raw_photometry
-                                    if rp.observatory == obs.name
-                                ]
-
-                                if len(data) == 0:
-                                    raise ValueError(
-                                        f"Could not find any raw photometry on source {name}"
-                                    )
-
-                                if len(data) > 1:
-                                    raise ValueError(
-                                        "Each source should have only one "
-                                        "RawPhotometry associated with each observatory. "
-                                        f"For source {name} and observatory {obs.name}, "
-                                        f"found {len(data)} RawPhotometry objects."
-                                    )
-                                data = data[0]
-
-                                # check dataset has data on disk/in memory
-                                # (if not, skip entire source or raise RuntimeError)
-                                if not data.check_data_exists():
-                                    if self.pars.ignore_missing_raw_data:
-                                        need_skip = True
+                            need_skip = False
+                            # check the source has the needed data
+                            for obs in self.observatories:
+                                for dt in types:
+                                    if need_skip:
                                         continue
+
+                                    # this fetches all the data types
+                                    source = obs.fetch_source(
+                                        cat_row,
+                                        source=source,
+                                        save=True,
+                                        session=session,
+                                    )
+                                    data = source.get_data(
+                                        obs.name,
+                                        data_type=dt,
+                                        level="raw",
+                                        session=session,
+                                        check_data=False,
+                                        append=True,
+                                    )
+                                    if len(data) == 1:
+                                        data = data[0]
                                     else:
                                         raise RuntimeError(
-                                            f"RawData for source {source.name} and observatory {obs.name} "
-                                            "is missing from disk. "
-                                            "Set pars.ignore_missing_raw_data to True to ignore this."
+                                            f'Found multiple raw {dt} for obs "{obs.name}" on source "{name}".'
                                         )
 
-                                # look for reduced data and reproduce if missing
-                                lcs = [
-                                    lc
-                                    for lc in source.reduced_lightcurves
-                                    if lc.observatory == obs.name
-                                ]
-                                if len(lcs) == 0:  # try to load from DB
-                                    hash = self.cfg_hash if self.cfg_hash else ""
-                                    lcs = session.scalars(
-                                        sa.select(Lightcurve).where(
-                                            Lightcurve.source_name == name,
-                                            Lightcurve.observatory == obs.name,
-                                            Lightcurve.project == self.name,
-                                            Lightcurve.cfg_hash == hash,
-                                            Lightcurve.was_processed.is_(False),
-                                        )
-                                    ).all()
-                                if len(lcs) == 0:  # reduce data
-                                    lcs = obs.reduce(data, to="lcs")
+                                    # check dataset has data on disk/in memory
+                                    # (if not, skip entire source or raise RuntimeError)
+                                    if (
+                                        data is not None
+                                        and not data.check_data_exists()
+                                    ):
+                                        if self.pars.ignore_missing_raw_data:
+                                            need_skip = True
+                                            continue
+                                        else:
+                                            raise RuntimeError(
+                                                f"RawData for source {source.name} and observatory {obs.name} "
+                                                "is missing from disk. "
+                                                "Set pars.ignore_missing_raw_data=True to ignore this."
+                                            )
 
-                                source.reduced_lightcurves += lcs
+                                    # look for reduced data and reproduce if missing
+                                    lcs = source.get_data(
+                                        obs=obs.name,
+                                        data_type=dt,
+                                        level="reduced",
+                                        session=session,
+                                        check_data=False,
+                                        append=True,
+                                    )
+                                    if len(lcs) == 0:  # reduce data
+                                        obs.reduce(data, to="lcs")
 
-                            # add additional elif for other types...
-                            else:
-                                raise ValueError(f"Unknown data type: {dt}")
-                            # TODO: should we change this to "raw_photometry" or something?
-                            obs.raw_data.append(data)
+                                # TODO: should we change this to "raw_photometry" or something?
+                                obs.raw_data.append(data)
 
-                        obs.sources.append(source)
+                            if source is None:
+                                raise ValueError(f"Source {name} could not be found!")
 
-                    # finished looping on observatories and data types
+                            # finished looping on observatories and data types
+                            source_batch.append(source)
+                            # reset count upon successful load/analysis
+                            num_exceptions_in_a_row = 0
 
-                    # send source with all data to analysis object for
-                    # finding detections / adding properties
-                    self.analysis.analyze_sources(source)
+                        # make sure to append this source
+                        self.sources.append(source)
 
-                # make sure to append this source
-                self.sources.append(source)
+                    except Exception as e:
+                        self.pars.vprint(f"Error processing source {name}: {e}")
+                        self.failures_list.append(
+                            dict(index=i, error=traceback.format_exc(), cat_row=cat_row)
+                        )
+                        num_exceptions += 1
+                        num_exceptions_in_a_row += 1
 
-                session.add(source)
+                        if (
+                            num_exceptions_in_a_row
+                            >= self.pars.max_num_sequence_exceptions
+                        ):
+                            print(
+                                f"Too many exceptions in a row. Stopping after {num_exceptions_in_a_row} exceptions."
+                            )
+                            raise e
+
+                        if num_exceptions >= self.pars.max_num_total_exceptions:
+                            print(
+                                f"Too many exceptions. Stopping after {num_exceptions} exceptions."
+                            )
+                            raise e
+
+                    # count the sources processed and not
+                    self.num_sources_scanned += 1
+                    obs.sources.append(source)
+
+                    if len(source_batch) >= self.pars.source_batch_size:
+                        # send source with all data to analysis object for
+                        # finding detections / adding properties
+                        self.analysis.analyze_sources(source_batch)
+                        session.add_all(source_batch)
+                        session.commit()
+
+                        source_batch = []
+
+                # end of sources loop
+
+            finally:  # save the batch
+                self.analysis.analyze_sources(source_batch)
+                session.add_all(source_batch)
                 session.commit()
-
-                self.num_sources_scanned += 1
 
     def _save_config(self):
         """
@@ -995,69 +1060,5 @@ class Project:
 
 
 if __name__ == "__main__":
-
-    src.database.DATA_ROOT = "/home/guyn/Dropbox/DATA"
-    # import warnings
-    # warnings.filterwarnings('error')
-
-    # proj = Project(
-    #     name="default_test",  # must give a name to each project
-    #     description="my project description",  # optional parameter example
-    #     version_control=False,  # whether to use version control on products
-    #     obs_names=["ZTF"],  # must give at least one observatory name
-    #     # parameters to pass to the Analysis object:
-    #     analysis_kwargs={
-    #         "num_injections": 3,
-    #         "finder_kwargs": {  # pass through Analysis into Finder
-    #             "snr_threshold": 7.5,
-    #         },
-    #         "finder_module": "src.finder",  # can choose different module
-    #         "finder_class": "Finder",  # can choose different class (e.g., MyFinder)
-    #     },
-    #     analysis_module="src.analysis",  # replace this with your code path
-    #     analysis_class="Analysis",  # replace this with you class name (e.g., MyAnalysis)
-    #     catalog_kwargs={"default": "WD"},  # load the default WD catalog
-    #     # parameters to be passed into each observatory class
-    #     obs_kwargs={
-    #         "reducer": {
-    #             "radius": 3,
-    #             "gap": 40,
-    #         },
-    #         "ZTF": {  # specific instructions for the ZTF observatory only
-    #             "credentials": {
-    #                 "username": "guy",
-    #                 "password": "12345",
-    #             },
-    #         },
-    #     },
-    #     verbose=True,
-    # )
-    proj = Project(
-        name="default_test",
-        obs_names=["demo"],
-        analysis_kwargs={"num_injections": 3},
-        obs_kwargs={},
-        catalog_kwargs={"default": "test"},
-        verbose=6,
-    )
-    # download all data for all sources in the catalog
-    # and reduce the data (skipping raw and reduced data already on file)
-    # and store the results as detection objects in the DB, along with
-    # detection stats in the form of histogram arrays.
+    proj = Project(name="tess_wds")
     proj.run()
-
-    # Project.help()
-    # proj.help()
-
-    # proj.delete_all_sources()
-    # proj.catalog = proj.catalog.make_smaller_catalog(range(20))
-    # proj.run()
-
-    # proj.observatories["ztf"].populate_sources(num_files=1, num_sources=3)
-    # sources = proj.get_all_sources()
-    # print(
-    #     f'Database contains {len(sources)} sources associated with project "{proj.name}"'
-    # )
-    # for source in sources:
-    #     for lc in source.lightcurves:
-    #         lc.delete_data_from_disk()

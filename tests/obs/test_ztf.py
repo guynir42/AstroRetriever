@@ -4,15 +4,10 @@ import numpy as np
 import pandas as pd
 from astropy.time import Time
 
-from src.utils import OnClose
 from src.database import SmartSession
-
-import src.dataset
 from src.dataset import RawPhotometry
 from src.ztf import VirtualZTF
-
-basepath = os.path.abspath(os.path.dirname(__file__))
-src.dataset.DATA_ROOT = basepath
+from src.utils import OnClose, load_altdata
 
 
 def test_ztf_download(ztf_project, wd_cat):
@@ -23,15 +18,8 @@ def test_ztf_download(ztf_project, wd_cat):
     ztf = ztf_project.observatories["ztf"]
     assert isinstance(ztf, VirtualZTF)
 
-    # get a small catalog with only 3 bright sources above the equator
-    idx = (wd_cat.data["phot_g_mean_mag"] < 18) & (wd_cat.data["dec"] > 0)
-    idx = np.where(idx)[0][:3]
-    c = wd_cat.make_smaller_catalog(idx)
-
-    # download the lightcurve:
-    ztf_project.catalog = c
-    ztf.catalog = c
-    ztf.fetch_all_sources()
+    ztf.catalog = wd_cat
+    ztf.fetch_all_sources(0, 3)
 
     def cleanup():  # to be called at the end
         with SmartSession() as session:
@@ -46,6 +34,8 @@ def test_ztf_download(ztf_project, wd_cat):
     _ = OnClose(cleanup)  # called even upon exception
 
     filenames = []
+
+    print(len(ztf.sources))
 
     assert len(ztf.sources) == 3
     for s in ztf.sources:
@@ -64,7 +54,7 @@ def test_ztf_download(ztf_project, wd_cat):
             assert np.all(df["mag"] > 0)
             assert all([x in ["zg", "zr", "zi"] for x in df["filtercode"]])
 
-            altdata = store.get_storer(key).attrs["altdata"]
+            altdata = load_altdata(store.get_storer(key).attrs)
             assert isinstance(altdata, dict)
             assert altdata["cat_row"] == s.cat_row
             assert altdata["download_pars"] == {

@@ -328,7 +328,7 @@ def test_reducer_with_outliers(test_project, new_source, test_hash):
             dmag = lc.data["dmag"].values
             assert abs(dmag[5] - 8.5) < 0.5  # about 8.5 mag difference
             assert abs(dmag[8] - 8.5) < 0.5  # about 8.5 mag difference
-            assert abs(dmag[12] + 1.5) < 0.5  # about 8.5 mag difference
+            assert abs(dmag[12] + 1.5) < 0.5  # about 1.5 mag difference
 
             dmag[outlier_indices] = np.nan  # remove the outliers
             assert (

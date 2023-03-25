@@ -89,6 +89,7 @@ def test_project_multiple_runs(test_hash):
             obs_kwargs={},
             catalog_kwargs={"default": "test"},
             verbose=0,
+            max_num_total_exceptions=1,
         )
         proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)
@@ -127,8 +128,10 @@ def test_project_multiple_runs(test_hash):
 
         for s in proj.sources:
             assert s.loaded_status == "database"
+            s.get_data(obs="demo", data_type="photometry", level="raw", append=True)
             assert len(s.raw_photometry) == 1
             assert s.raw_photometry[0].loaded_status == "database"
+            s.get_data(obs="demo", data_type="photometry", level="reduced", append=True)
             assert len(s.reduced_photometry) == 1
             assert s.reduced_photometry[0].loaded_status == "database"
 
@@ -186,6 +189,7 @@ def test_project_with_simulated_events(test_hash):
             obs_kwargs={},
             catalog_kwargs={"default": "test"},
             verbose=0,
+            max_num_total_exceptions=1,
         )
         proj.test_hash = test_hash
         num_sources = len(proj.catalog.data)

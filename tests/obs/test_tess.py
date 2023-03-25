@@ -6,17 +6,13 @@ from astropy.time import Time
 
 import sqlalchemy as sa
 
-from src.utils import OnClose
 from src.database import SmartSession
-
-import src.dataset
 from src.catalog import Catalog
 from src.dataset import RawPhotometry
 from src.source import Source
 from src.tess import VirtualTESS
 
-basepath = os.path.abspath(os.path.dirname(__file__))
-src.dataset.DATA_ROOT = basepath
+from src.utils import OnClose, load_altdata
 
 
 def test_tess_download(tess_project, wd_cat):
@@ -84,7 +80,7 @@ def test_tess_download(tess_project, wd_cat):
                 assert np.all(df["TIME"] > 0)
                 assert np.all(df.loc[~np.isnan(df["SAP_FLUX"]), "SAP_FLUX"] > 0)
 
-                metadata = store.get_storer(key).attrs["altdata"]
+                metadata = load_altdata(store.get_storer(key).attrs)
                 assert isinstance(metadata, dict)
                 assert "cat_row" in metadata
                 assert metadata["cat_row"] == s.cat_row

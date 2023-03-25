@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -112,22 +113,33 @@ class QualityChecker:
                 y = dec
 
             if "pos1" in lc.colmap and "pos2" in lc.colmap:
-                x = lc.data[lc.colmap["pos1"]].values
-                x -= np.nanmedian(x)
-                y = lc.data[lc.colmap["pos2"]].values
-                y -= np.nanmedian(y)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", r"All-NaN (slice|axis) encountered"
+                    )
+                    x = lc.data[lc.colmap["pos1"]].values
+                    x -= np.nanmedian(x)
+                    y = lc.data[lc.colmap["pos2"]].values
+                    y -= np.nanmedian(y)
 
             if x is not None and y is not None:
-                offset = np.sqrt(x**2 + y**2)
-                scatter = np.nanmedian(np.abs(offset - np.nanmedian(offset)))
-
-                if scatter == 0:
-                    offset_norm = np.zeros_like(offset)
+                if all(np.isnan(x)) or all(np.isnan(y)):
+                    lc.data["offset"] = np.nan * np.ones_like(x)
+                    lc.data["qflag"] = True
                 else:
-                    offset_norm = (offset - np.nanmedian(offset)) / scatter
+                    offset = np.sqrt(x**2 + y**2)
+                    scatter = np.nanmedian(np.abs(offset - np.nanmedian(offset)))
 
-                lc.data["offset"] = offset_norm
-                lc.data["qflag"] |= np.abs(offset_norm) >= self.pars.offset_threshold
+                    if scatter == 0:
+                        offset_norm = np.zeros_like(offset)
+                    else:
+                        offset_norm = (offset - np.nanmedian(offset)) / scatter
+
+                    lc.data["offset"] = offset_norm
+                    # flag measurements with NaN offset or offset larger than threshold:
+                    lc.data["qflag"] |= ~(
+                        np.abs(offset_norm) <= self.pars.offset_threshold
+                    )
 
     def get_quality_columns_thresholds(self):
         """

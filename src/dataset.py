@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 import src.database
 from src.database import engine, Base, SmartSession, safe_mkdir
 from src.source import Source
-from src.utils import random_string, legalize
+from src.utils import random_string, legalize, luptitudes
 
 lock = threading.Lock()
 
@@ -439,7 +439,7 @@ class DatasetMixin:
         only the dataframe itself.
         """
         # ref: https://stackoverflow.com/questions/18089667/how-to-estimate-how-much-memory-a-pandas-dataframe-will-need
-        if self.data is None:
+        if self.data is None or len(self.data) == 0:
             return 0
         else:
             return int(self.data.memory_usage(index=True).sum())
@@ -556,7 +556,7 @@ class DatasetMixin:
         """
         Load the data from a HDF5 file.
         """
-        with pd.HDFStore(self.get_fullname()) as store:
+        with pd.HDFStore(self.get_fullname(), mode="r") as store:
             key = self.filekey
             if key is None:
                 if len(store.keys()) == 1:
@@ -569,9 +569,17 @@ class DatasetMixin:
             if data is None:
                 raise ValueError(f"Key {key} not found in file {self.get_fullname()}")
 
-            # load metadata
+            # load altdata
+            altdata = {}
             if store.get_storer(key).attrs and "altdata" in store.get_storer(key).attrs:
                 altdata = store.get_storer(key).attrs["altdata"]
+            elif (
+                store.get_storer(key).attrs
+                and "altdata_keys" in store.get_storer(key).attrs
+            ):
+                keys = store.get_storer(key).attrs["altdata_keys"]
+                for k in keys:
+                    altdata[k] = store.get_storer(key).attrs[k]
 
             return data, altdata
 
@@ -872,13 +880,19 @@ class DatasetMixin:
                             raise ValueError(
                                 f"Key {self.filekey} already exists in file {self.get_fullname()}"
                             )
-
-                    store.put(self.filekey, self.data)
-                    if self.altdata:
-                        altdata_to_write = self.altdata
-                    else:
-                        altdata_to_write = {}
-                    store.get_storer(self.filekey).attrs["altdata"] = altdata_to_write
+                    # only store a key for non-empty dataframes
+                    if len(self.data) > 0:
+                        store.put(self.filekey, self.data)
+                        if self.altdata:
+                            altdata_to_write = self.altdata
+                        else:
+                            altdata_to_write = {}
+                        keys = list(altdata_to_write.keys())
+                        store.get_storer(self.filekey).attrs["altdata_keys"] = keys
+                        for key in keys:
+                            store.get_storer(self.filekey).attrs[
+                                key
+                            ] = altdata_to_write[key]
 
             elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:
@@ -1706,6 +1720,7 @@ class Lightcurve(DatasetMixin, Base):
                 if k in [
                     "_sa_instance_state",
                     "data",
+                    "_data",
                     "id",
                     "_filename",
                     "filename",
@@ -1721,6 +1736,8 @@ class Lightcurve(DatasetMixin, Base):
 
                 setattr(self, k, deepcopy(v))
 
+            # make sure to grab the data as well
+            self.data = other.data.copy(deep=True)
             return
 
         if "data" not in kwargs:
@@ -2026,7 +2043,9 @@ class Lightcurve(DatasetMixin, Base):
         self.data["dsnr"] = (fluxes - self.flux_mean_robust) / worst_err
 
         # the amount of magnification of the flux relative to the mean, in units of magnitudes (delta-mag)
-        self.data["dmag"] = 2.5 * np.log10(fluxes / self.flux_mean_robust)
+        lup_flux = luptitudes(fluxes, self.flux_rms_robust)
+        lup_mean = luptitudes(self.flux_mean_robust, self.flux_rms_robust)
+        self.data["dmag"] = lup_mean - lup_flux  # positive dmag means brighter!
 
         self.colmap["snr"] = "snr"
         self.colmap["dsnr"] = "dsnr"
@@ -2419,14 +2438,14 @@ Lightcurve.metadata.create_all(engine)
 #     cascade="delete",  # do not automatically add reduced/processed lightcurves
 #     doc="Lightcurves derived from this raw dataset.",
 # )
-
-
-Lightcurve.raw_data = orm.relationship(
-    "RawPhotometry",
-    # back_populates="lightcurves",
-    cascade="",
-    doc="The raw dataset that was used to produce this reduced dataset.",
-)
+#
+#
+# Lightcurve.raw_data = orm.relationship(
+#     "RawPhotometry",
+#     # back_populates="lightcurves",
+#     cascade="",
+#     doc="The raw dataset that was used to produce this reduced dataset.",
+# )
 
 
 @event.listens_for(RawPhotometry, "before_insert")
