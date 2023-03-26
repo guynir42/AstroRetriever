@@ -329,6 +329,30 @@ def test_parameter_name_matches():
         p.Float_Parameter = float_par * 2
     assert 'Attribute "Float_Parameter" does not exist.' in str(e)
 
+    # check critical parameters can be filtered out using to_dict
+    keys = p.to_dict(critical=True, hidden=False).keys()
+    keys == ["integer_parameter", "float_parameter", "nullable_parameter"]
+
+    keys = p.to_dict(critical=True, hidden=True).keys()
+    keys == [
+        "integer_parameter",
+        "float_parameter",
+        "_internal_parameter",
+        "nullable_parameter",
+    ]
+
+    keys = p.to_dict(critical=False, hidden=True).keys()
+    keys == [
+        "integer_parameter",
+        "float_parameter",
+        "_internal_parameter",
+        "plotting_value",
+        "nullable_parameter",
+        "_enforce_no_new_attrs",
+        "_allow_shorthands",
+        "_ignore_case",
+    ]
+
 
 def test_version_control(data_dir):
     proj = Project(

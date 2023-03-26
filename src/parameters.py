@@ -987,7 +987,11 @@ class ParsDemoSubclass(Parameters):
         )
 
         self.nullable_parameter = self.add_par(
-            "nullable_parameter", 1, [int, None], "A parameter we can set to None"
+            "nullable_parameter",
+            1,
+            [int, None],
+            "A parameter we can set to None",
+            critical=True,
         )
 
         # lock this object so it can't be accidentally given the wrong name
