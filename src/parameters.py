@@ -313,7 +313,7 @@ class Parameters:
         if (
             "_allow_shorthands" not in self.__dict__
             or "_ignore_case" not in self.__dict__
-            or "_aliases" not in self.__dict__
+            or "__aliases__" not in self.__dict__
         ):
             return key
 
@@ -324,14 +324,22 @@ class Parameters:
 
         if allow_shorthands:
             if ignore_case:  # partial match ignoring case
-                matches = [k for k in aliases_dict.keys() if key.lower() in k.lower()]
+                matches = [
+                    v
+                    for k, v in aliases_dict.items()
+                    if k.lower().startswith(key.lower())
+                ]
             else:  # partial match respecting case
-                matches = [k for k in aliases_dict.keys() if key in k]
+                matches = [v for k, v in aliases_dict.items() if k.startswith(key)]
         else:  # no shorthands (full name match)
             if ignore_case:  # full match ignoring case
-                matches = [k for k in aliases_dict.keys() if key.lower() == k.lower()]
+                matches = [
+                    v for k, v in aliases_dict.items() if key.lower() == k.lower()
+                ]
             else:  # must find exact match
                 matches = [key] if key in aliases_dict.keys() else []
+
+        matches = list(set(matches))  # remove duplicates
 
         if len(matches) > 1:
             raise ValueError(
@@ -339,19 +347,19 @@ class Parameters:
                 f"Matches: {matches}. "
             )
         elif len(matches) == 0:
-            raise KeyError(f'Could not find parameter named "{key}"')
+            raise AttributeError(f'Attribute "{key}" does not exist.')
         else:
             key = matches[0]
 
-        # tranverse the alias dictionary:
+        # traverse the alias dictionary:
         return self.__aliases__[key]
 
     def __getattr__(self, key):
 
-        key = self._get_real_par_name(key)
+        real_key = self._get_real_par_name(key)
 
         # finally get the value:
-        return super().__getattr__(key)
+        return super().__getattribute__(real_key)
 
     def __setattr__(self, key, value):
         """
@@ -364,19 +372,24 @@ class Parameters:
            value must match the types allowed by the add_par() method.
 
         """
-        key = self._get_real_par_name(key)
+        real_key = self._get_real_par_name(key)
 
         new_attrs_check = (
             hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
         )
 
-        if new_attrs_check and key not in self.__dict__ and key not in propagated_keys:
+        if (
+            new_attrs_check
+            and real_key not in self.__dict__
+            and real_key not in propagated_keys
+        ):
+            print(real_key)
             raise AttributeError(f'Attribute "{key}" does not exist.')
 
-        if key == "project" and value is not None:
+        if real_key == "project" and value is not None:
             value = legalize(value)
 
-        if key == "data_types":
+        if real_key == "data_types":
             value = normalize_data_types(value)
 
         type_checks = (
@@ -384,13 +397,13 @@ class Parameters:
         )
         if (
             type_checks
-            and key in self.__typecheck__
-            and not isinstance(value, self.__typecheck__[key])
+            and real_key in self.__typecheck__
+            and not isinstance(value, self.__typecheck__[real_key])
         ):
             raise TypeError(
-                f'Parameter "{key}" must be of type {self.__typecheck__[key]}'
+                f'Parameter "{key}" must be of type {self.__typecheck__[real_key]}'
             )
-        super().__setattr__(key, value)
+        super().__setattr__(real_key, value)
 
     def __contains__(self, key):
         return hasattr(self, key)
@@ -958,15 +971,15 @@ class ParsDemoSubclass(Parameters):
         self.integer_parameter = self.add_par(
             "integer_parameter", 1, int, "An integer parameter", critical=True
         )
-        self.add_par("int_par", "integer_parameter")  # shorthand
+        self.add_alias("int_par", "integer_parameter")  # shorthand
 
         self.float_parameter = self.add_par(
             "float_parameter", 1.0, float, "A float parameter", critical=True
         )
-        self.add_par("float_par", "float_parameter")  # shorthand
+        self.add_alias("float_par", "float_parameter")  # shorthand
 
         self.plotting_value = self.add_par(
-            "plotting", True, bool, "A boolean parameter", critical=False
+            "plotting_value", True, bool, "A boolean parameter", critical=False
         )
 
         self._internal_parameter = self.add_par(
