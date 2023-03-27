@@ -168,6 +168,25 @@ class Parameters:
     cannot set a parameter of the wrong type,
     unless you specify self._enforce_type_checks = False.
 
+    Parameter matching
+    ------------------
+    To access a parameter using a key that is similar
+    to the parameter name (e.g., as a shorthand) use
+    the _ignore_case, _allow_shorthands and _remove_underscores
+    parameters. This affects the way comparison between the given
+    string and the parameter names are made.
+    * _ignore_case: if True, the case of the given string is ignored.
+    * _allow_shorthands: if True, the parameter name needs to begin
+      with the given string.
+    * _remove_underscores: if True, the underscores in the parameter name
+      and the input string are removed before comparison.
+    If more than one parameter matches, will raise a ValueError.
+    Finally, to add a different name as an alias to the original parameter,
+    use add_alias(new_name, old_name). The alias name is also subject
+    to the same matching rules as the original parameter name,
+    but if multiple aliases for the same actual parameter are found,
+    only the match to the original is used.
+
     Config Files
     ------------
     When reading a YAML file, the object will look for
