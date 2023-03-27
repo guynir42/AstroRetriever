@@ -130,6 +130,7 @@ class Parameters:
     Methods
     -------
     - add_par() to add a new parameter (mostly in the __init__).
+    - add_alias() to add an alias for a parameter.
     - load() the parameters from a YAML file.
     - read() the parameters from a dictionary.
     - update() takes parameters from a dictionary and updates (instead of overriding dict/set parameters).
@@ -148,7 +149,7 @@ class Parameters:
     ---------------------
     To add new parameters directly on the object,
     or in the __init__ of a subclass, use the add_par() method.
-    signature: add_par(par_name, default, types, description).
+    signature: add_par(par_name, default, types, description, critical).
     This allows adding the type, the default, and the description
     of the parameter, which are very useful when printing out
     the details of the configuration.
@@ -186,6 +187,14 @@ class Parameters:
     to the same matching rules as the original parameter name,
     but if multiple aliases for the same actual parameter are found,
     only the match to the original is used.
+    E.g., if int_par is an alias to int_parameter, and assuming
+    _allow_shorthands = True, then both keys will match the same
+    parameter (int_parameter) but this will not raise an exception
+    as both refer to the same parameter.
+    However, if you also define another parameter int_value,
+    that is not an alias but a different parameter, then
+    calling pars.int_ will match multiple different parameters
+    and will raise an exception.
 
     Config Files
     ------------
@@ -872,7 +881,7 @@ class Parameters:
         if self.verbose > threshold:
             print(text)
 
-    def compare(self, other, hidden=False, ignore=None, verbose=False):
+    def compare(self, other, hidden=False, critical=False, ignore=None, verbose=False):
         """
         Check that all parameters are the same between
         two Parameter objects. Will only check those parameters
@@ -887,6 +896,9 @@ class Parameters:
         hidden: bool
             If True, include hidden parameters.
             By default, does not include hidden parameters.
+        critical: bool
+            If True, only compare the critical parameters.
+            By default, ignores critical status.
         ignore: list of str
             A list of parameters to ignore in the comparison.
         verbose: bool
@@ -906,7 +918,11 @@ class Parameters:
         for k in self.__defaultpars__.keys():
             if k in ignore:
                 continue
-            if hidden or not k.startswith("_") and self[k] != other[k]:
+            if (
+                (hidden or not k.startswith("_"))
+                and (not critical or self.__critical__[k])
+                and self[k] != other[k]
+            ):
                 same = False
                 if not verbose:
                     break
@@ -967,7 +983,7 @@ class Parameters:
         Get the value, docstring and default of a parameter.
         """
 
-        desc = default = types = ""
+        desc = default = types = critical = ""
         value = self[name]
 
         if name in self.__docstrings__:
@@ -986,7 +1002,9 @@ class Parameters:
                 types = (types,)
             types = (t.__name__ for t in types)
             types = f'types= {", ".join(types)}'
-        extra = ", ".join([s for s in (default, types) if s])
+        if name in self.__critical__:
+            critical = "critical" if self.__critical__[name] else ""
+        extra = ", ".join([s for s in (default, types, critical) if s])
         if extra:
             extra = f" [{extra}]"
 

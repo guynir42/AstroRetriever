@@ -255,6 +255,107 @@ def test_legal_project_names(new_source, raw_phot):
     assert "Cannot legalize name" in str(e.value)
 
 
+def test_parameters_override_augment():
+    p = Parameters()
+    p.add_par("int", 1, int, "an integer")
+    p.add_par("float", 2.0, [int, float], "a float")
+    p.add_par("str", "hello", str, "a string")
+    p.add_par("bool", True, bool, "a boolean")
+    p.add_par("list", [1, 2, 3], list, "a list")
+    p.add_par("dict", {"a": 1, "b": 2}, dict, "a dict")
+    p.add_par("set", {1, 2, 3}, set, "a set")
+
+    assert p.int == 1
+    assert p["int"] == 1
+    assert p.float == 2.0
+    assert p["float"] == 2.0
+    assert p.str == "hello"
+    assert p["str"] == "hello"
+    assert p.bool is True
+    assert p["bool"] is True
+    assert p.list == [1, 2, 3]
+    assert p["list"] == [1, 2, 3]
+    assert p.dict == {"a": 1, "b": 2}
+    assert p["dict"] == {"a": 1, "b": 2}
+    assert p.set == {1, 2, 3}
+
+    # test not being able to set wrong types:
+    with pytest.raises(TypeError, match="must be of type"):
+        p.int = 3.0
+    assert p.int == 1
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.float = "hello"
+    assert p.float == 2.0
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.str = 3
+    assert p.str == "hello"
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.bool = 3
+    assert p.bool is True
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.list = 3
+    assert p.list == [1, 2, 3]
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.dict = 3
+    assert p.dict == {"a": 1, "b": 2}
+
+    with pytest.raises(TypeError, match="must be of type"):
+        p.set = 3
+    assert p.set == {1, 2, 3}
+
+    # turn off type checks:
+    p._enforce_type_checks = False
+
+    p.int = 2.5
+    assert p.int == 2.5
+
+    # use override:
+    p.read(
+        dict(
+            int=2,
+            float=3.0,
+            str="world",
+            bool=False,
+            list=[4, 5, 6],
+            dict={"c": 3, "d": 4},
+            set={4, 5, 6},
+        )
+    )
+    assert p.int == 2
+    assert p.float == 3.0
+    assert p.str == "world"
+    assert p.bool is False
+    assert p.list == [4, 5, 6]
+    assert p.dict == {"c": 3, "d": 4}
+    assert p.set == {4, 5, 6}
+
+    # use augment:
+    p.update(
+        dict(
+            int=3,
+            float=4.0,
+            str="!",
+            bool=True,
+            list=[7, 8, 9],
+            dict={"e": 5, "f": 6},
+            set={7, 8, 9},
+        )
+    )
+    assert p.int == 3
+    assert p.float == 4.0
+    assert p.str == "!"
+    assert p.bool is True
+    assert p.list == [7, 8, 9]
+    # note that dict and set are the only ones that gets merged:
+    assert p.dict == {"c": 3, "d": 4, "e": 5, "f": 6}
+    assert p.set == {4, 5, 6, 7, 8, 9}
+
+
 def test_parameter_name_matches():
     # cannot initialize parameters subclass (which is locked) with wrong key
     with pytest.raises(AttributeError) as e:
