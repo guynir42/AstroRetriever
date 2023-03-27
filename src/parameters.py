@@ -223,6 +223,8 @@ class Parameters:
         self.__typecheck__ = {}
         self.__defaultpars__ = {}
         self.__docstrings__ = {}
+        self.__critical__ = {}
+        self.__aliases__ = {}
         self.project = self.add_par("project", None, str, "Name of the project")
         self.cfg_file = self.add_par(
             "cfg_file",
@@ -231,6 +233,7 @@ class Parameters:
             "Path to the YAML file with the parameters. "
             "If None, the default file named as the project will be used. "
             "If False, no file will be loaded.",
+            critical=False,
         )
 
         self.data_types = self.add_par(
@@ -240,7 +243,9 @@ class Parameters:
             "Types of data to use (e.g., photometry, spectroscopy)",
         )
 
-        self.verbose = self.add_par("verbose", 0, int, "Level of verbosity (0=quiet).")
+        self.verbose = self.add_par(
+            "verbose", 0, int, "Level of verbosity (0=quiet).", critical=False
+        )
 
         self._enforce_type_checks = self.add_par(
             "_enforce_type_checks",
@@ -248,6 +253,7 @@ class Parameters:
             bool,
             "Choose if input values should be checked "
             "against the type defined in add_par().",
+            critical=False,
         )
 
         self._enforce_no_new_attrs = self.add_par(
@@ -257,6 +263,33 @@ class Parameters:
             "Choose if new attributes should be allowed "
             "to be added to the Parameters object. "
             "Set to True to lock the object from further changes. ",
+            critical=False,
+        )
+
+        self._allow_shorthands = self.add_par(
+            "_allow_shorthands",
+            True,
+            bool,
+            "If true, can refer to a parameter name by a partial string, "
+            "as long as the partial string is unique. "
+            "This slows down getting and setting parameters. ",
+            critical=False,
+        )
+
+        self._ignore_case = self.add_par(
+            "_ignore_case",
+            True,
+            bool,
+            "If true, the parameter names are case-insensitive. ",
+            critical=False,
+        )
+
+        self._remove_underscores = self.add_par(
+            "_remove_underscores",
+            False,
+            bool,
+            "If true, underscores are ignored in parameter names. ",
+            critical=False,
         )
 
         self._cfg_key = self.add_par(
@@ -266,6 +299,7 @@ class Parameters:
             "The key to use when loading the parameters from a YAML file. "
             "This is also the key that will be used when writing the parameters "
             "to the output config file. ",
+            critical=False,
         )
         self._cfg_sub_key = self.add_par(
             "_cfg_sub_key",
@@ -273,16 +307,90 @@ class Parameters:
             (None, str),
             "The sub-key to use when loading the parameters from a YAML file. "
             "E.g., the observatory name under observatories. ",
+            critical=False,
         )
 
-    def __contains__(self, key):
-        return hasattr(self, key)
+    def _get_real_par_name(self, key):
+        """
+        Get the real parameter name from a partial string,
+        ignoring case, and following the alias dictionary.
+        """
+        if key in self.__dict__:
+            return key
 
-    def __getitem__(self, key):
-        return getattr(self, key)
+        if key.startswith("__"):
+            return key
 
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
+        if (
+            "_allow_shorthands" not in self.__dict__
+            or "_ignore_case" not in self.__dict__
+            or "_remove_underscores" not in self.__dict__
+            or "__aliases__" not in self.__dict__
+        ):
+            return key
+
+        # get these without passing back through the whole machinery
+        allow_shorthands = super().__getattribute__("_allow_shorthands")
+        ignore_case = super().__getattribute__("_ignore_case")
+        remove_underscores = super().__getattribute__("_remove_underscores")
+        aliases_dict = super().__getattribute__("__aliases__")
+
+        if not allow_shorthands and not ignore_case and not remove_underscores:
+            return key
+
+        if ignore_case:
+
+            def reducer1(x):
+                return x.lower()
+
+        else:
+
+            def reducer1(x):
+                return x
+
+        if remove_underscores:
+
+            def reducer(x):
+                return reducer1(x.replace("_", ""))
+
+        else:
+
+            def reducer(x):
+                return reducer1(x)
+
+        if allow_shorthands:
+
+            def comparator(x, y):
+                return x.startswith(y)
+
+        else:
+
+            def comparator(x, y):
+                return x == y
+
+        matches = [
+            v for k, v in aliases_dict.items() if comparator(reducer(k), reducer(key))
+        ]
+        matches = list(set(matches))  # remove duplicates
+
+        if len(matches) > 1:
+            raise ValueError(
+                f"More than one parameter matches the given key: {key}. "
+                f"Matches: {matches}. "
+            )
+        elif len(matches) == 0:
+            # this will either raise an AttributeError or not,
+            # depending on _enforce_no_new_attrs (in setter):
+            return key
+        else:
+            return matches[0]  # one match is good!
+
+    def __getattr__(self, key):
+
+        real_key = self._get_real_par_name(key)
+
+        # finally get the value:
+        return super().__getattribute__(real_key)
 
     def __setattr__(self, key, value):
         """
@@ -295,17 +403,25 @@ class Parameters:
            value must match the types allowed by the add_par() method.
 
         """
+        real_key = self._get_real_par_name(key)
+
         new_attrs_check = (
             hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
         )
 
-        if new_attrs_check and key not in self.__dict__ and key not in propagated_keys:
-            raise AttributeError(f'Attribute "{key}" does not exist.')
+        if (
+            new_attrs_check
+            and real_key not in self.__dict__
+            and real_key not in propagated_keys
+        ):
+            raise AttributeError(
+                f"{self.__class__.__name__} object has no attribute '{key}'"
+            )
 
-        if key == "project" and value is not None:
+        if real_key == "project" and value is not None:
             value = legalize(value)
 
-        if key == "data_types":
+        if real_key == "data_types":
             value = normalize_data_types(value)
 
         type_checks = (
@@ -313,15 +429,24 @@ class Parameters:
         )
         if (
             type_checks
-            and key in self.__typecheck__
-            and not isinstance(value, self.__typecheck__[key])
+            and real_key in self.__typecheck__
+            and not isinstance(value, self.__typecheck__[real_key])
         ):
             raise TypeError(
-                f'Parameter "{key}" must be of type {self.__typecheck__[key]}'
+                f'Parameter "{key}" must be of type {self.__typecheck__[real_key]}'
             )
-        super().__setattr__(key, value)
+        super().__setattr__(real_key, value)
 
-    def add_par(self, name, default, par_types, docstring):
+    def __contains__(self, key):
+        return hasattr(self, key)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
+    def add_par(self, name, default, par_types, docstring, critical=True):
         """
         Add a parameter to the list of allowed parameters.
         To add a value in one line (in the __init__ method):
@@ -340,6 +465,9 @@ class Parameters:
         docstring: str
             A description of the parameter. Will be used in the docstring of the class,
             and when using the print() method or _get_par_string() method.
+        critical: bool
+            If True, the parameter is included in the list of parameters
+            that have an important effect on the download/analysis results.
 
         Returns
         -------
@@ -357,8 +485,30 @@ class Parameters:
         self.__typecheck__[name] = par_types
         self.__docstrings__[name] = docstring
         self.__defaultpars__[name] = default
+        self.__critical__[name] = critical
+        self.__aliases__[name] = name
+
         self[name] = default  # this should fail if wrong type?
         return default
+
+    def add_alias(self, alias, name):
+        """
+        Add an alias for a parameter.
+        Whenever the alias is used, either for get or set,
+        the call will be re-routed to the original parameter.
+
+        Example: self.add_alias('max_mag', 'maximum_magnitude')
+        can be used to quickly refer to the longer name using
+        the shorthand "max_mag".
+
+        Parameters
+        ----------
+        alias: str
+            The alias to use.
+        name: str
+            The original name of the parameter, to redirect to.
+        """
+        self.__aliases__[alias] = name
 
     def load_then_update(self, inputs):
         """
@@ -509,7 +659,18 @@ class Parameters:
             outputs = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
             yaml.dump(outputs, file, default_flow_style=False)
 
-    def to_dict(self, hidden=False):
+    def get_critical_pars(self):
+        """
+        Get a dictionary of the critical parameters.
+
+        Returns
+        -------
+        dict
+            The dictionary of critical parameters.
+        """
+        return self.to_dict(critical=True, hidden=True)
+
+    def to_dict(self, critical=False, hidden=False):
         """
         Convert parameters to a dictionary.
         Only get the parameters that were defined
@@ -517,6 +678,8 @@ class Parameters:
 
         Parameters
         ----------
+        critical: bool
+            If True, only get the critical parameters.
         hidden: bool
             If True, include hidden parameters.
             By default, does not include hidden parameters.
@@ -529,7 +692,8 @@ class Parameters:
         output = {}
         for k in self.__defaultpars__.keys():
             if hidden or not k.startswith("_"):
-                output[k] = self[k]
+                if not critical or self.__critical__[k]:
+                    output[k] = self[k]
 
         return output
 
@@ -830,6 +994,42 @@ class Parameters:
         Get the default key to use when loading a config file.
         """
         return None
+
+
+class ParsDemoSubclass(Parameters):
+    def __init__(self, **kwargs):
+        super().__init__()  # initialize base Parameters without passing arguments
+
+        self.integer_parameter = self.add_par(
+            "integer_parameter", 1, int, "An integer parameter", critical=True
+        )
+        self.add_alias("int_par", "integer_parameter")  # shorthand
+
+        self.float_parameter = self.add_par(
+            "float_parameter", 1.0, float, "A float parameter", critical=True
+        )
+        self.add_alias("float_par", "float_parameter")  # shorthand
+
+        self.plotting_value = self.add_par(
+            "plotting_value", True, bool, "A boolean parameter", critical=False
+        )
+
+        self._secret_parameter = self.add_par(
+            "_secret_parameter", 1, int, "An internal (hidden) parameter", critical=True
+        )
+
+        self.nullable_parameter = self.add_par(
+            "nullable_parameter",
+            1,
+            [int, None],
+            "A parameter we can set to None",
+            critical=True,
+        )
+
+        # lock this object so it can't be accidentally given the wrong name
+        self._enforce_no_new_attrs = True
+
+        self.load_then_update(kwargs)
 
 
 if __name__ == "__main__":
