@@ -259,16 +259,17 @@ def test_parameter_name_matches():
     # cannot initialize parameters subclass (which is locked) with wrong key
     with pytest.raises(AttributeError) as e:
         ParsDemoSubclass(wrong_key="test")
-    assert 'Attribute "wrong_key" does not exist.' in str(e)
+    assert "object has no attribute " in str(e)
 
     int_par = np.random.randint(2, 10)
     float_par = np.random.uniform(2, 10)
 
     p = ParsDemoSubclass(Int_Par=int_par, FLOAT_P=float_par, plot=False, null=None)
+    p._remove_underscores = True
 
-    assert p.Int_Par == int_par
+    assert p.IntPar == int_par
     assert p.integer_parameter == int_par
-    assert p.FLOAT_P == float_par
+    assert p.FLOATP == float_par
     assert p.float_parameter == float_par
     assert p.plot is False
     assert p.plotting_value is False
@@ -280,28 +281,27 @@ def test_parameter_name_matches():
     assert p.integer_parameter == int_par * 2
     p.INT = int_par * 3
     assert p.integer_parameter == int_par * 3
-
     p.FLOAT = float_par * 2
     assert p.float_parameter == float_par * 2
 
     # an attribute not related to any of these parameters still fails
     with pytest.raises(AttributeError) as e:
         p.wrong_attribute = 1
-    assert 'Attribute "wrong_attribute" does not exist.' in str(e)
+    assert "object has no attribute " in str(e)
 
     # now turn off the partial matches
     p._allow_shorthands = False
 
     with pytest.raises(AttributeError) as e:
         p.integer = int_par * 2
-    assert 'Attribute "integer" does not exist.' in str(e)
+    assert "object has no attribute " in str(e)
 
     with pytest.raises(AttributeError) as e:
         p.float = float_par * 2
-    assert 'Attribute "float" does not exist.' in str(e)
+    assert "object has no attribute " in str(e)
 
-    # still works with capitals
-    p.Integer_Parameter = int_par * 2
+    # still works with capitals and no underscores
+    p.IntegerParameter = int_par * 2
     assert p.integer_parameter == int_par * 2
 
     # still works with aliases
@@ -313,11 +313,15 @@ def test_parameter_name_matches():
 
     with pytest.raises(AttributeError) as e:
         p.integer_parameteR = int_par * 2
-    assert 'Attribute "integer_parameteR" does not exist.' in str(e)
+    assert "object has no attribute" in str(e)
 
     # aliases still work
     p.int_par = int_par * 3
     assert p.integer_parameter == int_par * 3
+
+    # underscores are still removed
+    p.float___parameter = float_par * 2
+    assert p.float_parameter == float_par * 2
 
     # turn partial matches back on:
     p._allow_shorthands = True
@@ -327,7 +331,7 @@ def test_parameter_name_matches():
     # but capitals are still turned off
     with pytest.raises(AttributeError) as e:
         p.Float_Parameter = float_par * 2
-    assert 'Attribute "Float_Parameter" does not exist.' in str(e)
+    assert "object has no attribute" in str(e)
 
     # check critical parameters can be filtered out using to_dict
     keys = p.to_dict(critical=True, hidden=False).keys()
@@ -337,7 +341,7 @@ def test_parameter_name_matches():
     keys == [
         "integer_parameter",
         "float_parameter",
-        "_internal_parameter",
+        "_secret_parameter",
         "nullable_parameter",
     ]
 
@@ -345,7 +349,7 @@ def test_parameter_name_matches():
     keys == [
         "integer_parameter",
         "float_parameter",
-        "_internal_parameter",
+        "_secret_parameter",
         "plotting_value",
         "nullable_parameter",
         "_enforce_no_new_attrs",

@@ -284,6 +284,14 @@ class Parameters:
             critical=False,
         )
 
+        self._remove_underscores = self.add_par(
+            "_remove_underscores",
+            False,
+            bool,
+            "If true, underscores are ignored in parameter names. ",
+            critical=False,
+        )
+
         self._cfg_key = self.add_par(
             "_cfg_key",
             None,
@@ -307,12 +315,16 @@ class Parameters:
         Get the real parameter name from a partial string,
         ignoring case, and following the alias dictionary.
         """
+        if key in self.__dict__:
+            return key
+
         if key.startswith("__"):
             return key
 
         if (
             "_allow_shorthands" not in self.__dict__
             or "_ignore_case" not in self.__dict__
+            or "_remove_underscores" not in self.__dict__
             or "__aliases__" not in self.__dict__
         ):
             return key
@@ -320,25 +332,45 @@ class Parameters:
         # get these without passing back through the whole machinery
         allow_shorthands = super().__getattribute__("_allow_shorthands")
         ignore_case = super().__getattribute__("_ignore_case")
+        remove_underscores = super().__getattribute__("_remove_underscores")
         aliases_dict = super().__getattribute__("__aliases__")
 
-        if allow_shorthands:
-            if ignore_case:  # partial match ignoring case
-                matches = [
-                    v
-                    for k, v in aliases_dict.items()
-                    if k.lower().startswith(key.lower())
-                ]
-            else:  # partial match respecting case
-                matches = [v for k, v in aliases_dict.items() if k.startswith(key)]
-        else:  # no shorthands (full name match)
-            if ignore_case:  # full match ignoring case
-                matches = [
-                    v for k, v in aliases_dict.items() if key.lower() == k.lower()
-                ]
-            else:  # must find exact match
-                matches = [key] if key in aliases_dict.keys() else []
+        if not allow_shorthands and not ignore_case and not remove_underscores:
+            return key
 
+        if ignore_case:
+
+            def reducer1(x):
+                return x.lower()
+
+        else:
+
+            def reducer1(x):
+                return x
+
+        if remove_underscores:
+
+            def reducer(x):
+                return reducer1(x.replace("_", ""))
+
+        else:
+
+            def reducer(x):
+                return reducer1(x)
+
+        if allow_shorthands:
+
+            def comparator(x, y):
+                return x.startswith(y)
+
+        else:
+
+            def comparator(x, y):
+                return x == y
+
+        matches = [
+            v for k, v in aliases_dict.items() if comparator(reducer(k), reducer(key))
+        ]
         matches = list(set(matches))  # remove duplicates
 
         if len(matches) > 1:
@@ -347,12 +379,11 @@ class Parameters:
                 f"Matches: {matches}. "
             )
         elif len(matches) == 0:
-            raise AttributeError(f'Attribute "{key}" does not exist.')
+            # this will either raise an AttributeError or not,
+            # depending on _enforce_no_new_attrs (in setter):
+            return key
         else:
-            key = matches[0]
-
-        # traverse the alias dictionary:
-        return self.__aliases__[key]
+            return matches[0]  # one match is good!
 
     def __getattr__(self, key):
 
@@ -383,8 +414,9 @@ class Parameters:
             and real_key not in self.__dict__
             and real_key not in propagated_keys
         ):
-            print(real_key)
-            raise AttributeError(f'Attribute "{key}" does not exist.')
+            raise AttributeError(
+                f"{self.__class__.__name__} object has no attribute '{key}'"
+            )
 
         if real_key == "project" and value is not None:
             value = legalize(value)
@@ -982,8 +1014,8 @@ class ParsDemoSubclass(Parameters):
             "plotting_value", True, bool, "A boolean parameter", critical=False
         )
 
-        self._internal_parameter = self.add_par(
-            "_internal_parameter", 1, int, "An internal parameter", critical=True
+        self._secret_parameter = self.add_par(
+            "_secret_parameter", 1, int, "An internal (hidden) parameter", critical=True
         )
 
         self.nullable_parameter = self.add_par(
