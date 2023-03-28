@@ -1,5 +1,3 @@
-# AstroRetriever
-
 ![Astro Retriever](images/logo.png?raw=true)
 
 A customizable package for downloading and processing images
@@ -91,6 +89,73 @@ Each of these steps uses parameters that are stored in a configuration file.
 Each of these steps produces data products that are saved in a way that is easy
 to retrieve from disk and to continue the workflow without having to redo previous steps.
 We use several modes of persistence, and objects that lazy load the content from disk when needed.
+
+### Quick start
+
+#### Using an observatory to download data
+
+To simply download data from an observatory,
+initialize the appropriate virtual observatory object:
+
+```python
+from src.tess import VirtualTESS
+obs = VirtualTESS(...)
+```
+
+Give any required parameters to the constructor or directly to the `obs.pars` object.
+Then it is possible to get a source based on the source name in a catalog,
+or based on the internal numbering, e.g., the TESS TIC ID number:
+
+```python
+source = obs.download_by_tic(tic_number)
+```
+
+Will download the data for the source with the given TIC ID number.
+
+#### Using a catalog
+
+If the observatory is connected to a catalog,
+using a `fetch_source` will get the source based on
+the catalog coordinates, but will also save that source
+to the database and to disk. So repeated calls to `fetch_source`
+will not download the same source twice.
+
+```python
+cat_row = obs.catalog.get_row(index, "number", "dict")
+source = obs.fetch_source(cat_row, save=True, reduce=True)
+```
+
+The `cat_row` can be any dictionary that includes
+the ra, dec and name of the source.
+Using `get_row` allows iterating over the catalog.
+The `reduce=True` option will also produce reduced data.
+By default, the observatory object is meant to download
+only photometry (lightcurves). This can be modified
+by changing the observatory parameters' `data_types`.
+
+#### Getting all sources and raw data from catalog
+
+To get all the sources in the catalog, call
+
+```python
+obs.fetch_all_sources(start=0, stop=None, save=True, reduce=True)
+```
+
+This will iterate between the first catalog entry (`start`)
+and the last catalog entry (`stop`) and save any new data.
+
+To also run analysis on these sources,
+simply initialize a `Project` and set it to `run()` over
+the catalog:
+
+```python
+proj = Project(name='new_project', obs_names='TESS', catalog_kwargs={'default': 'WDs'})
+proj.run()
+```
+
+See more complete usages in the [examples](#usage-examples).
+
+#### Using light curves on sources
 
 ### Persistence of data
 
