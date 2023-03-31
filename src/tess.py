@@ -162,6 +162,11 @@ class VirtualTESS(VirtualObservatory):
         # get the altdata from the init_kwargs (if it is there)
         altdata_base = init_kwargs.pop("altdata", dataset.altdata)
 
+        if "zero_point_instrumental" not in init_kwargs:
+            # from the TESS instrument handbook section 7.1
+            # https://archive.stsci.edu/files/live/sites/mast/files/home/missions-and-data/active-missions/tess/_documents/TESS_Instrument_Handbook_v0.1.pdf
+            init_kwargs["zero_point_instrumental"] = 20.44
+
         # split the dataframe into sectors
         if len(dataset.data) == 0:
             return []
@@ -201,9 +206,14 @@ class VirtualTESS(VirtualObservatory):
                 1.0: "end",
             }.get(float(altdata_base["lightcurve_headers"][idx]["TIMEPIXR"]), 0.5)
             if len(df) > 0:
-                new_datasets.append(
-                    Lightcurve(data=df, altdata=new_altdata, **init_kwargs)
-                )
+                lc = Lightcurve(data=df, altdata=new_altdata, **init_kwargs)
+                new_datasets.append(lc)
+
+                # calculate the measured zero point
+                tessmag = new_altdata["file_headers"][0].get("TESSMAG")
+                if tessmag is not None:
+                    zp = tessmag + 2.5 * np.log10(lc.data["flux"].median())
+                    lc.zero_point_measured = zp
 
         # TODO: add more processing here (e.g., detrending)
 
@@ -837,10 +847,12 @@ if __name__ == "__main__":
     import src.database
 
     src.database.DATA_ROOT = "data"
-    tess = VirtualTESS(project="testing VirtualTESS", verbose=0)
+    tess = VirtualTESS(project="tess_wds", verbose=10)
 
-    # white_dwarfs = Catalog(default="wd")
-    # white_dwarfs.load()
+    tess.catalog = Catalog(default="wd")
+    tess.catalog.load()
+
+    tess.fetch_all_sources(save=True, reduce=True)
     #
     # print("finished loading catalog")
     #

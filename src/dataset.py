@@ -1524,6 +1524,22 @@ class Lightcurve(DatasetMixin, Base):
             doc="Number of good points in the lightcurve.",
         )
 
+        zero_point_instrumental = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=False,
+            doc="Instrumental zero point for this lightcurve. "
+            "Should be the same across all lightcurves from this observatory/filter. ",
+        )
+
+        zero_point_measured = sa.Column(
+            sa.Float,
+            nullable=True,
+            index=True,
+            doc="Measured zero point calculated by comparing the mean flux "
+            "and the magnitude given by the cat_row. ",
+        )
+
         flux_mean = sa.Column(
             sa.Float,
             nullable=True,
@@ -1535,7 +1551,7 @@ class Lightcurve(DatasetMixin, Base):
         def mag_mean(self):
             if self.flux_mean is None:
                 return None
-            return -2.5 * np.log10(self.flux_mean) + PHOT_ZP
+            return -2.5 * np.log10(self.flux_mean) + self._get_zero_point()
 
         flux_rms = sa.Column(
             sa.Float,
@@ -1562,7 +1578,7 @@ class Lightcurve(DatasetMixin, Base):
         def mag_mean_robust(self):
             if self.flux_mean_robust is None:
                 return None
-            return -2.5 * np.log10(self.flux_mean_robust) + PHOT_ZP
+            return -2.5 * np.log10(self.flux_mean_robust) + self._get_zero_point()
 
         flux_rms_robust = sa.Column(
             sa.Float,
@@ -1590,7 +1606,7 @@ class Lightcurve(DatasetMixin, Base):
         def mag_brightest(self):
             if self.flux_max is None:
                 return None
-            return -2.5 * np.log10(self.flux_max) + PHOT_ZP
+            return -2.5 * np.log10(self.flux_max) + self._get_zero_point()
 
         flux_min = sa.Column(
             sa.Float,
@@ -1603,7 +1619,7 @@ class Lightcurve(DatasetMixin, Base):
         def mag_faintest(self):
             if self.flux_min is None:
                 return None
-            return -2.5 * np.log10(self.flux_min) + PHOT_ZP
+            return -2.5 * np.log10(self.flux_min) + self._get_zero_point()
 
         snr_max = sa.Column(
             sa.Float,
@@ -1873,6 +1889,12 @@ class Lightcurve(DatasetMixin, Base):
                 self.altdata["exptime"] = value
                 del self.altdata[key]
 
+    def _get_zero_point(self):
+        if self.zero_point_instrumental is None:
+            return PHOT_ZP
+        else:
+            return self.zero_point_instrumental
+
     def _calc_mag_flux(self):
         """
         Calculate the flux from the magnitude,
@@ -1888,7 +1910,7 @@ class Lightcurve(DatasetMixin, Base):
         # calculate the fluxes from the magnitudes
         if "mag" in self.colmap and "flux" not in self.colmap:
             mags = self.data[self.colmap["mag"]]
-            fluxes = 10 ** ((-mags + PHOT_ZP) / 2.5)
+            fluxes = 10 ** ((-mags + self._get_zero_point()) / 2.5)
             self.data["flux"] = fluxes
             self.colmap["flux"] = "flux"
 
@@ -1903,7 +1925,7 @@ class Lightcurve(DatasetMixin, Base):
             fluxes = self.data[self.colmap["flux"]]
             # calculate the magnitudes from the fluxes
             good_points = np.logical_and(np.invert(np.isnan(fluxes)), fluxes > 0)
-            mags = -2.5 * np.log10(fluxes, where=good_points) + PHOT_ZP
+            mags = -2.5 * np.log10(fluxes, where=good_points) + self._get_zero_point()
             mags[np.invert(good_points)] = np.nan
             self.data["mag"] = mags
             self.colmap["mag"] = "mag"
