@@ -39,7 +39,7 @@ def test_tess_download(tess_project, wd_cat):
     tess.catalog = c
 
     # make sure TESS downloads based on the Gaia_RP and not Gaia_G
-    cat_row = tess._get_catalog_row(0)
+    cat_row = tess.get_catalog_row(0)
     assert isinstance(cat_row, dict)
     assert cat_row["mag"] == tess.catalog.data["phot_rp_mean_mag"][0]
 
