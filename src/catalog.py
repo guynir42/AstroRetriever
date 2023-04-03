@@ -751,10 +751,10 @@ class Catalog:
         filter_name = self.pars.mag_filter_name
 
         if preferred_mag is not None:
-            preferred_mag = legalize(preferred_mag, to_lower=True)
+            preferred_mag_legal = legalize(preferred_mag, to_lower=True)
             if self.pars.mag_to_column_map is not None:
-                if preferred_mag in self.pars.mag_to_column_map:
-                    mag = float(row[self.pars.mag_to_column_map[preferred_mag]])
+                if preferred_mag_legal in self.pars.mag_to_column_map:
+                    mag = float(row[self.pars.mag_to_column_map[preferred_mag_legal]])
                     filter_name = preferred_mag
                 else:
                     raise ValueError(
@@ -765,9 +765,9 @@ class Catalog:
                     "preferred_mag is not None, but mag_to_column_map is None."
                 )
             if self.pars.mag_to_error_column_map is not None:
-                if preferred_mag in self.pars.mag_to_error_column_map:
+                if preferred_mag_legal in self.pars.mag_to_error_column_map:
                     mag_err = float(
-                        row[self.pars.mag_to_error_column_map[preferred_mag]]
+                        row[self.pars.mag_to_error_column_map[preferred_mag_legal]]
                     )
                 else:
                     raise ValueError(

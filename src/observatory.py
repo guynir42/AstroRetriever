@@ -358,7 +358,7 @@ class VirtualObservatory:
             with open(filepath) as file:
                 self._credentials = yaml.safe_load(file).get(key, {})
 
-    def _get_catalog_row(self, index):
+    def get_catalog_row(self, index):
         """
         Get the catalog row as a dictionary,
         for the index (serial number) inside
@@ -463,7 +463,7 @@ class VirtualObservatory:
 
             # TODO: add report return parameters and append them to a circular buffer
             if num_threads <= 1:  # single threaded execution
-                cat_row = self._get_catalog_row(i)
+                cat_row = self.get_catalog_row(i)
                 try:
                     s = self.fetch_source(
                         cat_row=cat_row,
@@ -559,7 +559,7 @@ class VirtualObservatory:
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = []
             for i in range(start, stop):
-                cat_row = self._get_catalog_row(i)
+                cat_row = self.get_catalog_row(i)
                 futures.append(
                     executor.submit(
                         self.fetch_source,
@@ -1604,13 +1604,15 @@ class VirtualDemoObs(VirtualObservatory):
 
 
 if __name__ == "__main__":
+    from src.tess import VirtualTESS
     from src.catalog import Catalog
     from src import dataset
 
     dataset.DATA_ROOT = "/home/guyn/data"
 
-    obs = VirtualDemoObs(num_threads_download=5, project="test")
-    # obs = VirtualObservatory()
-    cat = Catalog(default="WD")
-    cat.load()
-    obs.catalog = cat
+    obs = VirtualTESS(project="test")
+    obs.catalog = Catalog(default="WD")
+    obs.catalog.load()
+
+    cat_row = obs.get_catalog_row(2555)
+    obs.fetch_source(cat_row)
