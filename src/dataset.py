@@ -94,6 +94,7 @@ def commit_and_save(datasets, session=None, save_kwargs={}):
 
         for dataset in datasets:
             try:
+                dataset.sanitize()
                 session.add(dataset)
                 if not dataset.check_file_exists():
                     lock.acquire()  # thread blocks at this line until it can obtain lock
@@ -175,8 +176,7 @@ class DatasetMixin:
             sa.String,
             nullable=False,
             index=True,
-            doc="Filename of the dataset, including relative path, "
-            "that may be appended to the folder attribute. ",
+            doc="Filename of the dataset, including relative path, " "that may be appended to the folder attribute. ",
         )
 
         folder = sa.Column(
@@ -194,9 +194,7 @@ class DatasetMixin:
             doc="Key of the dataset (e.g., in the HDF5 file it would be the group name)",
         )
 
-        format = sa.Column(
-            sa.String, nullable=False, default="hdf5", doc="Format of the dataset"
-        )
+        format = sa.Column(sa.String, nullable=False, default="hdf5", doc="Format of the dataset")
 
         # TODO: add a method to use this dictionary
         load_instructions = sa.Column(
@@ -240,9 +238,7 @@ class DatasetMixin:
         )
 
         # data size and shape
-        shape = sa.Column(
-            sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset"
-        )
+        shape = sa.Column(sa.ARRAY(sa.Integer), nullable=False, doc="Shape of the dataset")
         number = sa.Column(
             sa.Integer,
             nullable=False,
@@ -333,9 +329,7 @@ class DatasetMixin:
             raise ValueError(f"Filename must be a string, not {type(self.filename)}")
 
         if not isinstance(self.filekey, (str, int, type(None))):
-            raise ValueError(
-                f"Key must be a string, int, or None, not {type(self.filekey)}"
-            )
+            raise ValueError(f"Key must be a string, int, or None, not {type(self.filekey)}")
 
         # guess some attributes that were not given
         if self.format is None:
@@ -573,10 +567,7 @@ class DatasetMixin:
             altdata = {}
             if store.get_storer(key).attrs and "altdata" in store.get_storer(key).attrs:
                 altdata = store.get_storer(key).attrs["altdata"]
-            elif (
-                store.get_storer(key).attrs
-                and "altdata_keys" in store.get_storer(key).attrs
-            ):
+            elif store.get_storer(key).attrs and "altdata_keys" in store.get_storer(key).attrs:
                 keys = store.get_storer(key).attrs["altdata_keys"]
                 for k in keys:
                     altdata[k] = store.get_storer(key).attrs[k]
@@ -597,9 +588,7 @@ class DatasetMixin:
     def _load_netcdf(self):
         pass
 
-    def _invent_filename(
-        self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None
-    ):
+    def _invent_filename(self, source_name=None, ra_deg=None, ra_minute=None, ra_second=None):
 
         """
         Generate a filename and sub-folder with some pre-defined
@@ -682,9 +671,7 @@ class DatasetMixin:
                 source_name = random_string()
             # need to make up a file name in a consistent way
             if ra_second is not None and (ra_deg is None or ra_minute is None):
-                raise ValueError(
-                    "If ra_second is given, ra_deg and ra_minute must also be given"
-                )
+                raise ValueError("If ra_second is given, ra_deg and ra_minute must also be given")
             if ra_minute is not None and ra_deg is None:
                 raise ValueError("If ra_minute is given, ra_deg must also be given")
 
@@ -840,9 +827,7 @@ class DatasetMixin:
 
         # for any of the formats where we need an in-file key:
         if self.filekey is None and self.format in ("hdf5",):
-            self._invent_filekey(
-                source_name=source_name, prefix=key_prefix, suffix=key_suffix
-            )
+            self._invent_filekey(source_name=source_name, prefix=key_prefix, suffix=key_suffix)
 
         if overwrite is None:
             overwrite = self.overwrite
@@ -877,9 +862,7 @@ class DatasetMixin:
                         if overwrite:
                             store.remove(self.filekey)
                         else:
-                            raise ValueError(
-                                f"Key {self.filekey} already exists in file {self.get_fullname()}"
-                            )
+                            raise ValueError(f"Key {self.filekey} already exists in file {self.get_fullname()}")
                     # only store a key for non-empty dataframes
                     if len(self.data) > 0:
                         store.put(self.filekey, self.data)
@@ -890,9 +873,7 @@ class DatasetMixin:
                         keys = list(altdata_to_write.keys())
                         store.get_storer(self.filekey).attrs["altdata_keys"] = keys
                         for key in keys:
-                            store.get_storer(self.filekey).attrs[
-                                key
-                            ] = altdata_to_write[key]
+                            store.get_storer(self.filekey).attrs[key] = altdata_to_write[key]
 
             elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:
@@ -985,9 +966,7 @@ class DatasetMixin:
                 #  e.g., https://mail.python.org/pipermail/astropy/2014-April/002844.html
                 self.colmap["time"] = c
                 break
-            elif simplify(c) in ("time", "datetime") and isinstance(
-                example, (str, bytes)
-            ):
+            elif simplify(c) in ("time", "datetime") and isinstance(example, (str, bytes)):
                 if "T" in example:
                     self.time_info["format"] = "isot"
                 else:
@@ -1062,9 +1041,7 @@ class DatasetMixin:
         if len(self._data) == 0:
             return
         if len(self.time_info) == 0:
-            raise ValueError(
-                "No time_info was found. Make sure to run update_colmap() first..."
-            )
+            raise ValueError("No time_info was found. Make sure to run update_colmap() first...")
 
         def time_parser(t):
             return Time(
@@ -1095,9 +1072,7 @@ class DatasetMixin:
         else:
             pass  # should this be an error?
 
-    def plot_photometry(
-        self, ttype="mjd", ftype="mag", use_phot_zp=False, ax=None, **kwargs
-    ):
+    def plot_photometry(self, ttype="mjd", ftype="mag", use_phot_zp=False, ax=None, **kwargs):
         """
         Plot the photometry data.
 
@@ -1199,16 +1174,12 @@ class DatasetMixin:
     @data.setter
     def data(self, data):
         if not isinstance(data, (np.ndarray, pd.DataFrame, xr.Dataset)):
-            raise ValueError(
-                "Data must be a numpy array, "
-                "pandas DataFrame, or xarray Dataset, "
-                f"not {type(data)}"
-            )
+            raise ValueError("Data must be a numpy array, " "pandas DataFrame, or xarray Dataset, " f"not {type(data)}")
 
         self._data = data
 
         # remove rows with nan timestamps
-        if len(self._data.index) > 0 and "time" in self.colmap:
+        if len(self._data.index) > 0 and self.colmap is not None and "time" in self.colmap:
             self._data = data[~np.isnan(data[self.colmap["time"]])]
 
         self.shape = self._data.shape
@@ -1285,9 +1256,7 @@ class RawPhotometry(DatasetMixin, Base):
         doc="Name of the source for which this observation was taken",
     )
 
-    __table_args__ = (
-        UniqueConstraint("source_name", "observatory", name="_source_name_obs_name_uc"),
-    )
+    __table_args__ = (UniqueConstraint("source_name", "observatory", name="_source_name_obs_name_uc"),)
 
     def __init__(self, **kwargs):
         """
@@ -1462,24 +1431,21 @@ class Lightcurve(DatasetMixin, Base):
             nullable=False,
             index=True,
             default="",
-            doc="Hash of the configuration used to generate this object."
-            "(leave empty if not using version control)",
+            doc="Hash of the configuration used to generate this object." "(leave empty if not using version control)",
         )
 
         raw_data_id = sa.Column(
             sa.Integer,
             sa.ForeignKey("raw_photometry.id", ondelete="CASCADE"),
             index=True,
-            doc="ID of the raw dataset that was used "
-            "to produce this reduced dataset.",
+            doc="ID of the raw dataset that was used " "to produce this reduced dataset.",
         )
 
         raw_data_filename = sa.Column(
             sa.String,
             nullable=True,
             index=True,
-            doc="Filename of the raw dataset that "
-            "was used to produce this reduced dataset.",
+            doc="Filename of the raw dataset that " "was used to produce this reduced dataset.",
         )
 
         series_number = sa.Column(
@@ -1513,8 +1479,7 @@ class Lightcurve(DatasetMixin, Base):
             sa.Integer,
             nullable=True,
             index=False,
-            doc="Total number of simulated lightcurves made "
-            "for each reduced lightcurve. ",
+            doc="Total number of simulated lightcurves made " "for each reduced lightcurve. ",
         )
 
         num_good = sa.Column(
@@ -1536,8 +1501,7 @@ class Lightcurve(DatasetMixin, Base):
             sa.Float,
             nullable=True,
             index=True,
-            doc="Measured zero point calculated by comparing the mean flux "
-            "and the magnitude given by the cat_row. ",
+            doc="Measured zero point calculated by comparing the mean flux " "and the magnitude given by the cat_row. ",
         )
 
         flux_mean = sa.Column(
@@ -1584,8 +1548,7 @@ class Lightcurve(DatasetMixin, Base):
             sa.Float,
             nullable=True,
             index=True,
-            doc="Robust mean flux scatter of the dataset"
-            "calculated using sigma clipping",
+            doc="Robust mean flux scatter of the dataset" "calculated using sigma clipping",
         )
 
         @property
@@ -1699,8 +1662,7 @@ class Lightcurve(DatasetMixin, Base):
             nullable=False,
             default=False,
             index=True,
-            doc="True when lightcurve has been processed/analyzed "
-            "and has quality cuts and S/N applied.",
+            doc="True when lightcurve has been processed/analyzed " "and has quality cuts and S/N applied.",
         )
 
         is_simulated = sa.Column(
@@ -1708,8 +1670,7 @@ class Lightcurve(DatasetMixin, Base):
             nullable=False,
             default=False,
             index=True,
-            doc="True when lightcurve is simulated "
-            "(or when injected with simulated events).",
+            doc="True when lightcurve is simulated " "(or when injected with simulated events).",
         )
 
     def __init__(self, data=None, **kwargs):
@@ -1753,7 +1714,11 @@ class Lightcurve(DatasetMixin, Base):
                 setattr(self, k, deepcopy(v))
 
             # make sure to grab the data as well
+            # must have the colmap and time_info, too
+            self.colmap = other.colmap.copy()
+            self.time_info = other.time_info.copy()
             self.data = other.data.copy(deep=True)
+
             return
 
         if "data" not in kwargs:
@@ -1786,9 +1751,7 @@ class Lightcurve(DatasetMixin, Base):
                     def filter_mapping(filt):
                         new_filt = kwargs["filtmap"]
                         if self.observatory:
-                            new_filt = new_filt.replace(
-                                "<observatory>", self.observatory.lower()
-                            )
+                            new_filt = new_filt.replace("<observatory>", self.observatory.lower())
                         return new_filt.replace("<filter>", filt)
 
                 self.data.loc[:, fcol] = self.data.loc[:, fcol].map(filter_mapping)
@@ -1827,10 +1790,7 @@ class Lightcurve(DatasetMixin, Base):
     def __repr__(self):
         string = []
         string.append(
-            f"{self.__class__.__name__}("
-            f"id={self.id}, "
-            f"source={self.source_name}, "
-            f"epochs={self.number}"
+            f"{self.__class__.__name__}(" f"id={self.id}, " f"source={self.source_name}, " f"epochs={self.number}"
         )
         if self.was_processed:
             string.append("processed")
@@ -1842,9 +1802,7 @@ class Lightcurve(DatasetMixin, Base):
         if self.observatory:
             string.append(self.observatory.upper())
         if self.mag_mean_robust is not None and self.mag_rms_robust is not None:
-            string.append(
-                f"mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f}"
-            )
+            string.append(f"mag[{self.filter}]={self.mag_mean_robust:.2f}\u00B1{self.mag_rms_robust:.2f}")
         string.append(f"file: {self.filename}")
 
         if self.filekey:
@@ -2164,9 +2122,7 @@ class Lightcurve(DatasetMixin, Base):
 
         return colors.get(self.filter.lower(), default_color)
 
-    def plot(
-        self, ttype="mjd", ftype="mag", threshold=5.0, font_size=16, ax=None, **kwargs
-    ):
+    def plot(self, ttype="mjd", ftype="mag", threshold=5.0, font_size=16, ax=None, **kwargs):
         """
         Plot the lightcurve.
 
@@ -2262,11 +2218,7 @@ class Lightcurve(DatasetMixin, Base):
         # handle the legend
         # remove repeated labes: https://stackoverflow.com/a/56253636/18256949
         handles, labels = ax.get_legend_handles_labels()
-        unique = [
-            (h, l)
-            for i, (h, l) in enumerate(zip(handles, labels))
-            if l not in labels[:i]
-        ]
+        unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
         ax.legend(
             *zip(*unique),
             loc="upper left",
@@ -2305,9 +2257,7 @@ class Lightcurve(DatasetMixin, Base):
             filename += ".h5"
 
         if not overwrite and os.path.isfile(filename):
-            raise FileExistsError(
-                f"File {filename} already exists. Set overwrite=True to overwrite."
-            )
+            raise FileExistsError(f"File {filename} already exists. Set overwrite=True to overwrite.")
 
         df = self.data.copy()
         df.rename(columns={"exptime": "exp_time"}, inplace=True)
@@ -2485,8 +2435,7 @@ def insert_new_dataset(mapper, connection, target):
         else:
             if target.filename is None:
                 raise ValueError(
-                    f"No filename specified for {target}. "
-                    "Save the dataset to disk to generate a filename. "
+                    f"No filename specified for {target}. " "Save the dataset to disk to generate a filename. "
                 )
             raise ValueError(
                 f"File {target.get_fullname()}"

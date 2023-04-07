@@ -51,24 +51,19 @@ class ParsObservatory(Parameters):
     def __init__(self, obs_name):
         super().__init__()
 
-        self.obs_name = self.add_par(
-            "obs_name", obs_name.upper(), str, "Name of the observatory."
-        )
+        self.obs_name = self.add_par("obs_name", obs_name.upper(), str, "Name of the observatory.")
         self._cfg_sub_key = self.obs_name
 
         if obs_name.upper() not in self.__class__.allowed_obs_names:
             self.__class__.allowed_obs_names.append(obs_name.upper())
 
-        self.reduce_kwargs = self.add_par(
-            "reduce_kwargs", {}, dict, "Arguments to pass to reduction method"
-        )
+        self.reduce_kwargs = self.add_par("reduce_kwargs", {}, dict, "Arguments to pass to reduction method")
 
         self.credentials = self.add_par(
             "credentials",
             {},
             dict,
-            "Credentials for the observatory or instructions for "
-            "how and where to load them from. ",
+            "Credentials for the observatory or instructions for " "how and where to load them from. ",
         )
 
         self.observation_time = self.add_par(
@@ -110,12 +105,9 @@ class ParsObservatory(Parameters):
             "check_data_exists",
             True,
             bool,
-            "For any datasets found on a source, "
-            "check if the data files exist on disk.",
+            "For any datasets found on a source, " "check if the data files exist on disk.",
         )
-        self.overwrite_files = self.add_par(
-            "overwrite_files", True, bool, "Overwrite existing files"
-        )
+        self.overwrite_files = self.add_par("overwrite_files", True, bool, "Overwrite existing files")
         self.save_ra_minutes = self.add_par(
             "save_ra_minutes",
             False,
@@ -159,13 +151,10 @@ class ParsObservatory(Parameters):
             "check_download_pars",
             False,  # this check could be expensive for large data folders
             bool,
-            "Check if the download parameters have changed since the last download"
-            "and if so, re-download the data",
+            "Check if the download parameters have changed since the last download" "and if so, re-download the data",
         )
 
-        self.save_reduced = self.add_par(
-            "save_reduced", True, bool, "Save reduced data to disk"
-        )
+        self.save_reduced = self.add_par("save_reduced", True, bool, "Save reduced data to disk")
 
         self._default_cfg_key = "observatories"
         self._enforce_no_new_attrs = False  # allow subclasses to expand attributes
@@ -475,9 +464,7 @@ class VirtualObservatory:
                     sources = [s]
                 except Exception as e:
                     self.pars.vprint(f"Failed to download source {i}: {e}")
-                    self.failures_list.append(
-                        dict(index=i, error=traceback.format_exc(), cat_row=cat_row)
-                    )
+                    self.failures_list.append(dict(index=i, error=traceback.format_exc(), cat_row=cat_row))
                     sources = []
             else:  # multiple threads
                 sources = self._fetch_sources_asynchronous(
@@ -499,10 +486,7 @@ class VirtualObservatory:
                     if obs_data is not None:
                         raw_data.append(obs_data)
                     else:
-                        raise RuntimeError(
-                            "Cannot find data from observatory "
-                            f"{self.name} on source {s.name}"
-                        )
+                        raise RuntimeError("Cannot find data from observatory " f"{self.name} on source {s.name}")
 
             # keep a subset of sources/datasets in memory
             self.sources += sources
@@ -511,9 +495,7 @@ class VirtualObservatory:
 
         return self.num_loaded
 
-    def _fetch_sources_asynchronous(
-        self, start, stop, save, reduce, download_args, dataset_args
-    ):
+    def _fetch_sources_asynchronous(self, start, stop, save, reduce, download_args, dataset_args):
         """
         Get data for a few sources, either by loading them
         from disk or by fetching the data online from
@@ -571,9 +553,7 @@ class VirtualObservatory:
                     )
                 )
 
-            done, _ = concurrent.futures.wait(
-                futures, return_when=concurrent.futures.ALL_COMPLETED
-            )
+            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.ALL_COMPLETED)
 
         sources = []
         for future in done:
@@ -582,9 +562,7 @@ class VirtualObservatory:
                 self.pars.vprint(f"Failed to download source {i}: {source}")
                 self.failures_list.append(dict(index=i, error=source, cat_row=cat_row))
             if not isinstance(source, Source):
-                raise RuntimeError(
-                    f"Source is not a Source object, but a {type(source)}. "
-                )
+                raise RuntimeError(f"Source is not a Source object, but a {type(source)}. ")
             sources.append(source)
 
         return sources
@@ -660,13 +638,7 @@ class VirtualObservatory:
             report_dict["source"] = "given"
 
         download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
-        download_pars.update(
-            {
-                k: download_args[k]
-                for k in self.pars.download_pars_list
-                if k in download_args
-            }
-        )
+        download_pars.update({k: download_args[k] for k in self.pars.download_pars_list if k in download_args})
 
         with SmartSession(session) as session:
 
@@ -680,9 +652,7 @@ class VirtualObservatory:
                     )
                 ).first()
 
-                self.pars.vprint(
-                    f"Is source found in database: {source is not None}", 9
-                )
+                self.pars.vprint(f"Is source found in database: {source is not None}", 9)
 
                 if source is not None:
                     report_dict["source"] = "database"
@@ -713,9 +683,7 @@ class VirtualObservatory:
                     check_data=self.pars.check_data_exists,
                 )
                 raw_data = raw_data[0] if len(raw_data) > 0 else None
-                self.pars.vprint(
-                    f"Is raw {dt} found in database: {raw_data is not None}", 9
-                )
+                self.pars.vprint(f"Is raw {dt} found in database: {raw_data is not None}", 9)
 
                 if raw_data is not None:
                     report_dict[f"raw_{dt}"] = "database"
@@ -753,31 +721,24 @@ class VirtualObservatory:
                     # the data are consistent with those used now
                     if "download_pars" not in raw_data.altdata:
                         # TODO: is delete the right thing to do?
-                        source.remove_raw_data(
-                            obs=self.name, data_type=dt, session=session
-                        )
+                        source.remove_raw_data(obs=self.name, data_type=dt, session=session)
                         raw_data = None
                     else:
                         for key in self.pars.download_pars_list:
                             if (
                                 key not in raw_data.altdata["download_pars"]
-                                or raw_data.altdata["download_pars"][key]
-                                != download_pars[key]
+                                or raw_data.altdata["download_pars"][key] != download_pars[key]
                             ):
                                 # TODO: is delete the right thing to do?
                                 # print("removing data")
-                                source.remove_raw_data(
-                                    obs=self.name, data_type=dt, session=session
-                                )
+                                source.remove_raw_data(obs=self.name, data_type=dt, session=session)
                                 raw_data = None
                                 break
 
                 # no data on DB/file, must re-download from observatory website:
                 if raw_data is None:
                     # <-- magic happens here! -- > #
-                    data, altdata = self.download_from_observatory(
-                        cat_row, **download_args
-                    )
+                    data, altdata = self.download_from_observatory(cat_row, **download_args)
 
                     self.pars.vprint(f"len(data)= {len(data)} | altdata= {altdata}", 9)
 
@@ -807,6 +768,7 @@ class VirtualObservatory:
                     if raw_data is not None:
                         report_dict[f"raw_{dt}"] = "new"
 
+                    raw_data.sanitize()  # replace numpy numbers with python numbers
                     raw_data.source = source
 
                 if raw_data is None:
@@ -832,9 +794,7 @@ class VirtualObservatory:
 
                     # could not find reduced data, so reduce it now
                     if len(reduced_datasets) == 0:
-                        reduced_datasets = self.reduce(
-                            source, data_type=dt, **reducer_args
-                        )
+                        reduced_datasets = self.reduce(source, data_type=dt, **reducer_args)
                         report_dict[f"reduced_{dt}"] = "new"
 
                     # make sure to append new data unto source and vice-versa
@@ -861,9 +821,7 @@ class VirtualObservatory:
                     commit_and_save(raw_data, session=session, save_kwargs=save_kwargs)
 
                     if reduce and self.pars.save_reduced:
-                        commit_and_save(
-                            reduced_datasets, session=session, save_kwargs=save_kwargs
-                        )
+                        commit_and_save(reduced_datasets, session=session, save_kwargs=save_kwargs)
 
         if source is not None:
             self.latest_source = source
@@ -896,9 +854,7 @@ class VirtualObservatory:
             Additional data to be stored in the raw data object.
 
         """
-        raise NotImplementedError(
-            "download_from_observatory() must be implemented in subclass"
-        )
+        raise NotImplementedError("download_from_observatory() must be implemented in subclass")
 
     def get_colmap_time_info(self, data=None, altdata=None):
         """
@@ -1001,13 +957,9 @@ class VirtualObservatory:
                             break
                         data = store[k]
                         cat_id = self._find_dataset_identifier(data, k)
-                        data_type = (
-                            "photometry"  # TODO: what about multiple data types??
-                        )
+                        data_type = "photometry"  # TODO: what about multiple data types??
                         # TODO: maybe just infer the data type from the filename?
-                        self.commit_source(
-                            data, data_type, cat_id, source_ids, filename, k, session
-                        )
+                        self.commit_source(data, data_type, cat_id, source_ids, filename, k, session)
 
         self.pars.vprint("Done populating sources.")
 
@@ -1284,14 +1236,10 @@ class VirtualObservatory:
 
         """
         if not isinstance(dataset, DataClass):
-            raise TypeError(
-                f"Dataset must be a {DataClass.__name__} or a subclass! "
-                f"Got {type(dataset)} instead..."
-            )
+            raise TypeError(f"Dataset must be a {DataClass.__name__} or a subclass! " f"Got {type(dataset)} instead...")
         if not isinstance(dataset.data, tuple(allowed_dataclasses)):
             raise TypeError(
-                f"Dataset data must be a one of: {allowed_dataclasses}! "
-                f"Got {type(dataset.data)} instead..."
+                f"Dataset data must be a one of: {allowed_dataclasses}! " f"Got {type(dataset.data)} instead..."
             )
 
     def help(self=None, owner_pars=None):
@@ -1313,29 +1261,20 @@ class ParsDemoObs(ParsObservatory):
 
         super().__init__("demo")
 
-        self.demo_boolean = self.add_par(
-            "demo_boolean", True, bool, "A boolean parameter"
-        )
+        self.demo_boolean = self.add_par("demo_boolean", True, bool, "A boolean parameter")
         self.demo_string = self.add_par("demo_string", "foo", str, "A string parameter")
-        self.demo_url = self.add_par(
-            "demo_url", "http://www.example.com", str, "A URL parameter"
-        )
+        self.demo_url = self.add_par("demo_url", "http://www.example.com", str, "A URL parameter")
 
-        self.wait_time = self.add_par(
-            "wait_time", 0.0, float, "Time to wait to simulate downloading from web."
-        )
+        self.wait_time = self.add_par("wait_time", 0.0, float, "Time to wait to simulate downloading from web.")
 
         self.wait_time_poisson = self.add_par(
             "wait_time_poisson",
             0.0,
             float,
-            "Time to wait to simulate downloading from web, "
-            "with a Poisson distribution random number.",
+            "Time to wait to simulate downloading from web, " "with a Poisson distribution random number.",
         )
 
-        self.sim_args = self.add_par(
-            "sim_args", {}, dict, "Arguments to pass to the simulator."
-        )
+        self.sim_args = self.add_par("sim_args", {}, dict, "Arguments to pass to the simulator.")
 
         self.download_pars_list = ["wait_time", "wait_time_poisson", "sim_args"]
 
@@ -1457,9 +1396,7 @@ class VirtualDemoObs(VirtualObservatory):
             sim_args_default.update(sim_args)
             sim_args = sim_args_default
 
-        self.pars.vprint(
-            f'Fetching data from demo observatory for source {cat_row["cat_index"]}'
-        )
+        self.pars.vprint(f'Fetching data from demo observatory for source {cat_row["cat_index"]}')
         total_wait_time_seconds = wait_time + np.random.poisson(wait_time_poisson)
         data = self.simulate_lightcurve(cat_row, **sim_args)
         altdata = {
@@ -1470,8 +1407,7 @@ class VirtualDemoObs(VirtualObservatory):
         time.sleep(total_wait_time_seconds)
 
         self.pars.vprint(
-            f'Finished fetching data for source {cat_row["cat_index"]} '
-            f"after {total_wait_time_seconds} seconds"
+            f'Finished fetching data for source {cat_row["cat_index"]} ' f"after {total_wait_time_seconds} seconds"
         )
 
         return data, altdata
@@ -1499,17 +1435,13 @@ class VirtualDemoObs(VirtualObservatory):
         dec = cat_row["dec"] + np.random.normal(0, 0.0001, num_points)
         dec = np.clip(dec, -90, 90)  # TODO: more realistic to "bounce back" from edges
         flag = np.zeros(num_points, dtype=bool)
-        test_data = dict(
-            mjd=mjd, mag=mag, mag_err=mag_err, ra=ra, dec=dec, filter=filter, flag=flag
-        )
+        test_data = dict(mjd=mjd, mag=mag, mag_err=mag_err, ra=ra, dec=dec, filter=filter, flag=flag)
         df = pd.DataFrame(test_data)
         df["exptime"] = exptime
 
         return df
 
-    def reduce_photometry(
-        self, dataset, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_
-    ):
+    def reduce_photometry(self, dataset, source=None, init_kwargs={}, mag_range=None, drop_bad=False, **_):
         """
         Reduce the dataset.
 
@@ -1547,9 +1479,7 @@ class VirtualDemoObs(VirtualObservatory):
             and some initial processing will be done,
             using the "reducer" parameter (or function inputs).
         """
-        self._check_dataset(
-            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
-        )
+        self._check_dataset(dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame])
 
         # check the source magnitude is within the range
         if source and source.mag is not None and mag_range:
