@@ -64,6 +64,7 @@ SecretStorage==3.3.3
 six==1.16.0
 smmap==5.0.0
 soupsieve==2.4
+scipy==1.11.3
 SQLAlchemy==2.0.3
 SQLAlchemy-Utils==0.40.0
 tables==3.7.0
