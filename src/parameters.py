@@ -56,9 +56,7 @@ def convert_data_type(data_type):
     elif data_type.lower() in ["cutout", "cutouts", "thumbnail", "thumbnails"]:
         out_type = "cutouts"
     else:
-        raise ValueError(
-            f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}"
-        )
+        raise ValueError(f'Data type given "{data_type}" ' f"is not one of {allowed_data_types}")
     return out_type
 
 
@@ -90,17 +88,12 @@ def get_class_from_data_type(data_type, level="raw"):
         elif level in ["reduced", "processed", "simulated"]:
             return Lightcurve
         else:
-            raise ValueError(
-                f"Unknown level {level}. "
-                "Use 'raw', 'reduced', 'processed' or 'simulated'."
-            )
+            raise ValueError(f"Unknown level {level}. " "Use 'raw', 'reduced', 'processed' or 'simulated'.")
     # elif data_type == "spectra":
     #     return RawSpectra
     # add more data types here
     else:
-        raise ValueError(
-            f'Data type given "{data_type}" is not one of {allowed_data_types}'
-        )
+        raise ValueError(f'Data type given "{data_type}" is not one of {allowed_data_types}')
 
 
 class Parameters:
@@ -271,16 +264,13 @@ class Parameters:
             "Types of data to use (e.g., photometry, spectroscopy)",
         )
 
-        self.verbose = self.add_par(
-            "verbose", 0, int, "Level of verbosity (0=quiet).", critical=False
-        )
+        self.verbose = self.add_par("verbose", 0, int, "Level of verbosity (0=quiet).", critical=False)
 
         self._enforce_type_checks = self.add_par(
             "_enforce_type_checks",
             True,
             bool,
-            "Choose if input values should be checked "
-            "against the type defined in add_par().",
+            "Choose if input values should be checked " "against the type defined in add_par().",
             critical=False,
         )
 
@@ -396,16 +386,11 @@ class Parameters:
             def comparator(x, y):
                 return x == y
 
-        matches = [
-            v for k, v in aliases_dict.items() if comparator(reducer(k), reducer(key))
-        ]
+        matches = [v for k, v in aliases_dict.items() if comparator(reducer(k), reducer(key))]
         matches = list(set(matches))  # remove duplicates
 
         if len(matches) > 1:
-            raise ValueError(
-                f"More than one parameter matches the given key: {key}. "
-                f"Matches: {matches}. "
-            )
+            raise ValueError(f"More than one parameter matches the given key: {key}. " f"Matches: {matches}. ")
         elif len(matches) == 0:
             # this will either raise an AttributeError or not,
             # depending on _enforce_no_new_attrs (in setter):
@@ -433,18 +418,10 @@ class Parameters:
         """
         real_key = self._get_real_par_name(key)
 
-        new_attrs_check = (
-            hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
-        )
+        new_attrs_check = hasattr(self, "_enforce_no_new_attrs") and self._enforce_no_new_attrs
 
-        if (
-            new_attrs_check
-            and real_key not in self.__dict__
-            and real_key not in propagated_keys
-        ):
-            raise AttributeError(
-                f"{self.__class__.__name__} object has no attribute '{key}'"
-            )
+        if new_attrs_check and real_key not in self.__dict__ and real_key not in propagated_keys:
+            raise AttributeError(f"{self.__class__.__name__} object has no attribute '{key}'")
 
         if real_key == "project" and value is not None:
             value = legalize(value)
@@ -452,17 +429,9 @@ class Parameters:
         if real_key == "data_types":
             value = normalize_data_types(value)
 
-        type_checks = (
-            hasattr(self, "_enforce_type_checks") and self._enforce_type_checks
-        )
-        if (
-            type_checks
-            and real_key in self.__typecheck__
-            and not isinstance(value, self.__typecheck__[real_key])
-        ):
-            raise TypeError(
-                f'Parameter "{key}" must be of type {self.__typecheck__[real_key]}'
-            )
+        type_checks = hasattr(self, "_enforce_type_checks") and self._enforce_type_checks
+        if type_checks and real_key in self.__typecheck__ and not isinstance(value, self.__typecheck__[real_key]):
+            raise TypeError(f'Parameter "{key}" must be of type {self.__typecheck__[real_key]}')
         super().__setattr__(real_key, value)
 
     def __contains__(self, key):
@@ -800,10 +769,7 @@ class Parameters:
         class_kwargs = getattr(self, f"{name}_kwargs", {})
 
         if module is None or class_name is None:
-            raise ValueError(
-                f"Cannot find module {name}_module "
-                f"or class {name}_class in parameters."
-            )
+            raise ValueError(f"Cannot find module {name}_module " f"or class {name}_class in parameters.")
 
         # if pars of calling class had any of these parameters
         # pass them to the pars of the class being loaded
@@ -813,9 +779,7 @@ class Parameters:
         # any other arguments passed in from caller override
         class_kwargs.update(kwargs)
 
-        return getattr(__import__(module, fromlist=[class_name]), class_name)(
-            **class_kwargs
-        )
+        return getattr(__import__(module, fromlist=[class_name]), class_name)(**class_kwargs)
 
     def add_defaults_to_dict(self, inputs):
         """
@@ -878,7 +842,7 @@ class Parameters:
             than that, nothing will be printed.
 
         """
-        if self.verbose > threshold:
+        if self.verbose >= threshold:
             print(text)
 
     def compare(self, other, hidden=False, critical=False, ignore=None, verbose=False):
@@ -918,11 +882,7 @@ class Parameters:
         for k in self.__defaultpars__.keys():
             if k in ignore:
                 continue
-            if (
-                (hidden or not k.startswith("_"))
-                and (not critical or self.__critical__[k])
-                and self[k] != other[k]
-            ):
+            if (hidden or not k.startswith("_")) and (not critical or self.__critical__[k]) and self[k] != other[k]:
                 same = False
                 if not verbose:
                     break
@@ -1037,19 +997,13 @@ class ParsDemoSubclass(Parameters):
     def __init__(self, **kwargs):
         super().__init__()  # initialize base Parameters without passing arguments
 
-        self.integer_parameter = self.add_par(
-            "integer_parameter", 1, int, "An integer parameter", critical=True
-        )
+        self.integer_parameter = self.add_par("integer_parameter", 1, int, "An integer parameter", critical=True)
         self.add_alias("int_par", "integer_parameter")  # shorthand
 
-        self.float_parameter = self.add_par(
-            "float_parameter", 1.0, float, "A float parameter", critical=True
-        )
+        self.float_parameter = self.add_par("float_parameter", 1.0, float, "A float parameter", critical=True)
         self.add_alias("float_par", "float_parameter")  # shorthand
 
-        self.plotting_value = self.add_par(
-            "plotting_value", True, bool, "A boolean parameter", critical=False
-        )
+        self.plotting_value = self.add_par("plotting_value", True, bool, "A boolean parameter", critical=False)
 
         self._secret_parameter = self.add_par(
             "_secret_parameter", 1, int, "An internal (hidden) parameter", critical=True

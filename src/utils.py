@@ -180,9 +180,7 @@ def dec2sex(dec):
     """
     if dec < -90 or dec > 90:
         raise ValueError("Dec out of range.")
-    return (
-        f"{int(dec):+03d}:{int((dec % 1) * 60):02d}:{((dec % 1) * 60) % 1 * 60:04.1f}"
-    )
+    return f"{int(dec):+03d}:{int((dec % 1) * 60):02d}:{((dec % 1) * 60) % 1 * 60:04.1f}"
 
 
 def ra2deg(ra):
@@ -343,7 +341,10 @@ def sanitize_attributes(attr):
         return int(attr)
 
     if issubclass(type(attr), (float, np.floating)):
-        return float(attr)
+        number = float(attr)
+        if np.isnan(number):
+            number = None
+        return number
 
     return attr
 
@@ -413,9 +414,7 @@ def legalize(name, to_lower=False):
         name = name.upper()
 
     if re.match(LEGAL_NAME_RE, name) is None:
-        raise ValueError(
-            f'Cannot legalize name "{name}". Must be alphanumeric without a leading number. '
-        )
+        raise ValueError(f'Cannot legalize name "{name}". Must be alphanumeric without a leading number. ')
 
     return name
 
@@ -464,9 +463,7 @@ def find_file_ignore_case(filename, folders=None):
     for folder in folders:
         if not os.path.isdir(folder):
             raise ValueError(f"Cannot find folder {folder}.")
-        files = [
-            f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))
-        ]
+        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         # reverse alphabetical order but with lower case before upper case
         files.sort(reverse=True)
 
@@ -535,9 +532,7 @@ class NamedList(list):
             raise TypeError(f"index must be a string or integer, not {type(index)}")
 
     def __contains__(self, name):
-        return self.convert_name(name) in [
-            self.convert_name(item.name) for item in self
-        ]
+        return self.convert_name(name) in [self.convert_name(item.name) for item in self]
 
     def keys(self):
         return [item.name for item in self]
@@ -564,9 +559,7 @@ class UniqueList(list):
         for i in range(len(self)):
             if i != key:
                 if self._check(value, self[i]):
-                    raise ValueError(
-                        f"Cannot assign to index {key}, with duplicate in index {i}."
-                    )
+                    raise ValueError(f"Cannot assign to index {key}, with duplicate in index {i}.")
         super().__setitem__(key, value)
 
     def __getitem__(self, key):
@@ -577,11 +570,7 @@ class UniqueList(list):
             for i, attr in enumerate(self.comparison_attributes):
                 if i >= len(key):
                     break  # no more keys to check
-                shortlist = [
-                    item
-                    for item in shortlist
-                    if self._compare(key[i], getattr(item, attr))
-                ]
+                shortlist = [item for item in shortlist if self._compare(key[i], getattr(item, attr))]
 
             if i == len(key) - 1:
                 return shortlist[0]
@@ -591,11 +580,7 @@ class UniqueList(list):
                 return new_list
 
         elif isinstance(key, str):
-            shortlist = [
-                item
-                for item in self
-                if self._compare(key, getattr(item, self.comparison_attributes[0]))
-            ]
+            shortlist = [item for item in self if self._compare(key, getattr(item, self.comparison_attributes[0]))]
             if len(shortlist) == 0:
                 raise KeyError(f"Key {key} not found in list.")
             if len(self.comparison_attributes) == 1:

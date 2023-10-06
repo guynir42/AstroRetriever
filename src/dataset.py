@@ -242,6 +242,7 @@ class DatasetMixin:
         number = sa.Column(
             sa.Integer,
             nullable=False,
+            index=True,
             doc="Number of observations/epochs in the dataset",
         )
         size = sa.Column(
@@ -569,9 +570,16 @@ class DatasetMixin:
                 altdata = store.get_storer(key).attrs["altdata"]
             elif store.get_storer(key).attrs and "altdata_keys" in store.get_storer(key).attrs:
                 keys = store.get_storer(key).attrs["altdata_keys"]
+                keys.sort()
                 for k in keys:
-                    altdata[k] = store.get_storer(key).attrs[k]
-
+                    if re.match(r"^.+_\d+$", k):
+                        new_k = k.split("_")[0]
+                        if new_k not in altdata:
+                            altdata[new_k] = []
+                        altdata[new_k].append(store.get_storer(key).attrs[k])
+                    else:
+                        altdata[k] = store.get_storer(key).attrs[k]
+            # TODO: test this on source 2245000747315345664
             return data, altdata
 
     def _load_fits(self):
@@ -873,7 +881,12 @@ class DatasetMixin:
                         keys = list(altdata_to_write.keys())
                         store.get_storer(self.filekey).attrs["altdata_keys"] = keys
                         for key in keys:
-                            store.get_storer(self.filekey).attrs[key] = altdata_to_write[key]
+                            value = altdata_to_write[key]
+                            if isinstance(value, list) and all([isinstance(item, dict) for item in value]):
+                                for i, item in enumerate(value):
+                                    store.get_storer(self.filekey).attrs[f"{key}_{i}"] = value[i]
+                            else:
+                                store.get_storer(self.filekey).attrs[key] = value
 
             elif isinstance(self._data, np.ndarray):
                 with h5py.File(self.get_fullname(), "w") as f:
