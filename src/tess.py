@@ -39,8 +39,7 @@ class ParsObsTESS(ParsObservatory):
             "distance_thresh",
             10.0,
             float,
-            "Distance threshold in arcseconds for flagging "
-            "close stars while querying TIC.",
+            "Distance threshold in arcseconds for flagging " "close stars while querying TIC.",
         )
 
         self.mag_limit = self.add_par(
@@ -54,8 +53,7 @@ class ParsObsTESS(ParsObservatory):
             "magdiff_thresh",
             0.75,
             float,
-            "Magnitude difference threshold for flagging "
-            "similar stars while querying TIC.",
+            "Magnitude difference threshold for flagging " "similar stars while querying TIC.",
         )
 
         self.query_radius = self.add_par(
@@ -155,9 +153,7 @@ class VirtualTESS(VirtualObservatory):
             and some initial processing will be done,
             using the "reduce_kwargs" parameter (or function inputs).
         """
-        self._check_dataset(
-            dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame]
-        )
+        self._check_dataset(dataset, DataClass=RawPhotometry, allowed_dataclasses=[pd.DataFrame])
 
         # get the altdata from the init_kwargs (if it is there)
         altdata_base = init_kwargs.pop("altdata", dataset.altdata)
@@ -177,7 +173,7 @@ class VirtualTESS(VirtualObservatory):
             sector = df_tuple[0]
             df = df_tuple[1]
             new_altdata = altdata_base.copy()
-            new_altdata["sectors"] = sector
+            new_altdata["SECTORS"] = sector
             new_altdata["filter"] = "TESS"
 
             idx = None
@@ -188,9 +184,7 @@ class VirtualTESS(VirtualObservatory):
             if idx is None:
                 raise ValueError("Could not find sector in altdata.")
             new_altdata["file_headers"] = [altdata_base["file_headers"][idx]]
-            new_altdata["lightcurve_headers"] = [
-                altdata_base["lightcurve_headers"][idx]
-            ]
+            new_altdata["lightcurve_headers"] = [altdata_base["lightcurve_headers"][idx]]
             new_altdata["aperture_arrays"] = [altdata_base["aperture_arrays"][idx]]
             new_altdata["aperture_headers"] = [altdata_base["aperture_headers"][idx]]
             new_altdata["ra"] = float(altdata_base["file_headers"][idx]["RA_OBJ"])
@@ -295,9 +289,7 @@ class VirtualTESS(VirtualObservatory):
                         break
 
             if raw_data is not None and "file_headers" in raw_data.altdata:
-                source.local_names[self.name.upper()] = raw_data.altdata[
-                    "file_headers"
-                ][0]["TICID"]
+                source.local_names[self.name.upper()] = raw_data.altdata["file_headers"][0]["TICID"]
 
     @staticmethod
     def _get_exposure_time(altdata):
@@ -416,9 +408,7 @@ class VirtualTESS(VirtualObservatory):
             project_sources = [s for s in sources if s.project == self.project]
 
             # only sources inside this project (and with same version control)
-            project_vc_sources = [
-                s for s in project_sources if s.cfg_hash == self.cfg_hash
-            ]
+            project_vc_sources = [s for s in project_sources if s.cfg_hash == self.cfg_hash]
 
             if len(project_vc_sources) > 0:
                 source = Source.find_source_with_raw_data(
@@ -483,14 +473,10 @@ class VirtualTESS(VirtualObservatory):
 
                 # match the found source to the correct name in the catalog
                 if use_catalog and self.catalog is not None:
-                    cat_row = self.catalog.get_nearest_row(
-                        ra, dec, radius=self.pars.query_radius, output="dict"
-                    )
+                    cat_row = self.catalog.get_nearest_row(ra, dec, radius=self.pars.query_radius, output="dict")
                     # TODO: I can't think of a better thing to do in this case... maybe just use the TIC name?
                     if cat_row is None:
-                        raise ValueError(
-                            f"No catalog entry found within radius {self.pars.query_radius} arcsec!"
-                        )
+                        raise ValueError(f"No catalog entry found within radius {self.pars.query_radius} arcsec!")
                     source_name = cat_row["name"]  # update with catalog name!
                 else:
                     cat_row = dict(
@@ -519,15 +505,9 @@ class VirtualTESS(VirtualObservatory):
                     altdata["cat_row"] = cat_row
 
                     # save the parameters involved with the download
-                    download_pars = {
-                        k: self.pars[k] for k in self.pars.download_pars_list
-                    }
+                    download_pars = {k: self.pars[k] for k in self.pars.download_pars_list}
                     download_pars.update(
-                        {
-                            k: download_args[k]
-                            for k in self.pars.download_pars_list
-                            if k in download_args
-                        }
+                        {k: download_args[k] for k in self.pars.download_pars_list if k in download_args}
                     )
                     altdata["download_pars"] = download_pars
                     colmap, time_info = self.get_colmap_time_info(data, altdata)
@@ -734,8 +714,6 @@ class VirtualTESS(VirtualObservatory):
         self._get_exposure_time(altdata)
 
         data = pd.concat(new_df_list, ignore_index=True)
-
-        altdata["sectors"] = list(sectors)
 
         return data, altdata
 

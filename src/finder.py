@@ -19,18 +19,14 @@ class ParsFinder(Parameters):
             "List of names of the scores used in this analysis",
         )
 
-        self.snr_threshold = self.add_par(
-            "snr_threshold", 5, (float, int), "S/N threshold for detection"
-        )
+        self.snr_threshold = self.add_par("snr_threshold", 5, (float, int), "S/N threshold for detection")
         self.snr_threshold_sidebands = self.add_par(
             "snr_threshold_sidebands",
             -2,
             (float, int),
             "S/N threshold for event region",
         )
-        self.max_det_per_lc = self.add_par(
-            "max_det_per_lc", 1, int, "Maximum number of detections per lightcurve"
-        )
+        self.max_det_per_lc = self.add_par("max_det_per_lc", 1, int, "Maximum number of detections per lightcurve")
         self.abs_snr = self.add_par(
             "abs_snr",
             True,
@@ -282,6 +278,10 @@ class Finder:
             The detection object for this event.
         """
         time_indices = self._get_event_indices(lightcurve)
+        if len(time_indices) == 0:
+            return None  # can't find an event with no times!
+
+        # check if any of the times are flagged
         if "qflag" in lightcurve.data.columns:
             qflag = lightcurve.data.loc[time_indices, "qflag"].values.max()
         else:
@@ -321,10 +321,7 @@ class Finder:
         det.peak_end = lightcurve.times[time_indices[-1]]
 
         det.peak_mag = float(lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]])
-        det.peak_mag_diff = float(
-            lightcurve.mag_mean_robust
-            - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]]
-        )
+        det.peak_mag_diff = float(lightcurve.mag_mean_robust - lightcurve.data.loc[peak_idx, lightcurve.colmap["mag"]])
         if sim is None:  # real data
             det.processed_ = source.processed_photometry
         else:  # simulated data
@@ -341,9 +338,7 @@ class Finder:
             two_sided = self.checker.get_quality_columns_two_sided()
             for col in thresholds.keys():
                 if two_sided[col]:
-                    worst_val = np.max(
-                        np.abs(lightcurve.data.loc[time_indices, col].values)
-                    )
+                    worst_val = np.max(np.abs(lightcurve.data.loc[time_indices, col].values))
                 else:
                     worst_val = np.max(lightcurve.data[time_indices, col].values)
                 det.quality_values[col] = float(worst_val)
@@ -368,6 +363,8 @@ class Finder:
         # det.raw_photometry_peak_number = idx
 
         # can add matched filter here
+
+        det.sanitize()
 
         return det
 

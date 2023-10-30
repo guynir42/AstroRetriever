@@ -75,9 +75,7 @@ class ParsProject(Parameters):
             "Maximum number of exceptions (in a row) to raise before stopping the analysis.",
         )
 
-        self.version_control = self.add_par(
-            "version_control", False, bool, "Whether to use version control"
-        )
+        self.version_control = self.add_par("version_control", False, bool, "Whether to use version control")
 
         self.ignore_missing_raw_data = self.add_par(
             "ignore_missing_raw_data",
@@ -249,11 +247,7 @@ class ParsProject(Parameters):
         # if object itself is not a Parameters object,
         # maybe one of its attributes is
         for k, v in obj.__dict__.items():
-            if (
-                hasattr(v, "__iter__")
-                and not isinstance(v, str)
-                and not isinstance(v, np.ndarray)
-            ):
+            if hasattr(v, "__iter__") and not isinstance(v, str) and not isinstance(v, np.ndarray):
                 if verbose:
                     print(f"loading an iterable: {k}")
                 for item in v:
@@ -278,9 +272,7 @@ class ParsProject(Parameters):
         """
         pars_list.sort(key=lambda x: x.__class__.__name__)
         pars_list.sort(key=lambda x: isinstance(x, ParsObservatory), reverse=True)
-        pars_list.sort(
-            key=lambda x: x.__class__.__name__ == "ParsProject", reverse=True
-        )
+        pars_list.sort(key=lambda x: x.__class__.__name__ == "ParsProject", reverse=True)
 
         if verbose:
             names_list = [p.__class__.__name__ for p in pars_list]
@@ -499,9 +491,7 @@ class Project:
         with the cfg_hash, if it defined for this project.
         """
         hash = self.cfg_hash if self.cfg_hash else ""
-        stmt = sa.select(Source).where(
-            Source.project == self.name, Source.cfg_hash == hash
-        )
+        stmt = sa.select(Source).where(Source.project == self.name, Source.cfg_hash == hash)
         return stmt
 
     def get_all_sources(self, session=None):
@@ -673,9 +663,7 @@ class Project:
             if not os.listdir(self.output_folder):
                 os.rmdir(self.output_folder)
 
-    def delete_everything(
-        self, remove_raw_data=False, remove_folder=True, session=None
-    ):
+    def delete_everything(self, remove_raw_data=False, remove_folder=True, session=None):
         """
         Delete all data associated with this project.
         This includes sources, detections, data products (e.g., lightcurves),
@@ -791,18 +779,14 @@ class Project:
                 source_names = [source_names]
 
             if not isinstance(source_names, list):
-                raise TypeError(
-                    f"source_names must be a list of strings. Got {type(source_names)}"
-                )
+                raise TypeError(f"source_names must be a list of strings. Got {type(source_names)}")
 
         if source_ids is not None:
             if isinstance(source_ids, int):
                 source_ids = [source_ids]
 
             if not isinstance(source_ids, list):
-                raise TypeError(
-                    f"source_ids must be a list of integers. Got {type(source_ids)}"
-                )
+                raise TypeError(f"source_ids must be a list of integers. Got {type(source_ids)}")
 
         types = self.pars.data_types
         if isinstance(types, str):
@@ -881,10 +865,7 @@ class Project:
 
                                     # check dataset has data on disk/in memory
                                     # (if not, skip entire source or raise RuntimeError)
-                                    if (
-                                        data is not None
-                                        and not data.check_data_exists()
-                                    ):
+                                    if data is not None and not data.check_data_exists():
                                         if self.pars.ignore_missing_raw_data:
                                             need_skip = True
                                             continue
@@ -923,25 +904,16 @@ class Project:
 
                     except Exception as e:
                         self.pars.vprint(f"Error processing source {name}: {e}")
-                        self.failures_list.append(
-                            dict(index=i, error=traceback.format_exc(), cat_row=cat_row)
-                        )
+                        self.failures_list.append(dict(index=i, error=traceback.format_exc(), cat_row=cat_row))
                         num_exceptions += 1
                         num_exceptions_in_a_row += 1
 
-                        if (
-                            num_exceptions_in_a_row
-                            >= self.pars.max_num_sequence_exceptions
-                        ):
-                            print(
-                                f"Too many exceptions in a row. Stopping after {num_exceptions_in_a_row} exceptions."
-                            )
+                        if num_exceptions_in_a_row >= self.pars.max_num_sequence_exceptions:
+                            print(f"Too many exceptions in a row. Stopping after {num_exceptions_in_a_row} exceptions.")
                             raise e
 
                         if num_exceptions >= self.pars.max_num_total_exceptions:
-                            print(
-                                f"Too many exceptions. Stopping after {num_exceptions} exceptions."
-                            )
+                            print(f"Too many exceptions. Stopping after {num_exceptions} exceptions.")
                             raise e
 
                     # count the sources processed and not
@@ -992,9 +964,7 @@ class Project:
         cfg_json = json.dumps(cfg_dict)
 
         if self.pars.version_control:
-            self.cfg_hash = hashlib.sha256(
-                "".join(cfg_json).encode("utf-8")
-            ).hexdigest()
+            self.cfg_hash = hashlib.sha256("".join(cfg_json).encode("utf-8")).hexdigest()
         else:
             self.cfg_hash = ""
 
@@ -1060,5 +1030,6 @@ class Project:
 
 
 if __name__ == "__main__":
+
     proj = Project(name="tess_wds")
     proj.run()
